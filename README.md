@@ -16,9 +16,12 @@ with its source recorded.
 > Worksheets and the official EIC Table, and the OBBBA enhanced
 > deduction for seniors via Schedule 1-A Part V → line 13b), not a
 > finished tax product. See
-> `docs/KNOWN_LIMITS.md` for exactly what is missing. JSON export and
+> `docs/KNOWN_LIMITS.md` for exactly what is missing. JSON export,
 > filled-PDF export (amounts, filing status, and the Dependents table
-> onto a user-supplied TY2025 1040 template) work; MeF e-file does not
+> onto a user-supplied TY2025 1040 template), and filing-packet export
+> (`--type packet`: the filled 1040 plus every applicable schedule —
+> Schedule D, Form 8949, Schedules 1, 2, C, SE, 8812, 1-A — with a
+> per-form manifest) work; MeF e-file does not
 > (it reports `not_implemented` honestly). Taxpayer identity can be
 > stored per return (`tax return set-identity`): it drives the
 > age-65/blind standard-deduction additions, the Schedule 1-A senior

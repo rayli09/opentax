@@ -12,6 +12,7 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use tax_core::{FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
+use tax_forms::packet::{build_packet, schedules_view};
 use tax_forms::{
     additional_standard_deduction, build_fill_values_with_dependents, compute_1040,
     deductible_part_of_se_tax, eic_childless_age_outcome, eic_qualifying_children, mask_ssn,
@@ -19,7 +20,6 @@ use tax_forms::{
     validate_1099_div, validate_dependent, DependentInput, Form1040Input, I1099BInput,
     I1099DivInput, I1099IntInput, I1099NecInput, PersonIdentity, TaxpayerIdentity, W2Input,
 };
-use tax_forms::packet::{build_packet, schedules_view};
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
 // ---------------------------------------------------------------------------

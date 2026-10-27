@@ -107,7 +107,8 @@ fn packet_field_map(form: &str) -> F1040FieldMap {
         "f1040s1a" => include_str!("../forms/f1040s1a-2025-field-map.json"),
         other => panic!("no bundled field map for packet form {other}"),
     };
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("bundled {form} field map must parse: {e}"))
+    serde_json::from_str(text)
+        .unwrap_or_else(|e| panic!("bundled {form} field map must parse: {e}"))
 }
 
 /// Resolve a value dictionary (map line key → formatted string) through
@@ -203,8 +204,7 @@ fn header(
     {
         Some(digits) => text(dict, ssn_key, &digits),
         None => notes.push(
-            "header SSN left blank: no taxpayer SSN is stored in the return's identity"
-                .to_string(),
+            "header SSN left blank: no taxpayer SSN is stored in the return's identity".to_string(),
         ),
     }
 }
@@ -394,44 +394,45 @@ fn form_8949(input: &Form1040Input) -> PacketForm {
     let mut scratch_notes = Vec::new();
     header(&mut dict, &mut scratch_notes, input, "name2", "ssn2");
 
-    let mut fill_group = |txns: &[&BrokerTxn], prefix: &str, box_key: &str| -> (usize, GroupTotals) {
-        if txns.is_empty() {
-            return (0, GroupTotals::default());
-        }
-        check(&mut dict, box_key);
-        let listed = &txns[..txns.len().min(F8949_ROWS_PER_PART)];
-        for (i, txn) in listed.iter().enumerate() {
-            let row = i + 1;
-            text(&mut dict, &format!("{prefix}_r{row}_a"), &txn.description);
-            if let Some(d) = &txn.date_acquired {
-                text(&mut dict, &format!("{prefix}_r{row}_b"), &form_date(d));
+    let mut fill_group =
+        |txns: &[&BrokerTxn], prefix: &str, box_key: &str| -> (usize, GroupTotals) {
+            if txns.is_empty() {
+                return (0, GroupTotals::default());
             }
-            if let Some(d) = &txn.date_sold {
-                text(&mut dict, &format!("{prefix}_r{row}_c"), &form_date(d));
-            }
-            if let Some(p) = txn.proceeds {
-                amt(&mut dict, &format!("{prefix}_r{row}_d"), p);
-            }
-            if let Some(b) = txn.cost_basis {
-                amt(&mut dict, &format!("{prefix}_r{row}_e"), b);
-            }
-            if txn.adjustment.cents() != 0 {
-                amt(&mut dict, &format!("{prefix}_r{row}_g"), txn.adjustment);
-                if let Some(code) = &txn.adjustment_code {
-                    text(&mut dict, &format!("{prefix}_r{row}_f"), code);
+            check(&mut dict, box_key);
+            let listed = &txns[..txns.len().min(F8949_ROWS_PER_PART)];
+            for (i, txn) in listed.iter().enumerate() {
+                let row = i + 1;
+                text(&mut dict, &format!("{prefix}_r{row}_a"), &txn.description);
+                if let Some(d) = &txn.date_acquired {
+                    text(&mut dict, &format!("{prefix}_r{row}_b"), &form_date(d));
+                }
+                if let Some(d) = &txn.date_sold {
+                    text(&mut dict, &format!("{prefix}_r{row}_c"), &form_date(d));
+                }
+                if let Some(p) = txn.proceeds {
+                    amt(&mut dict, &format!("{prefix}_r{row}_d"), p);
+                }
+                if let Some(b) = txn.cost_basis {
+                    amt(&mut dict, &format!("{prefix}_r{row}_e"), b);
+                }
+                if txn.adjustment.cents() != 0 {
+                    amt(&mut dict, &format!("{prefix}_r{row}_g"), txn.adjustment);
+                    if let Some(code) = &txn.adjustment_code {
+                        text(&mut dict, &format!("{prefix}_r{row}_f"), code);
+                    }
+                }
+                if let Some(g) = txn.gain() {
+                    amt(&mut dict, &format!("{prefix}_r{row}_h"), g);
                 }
             }
-            if let Some(g) = txn.gain() {
-                amt(&mut dict, &format!("{prefix}_r{row}_h"), g);
-            }
-        }
-        let totals = group_totals(listed);
-        amt(&mut dict, &format!("{prefix}_tot_d"), totals.proceeds);
-        amt(&mut dict, &format!("{prefix}_tot_e"), totals.basis);
-        amt(&mut dict, &format!("{prefix}_tot_g"), totals.adjustments);
-        amt(&mut dict, &format!("{prefix}_tot_h"), totals.gain);
-        (listed.len(), totals)
-    };
+            let totals = group_totals(listed);
+            amt(&mut dict, &format!("{prefix}_tot_d"), totals.proceeds);
+            amt(&mut dict, &format!("{prefix}_tot_e"), totals.basis);
+            amt(&mut dict, &format!("{prefix}_tot_g"), totals.adjustments);
+            amt(&mut dict, &format!("{prefix}_tot_h"), totals.gain);
+            (listed.len(), totals)
+        };
     let (st_listed, st_page_totals) = fill_group(&st, "st", "box_a");
     let (lt_listed, lt_page_totals) = fill_group(&lt, "lt", "box_d");
 
@@ -923,7 +924,7 @@ fn schedule_1a(input: &Form1040Input, computed: &ComputedReturn, params: &TaxPar
     let agi = line(lines, "11").unwrap_or(Money::ZERO);
     let bonus = schedule_1a_senior_deduction(input.identity.as_ref(), input.status, agi, params);
     if bonus.deduction.cents() <= 0 && bonus.eligible_persons == 0 {
-        let reason = match bonus.disqualifier.as_deref() {
+        let reason = match bonus.disqualifier {
             Some("mfs") => {
                 "married filing separately: Schedule 1-A Part V bars the enhanced deduction for seniors"
                     .to_string()
@@ -951,8 +952,7 @@ fn schedule_1a(input: &Form1040Input, computed: &ComputedReturn, params: &TaxPar
     let (taxpayer_eligible, spouse_eligible) = match &input.identity {
         Some(id) => (
             eligible(&id.person),
-            input.status == FilingStatus::Mfj
-                && id.spouse.as_ref().map(|s| eligible(s)).unwrap_or(false),
+            input.status == FilingStatus::Mfj && id.spouse.as_ref().map(eligible).unwrap_or(false),
         ),
         None => (false, false),
     };
@@ -1061,4 +1061,218 @@ pub fn schedules_view(
         view.insert(key.to_string(), form.view);
     }
     Value::Object(view)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        compute_1040, DependentInput, DependentRelationship, I1099BInput, I1099NecInput, W2Input,
+    };
+
+    fn params() -> TaxParams {
+        TaxParams::load_2025().unwrap()
+    }
+
+    fn m(dollars: i64) -> Money {
+        Money::from_cents(dollars * 100)
+    }
+
+    fn base_input() -> Form1040Input {
+        Form1040Input {
+            status: FilingStatus::Single,
+            w2s: vec![W2Input {
+                employer_ein: "12-3456789".into(),
+                wages: m(50_000),
+                federal_withholding: m(4_000),
+                social_security_wages: None,
+                social_security_tax: None,
+                medicare_wages: None,
+                medicare_tax: None,
+            }],
+            interest_income: Money::ZERO,
+            ordinary_dividends: Money::ZERO,
+            f1099_ints: vec![],
+            f1099_divs: vec![],
+            f1099_bs: vec![],
+            f1099_necs: vec![],
+            dependents: vec![],
+            identity: None,
+        }
+    }
+
+    fn txn(description: &str, proceeds: i64, basis: i64, term: TxnTerm) -> BrokerTxn {
+        BrokerTxn {
+            description: description.into(),
+            proceeds: Some(m(proceeds)),
+            cost_basis: Some(m(basis)),
+            adjustment: Money::ZERO,
+            term,
+            date_acquired: None,
+            date_sold: None,
+            adjustment_code: None,
+        }
+    }
+
+    fn form<'a>(forms: &'a [PacketForm], id: &str) -> &'a PacketForm {
+        forms.iter().find(|f| f.form == id).unwrap()
+    }
+
+    fn val<'a>(form: &'a PacketForm, line: &str) -> Option<&'a str> {
+        form.values
+            .iter()
+            .find(|v| v.line == line)
+            .map(|v| v.value.as_str())
+    }
+
+    #[test]
+    fn schedule_d_loss_routing_fills_line_21_only() {
+        // Net ST loss $6,000, no other capital activity: line 16 is a
+        // loss, so lines 17-20 are skipped and line 21 takes the
+        // section 1211(b)-limited $3,000 (single).
+        let mut input = base_input();
+        input.f1099_bs = vec![I1099BInput {
+            payer_name: "Broker".into(),
+            payer_ein: None,
+            transactions: vec![txn("100 sh LOSER", 1_000, 7_000, TxnTerm::Short)],
+            federal_withholding: Money::ZERO,
+        }];
+        let computed = compute_1040(&input, &params());
+        let forms = build_packet(&input, &computed, &params());
+        let sd = form(&forms, "f1040sd");
+        assert!(sd.applicable);
+        assert_eq!(val(sd, "7"), Some("-6000.00"));
+        assert_eq!(val(sd, "16"), Some("-6000.00"));
+        assert_eq!(val(sd, "21"), Some("-3000.00"));
+        assert_eq!(val(sd, "17_yes"), None);
+        assert_eq!(val(sd, "17_no"), None);
+        assert_eq!(val(sd, "20_yes"), None);
+        assert_eq!(val(sd, "22_no"), Some("2"), "no qualified dividends");
+        // The 8949 page carries the same transaction.
+        let f = form(&forms, "f8949");
+        assert_eq!(val(f, "st_r1_h"), Some("-6000.00"));
+        assert_eq!(val(f, "st_tot_h"), Some("-6000.00"));
+    }
+
+    #[test]
+    fn form_8949_overflow_is_loud_and_totals_cover_listed_rows() {
+        let mut input = base_input();
+        let txns: Vec<BrokerTxn> = (0..12)
+            .map(|i| txn(&format!("LOT {i}"), 100, 50, TxnTerm::Short))
+            .collect();
+        input.f1099_bs = vec![I1099BInput {
+            payer_name: "Broker".into(),
+            payer_ein: None,
+            transactions: txns,
+            federal_withholding: Money::ZERO,
+        }];
+        let computed = compute_1040(&input, &params());
+        let forms = build_packet(&input, &computed, &params());
+        let f = form(&forms, "f8949");
+        assert_eq!(f.view["short_term_transactions"], json!(12));
+        assert_eq!(f.view["short_term_listed"], json!(11));
+        // Page totals cover the 11 listed rows: 11 x $50 gain.
+        assert_eq!(val(f, "st_tot_h"), Some("550.00"));
+        assert!(
+            f.notes.iter().any(|n| n.contains("OVERFLOW")),
+            "overflow must be a loud manifest note: {:?}",
+            f.notes
+        );
+        // Schedule D still carries the full engine total: 12 x $50.
+        let sd = form(&forms, "f1040sd");
+        assert_eq!(val(sd, "1b_h"), Some("600.00"));
+    }
+
+    #[test]
+    fn two_nec_engagements_make_two_schedule_cs() {
+        let mut input = base_input();
+        input.f1099_necs = vec![
+            I1099NecInput {
+                payer_name: "Client A".into(),
+                payer_ein: None,
+                nonemployee_compensation: m(10_000),
+                federal_withholding: Money::ZERO,
+                expenses: m(1_000),
+            },
+            I1099NecInput {
+                payer_name: "Client B".into(),
+                payer_ein: Some("98-7654321".into()),
+                nonemployee_compensation: m(5_000),
+                federal_withholding: Money::ZERO,
+                expenses: Money::ZERO,
+            },
+        ];
+        let computed = compute_1040(&input, &params());
+        let forms = build_packet(&input, &computed, &params());
+        let cs: Vec<&PacketForm> = forms.iter().filter(|f| f.form == "f1040sc").collect();
+        assert_eq!(cs.len(), 2);
+        assert_eq!(cs[0].file_name, "f1040sc.pdf");
+        assert_eq!(cs[1].file_name, "f1040sc-2.pdf");
+        assert_eq!(val(cs[0], "business_name"), Some("Client A"));
+        assert_eq!(val(cs[0], "31"), Some("9000.00"));
+        assert_eq!(val(cs[1], "business_name"), Some("Client B"));
+        assert_eq!(val(cs[1], "ein"), Some("98-7654321"));
+        // Schedule 1 line 3 and Schedule SE line 2 carry the TOTAL net.
+        assert_eq!(val(form(&forms, "f1040s1"), "3"), Some("14000.00"));
+        assert_eq!(val(form(&forms, "f1040sse"), "2"), Some("14000.00"));
+        // The schedules view folds both engagements into one entry.
+        let view = schedules_view(&input, &computed, &params());
+        assert_eq!(
+            view["schedule_c"]["engagements"].as_array().unwrap().len(),
+            2
+        );
+    }
+
+    #[test]
+    fn schedule_8812_stop_branch_when_no_credit_remains() {
+        // A dependent who classifies for no credit (an adult "other"
+        // relative who fails the more-than-half-the-year residency
+        // test): tentative credit is zero, so line 12 is answered
+        // No and lines 13/14/Part II stay blank.
+        let mut input = base_input();
+        input.dependents = vec![DependentInput {
+            name: "Adult Relative".into(),
+            ssn: None,
+            relationship: DependentRelationship::Other,
+            age: 40,
+            months_lived_with_taxpayer: 3,
+            full_time_student: false,
+            permanently_disabled: false,
+        }];
+        let computed = compute_1040(&input, &params());
+        let forms = build_packet(&input, &computed, &params());
+        let s = form(&forms, "f10408812");
+        assert!(s.applicable);
+        assert_eq!(val(s, "4"), Some("0"));
+        assert_eq!(val(s, "8"), Some("0.00"));
+        assert_eq!(val(s, "12_no"), Some("1"));
+        assert_eq!(val(s, "12_yes"), None);
+        assert_eq!(val(s, "13"), None);
+        assert_eq!(val(s, "14"), None);
+        assert_eq!(val(s, "27"), None);
+    }
+
+    #[test]
+    fn nec_loss_skips_se_and_schedule_2_but_not_schedule_c() {
+        let mut input = base_input();
+        input.f1099_necs = vec![I1099NecInput {
+            payer_name: "Client Loss".into(),
+            payer_ein: None,
+            nonemployee_compensation: m(1_000),
+            federal_withholding: Money::ZERO,
+            expenses: m(3_000),
+        }];
+        let computed = compute_1040(&input, &params());
+        let forms = build_packet(&input, &computed, &params());
+        let cs = form(&forms, "f1040sc");
+        assert!(cs.applicable);
+        assert_eq!(val(cs, "31"), Some("-2000.00"));
+        assert!(!form(&forms, "f1040sse").applicable);
+        assert!(!form(&forms, "f1040s2").applicable);
+        assert_eq!(val(form(&forms, "f1040s1"), "3"), Some("-2000.00"));
+    }
 }

@@ -19,8 +19,22 @@ description: Preparation skill for opentax. Use when facts/documents are entered
 4. Validate: `tax return validate --return <id>`. Surface **all**
    findings, grouped by severity. Errors block export-as-final.
 5. Export the artifact: `tax return export --return <id> --type json`,
-   or a filled Form 1040 PDF:
-   `tax return export --return <id> --type pdf --template <blank TY2025 f1040.pdf> --out <file>`
+   a filled Form 1040 PDF:
+   `tax return export --return <id> --type pdf --template <blank TY2025 f1040.pdf> --out <file>`,
+   or the full filing packet (the 1040 plus every applicable schedule,
+   for paper filing):
+   `tax return export --return <id> --type packet --forms-dir <dir with the blank TY2025 form PDFs> --out-dir <dir>`.
+   The packet writes `manifest.json` in the out-dir reporting every
+   form as `filled`, `not_applicable` (with the reason), or
+   `missing_template`. **Read the manifest before presenting the
+   packet**: a `missing_template` entry means the return's inputs need
+   that form but its blank template was not in `--forms-dir` — surface
+   it as a blocker, never as a completed packet; likewise surface the
+   per-form `notes` (unfilled lines and why, Form 8949 overflow,
+   Schedule SE's Box 1 proxy on line 8a) rather than letting them pass
+   silently. Packet scope is in `docs/KNOWN_LIMITS.md` (Schedule D /
+   8949, Schedules 1, 2, C per 1099-NEC engagement, SE, 8812 Parts I +
+   II-A only, Schedule 1-A Parts I/V/VI only).
    (amount lines, filing status, and the page-1 Dependents table for
    stored dependents — names, stored SSNs, and credit checkboxes for
    the first four; when an identity block is stored via
