@@ -1,0 +1,18 @@
+{
+  "interest_income": "0",
+  "ordinary_dividends": "0",
+  "state": {
+    "residency": "full_year",
+    "state": "CA"
+  },
+  "status": "single",
+  "w2s": [
+    {
+      "employer_ein": "12-3456789",
+      "federal_withholding": "400000",
+      "state_wages": "5000000",
+      "state_withholding": "150000",
+      "wages": "5000000"
+    }
+  ]
+}

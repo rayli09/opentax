@@ -1,0 +1,51 @@
+{
+  "dependents": [
+    {
+      "age": 5,
+      "months_lived_with_taxpayer": 12,
+      "name": "Kid One",
+      "relationship": "child",
+      "ssn": "123456789"
+    },
+    {
+      "age": 3,
+      "months_lived_with_taxpayer": 12,
+      "name": "Kid Two",
+      "relationship": "child",
+      "ssn": "123456789"
+    }
+  ],
+  "identity": {
+    "blind": false,
+    "can_be_claimed_as_dependent": false,
+    "date_of_birth": "1993-04-02",
+    "first_name": "Case",
+    "last_name": "Tester",
+    "occupation": "Engineer",
+    "spouse": {
+      "blind": false,
+      "date_of_birth": "1995-08-20",
+      "first_name": "Spouse",
+      "last_name": "Tester",
+      "occupation": "Designer",
+      "ssn": "987654321"
+    },
+    "ssn": "123456789"
+  },
+  "interest_income": "0",
+  "ordinary_dividends": "0",
+  "state": {
+    "residency": "full_year",
+    "state": "CA"
+  },
+  "status": "mfj",
+  "w2s": [
+    {
+      "employer_ein": "12-3456789",
+      "federal_withholding": "100000",
+      "state_wages": "2800000",
+      "state_withholding": "20000",
+      "wages": "2800000"
+    }
+  ]
+}

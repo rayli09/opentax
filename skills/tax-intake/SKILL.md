@@ -70,7 +70,30 @@ of (a) facts to provide and (b) documents to gather. No computation here.
    1099-B for brokerage sales; 1099-NEC per side-income payer **plus
    their own expense records for each engagement** (the expenses total
    is an entered fact, not a form box); prior-year return if available.
-7. Confirm a short facts summary back to the user and stop. Next step is
+7. **State return (California only in v1).** Ask whether the user was
+   a **full-year California resident** for the tax year. If yes, store
+   the selection with
+   `tax return set-state --return <id> --state CA --file state.json`,
+   where state.json is `{"state": "CA", "residency": "full_year"}` —
+   only CA + full_year exists; any other state or a part-year/
+   nonresident year is out of scope (say so and stop that part).
+   Then three transcription facts join the checklist, with the same
+   missing-is-not-zero doctrine as everything else:
+   - **W-2 Box 16 (state wages)** and **Box 17 (state income tax
+     withheld)** for every W-2. Box 17 feeds Form 540 line 71; Box 16
+     — not Box 1 — is the California EITC's wage figure. If a W-2
+     reports no state withholding, record `"0"` explicitly; leaving
+     the box unrecorded leaves the California withholding (and the
+     refund/amount-owed lines) incomplete, never zero.
+   - **1099-NEC Box 5 (state tax withheld)** for every 1099-NEC, with
+     the same explicit-`"0"` rule.
+   - The identity dates of birth now matter for California too (the
+     65+/blind **exemption credits**, and the childless CalEITC
+     18-or-older test), and dependent ages decide the Young Child Tax
+     Credit (a qualifying child **younger than six** as of December
+     31). California accepts ITINs for the CalEITC — a stored 9-digit
+     identifier is enough; do not press for more.
+8. Confirm a short facts summary back to the user and stop. Next step is
    tax-ingest (documents) or tax-preparer (facts already entered).
 
 ## Iron rules
@@ -86,7 +109,10 @@ gains from 1099s, 1099-NEC side income (simplified Schedule C/SE),
 dependents with the child tax credit / credit for other dependents /
 additional child tax credit (simplified Schedule 8812), and the
 earned income credit (line 27, v1 scope in `docs/KNOWN_LIMITS.md`)
-at the engine level. If the user's situation needs anything in
-`docs/KNOWN_LIMITS.md` (Schedule E, other credits, state returns…),
+at the engine level, plus a full-year-resident California Form 540
+when the state block is set (CA v1 scope in `docs/KNOWN_LIMITS.md`:
+no 540NR, no renter's credit, Schedule CA adjustments scoped to the
+engine's facts). If the user's situation needs anything in
+`docs/KNOWN_LIMITS.md` (Schedule E, other credits, other states…),
 say so now — before
 collecting documents — and stop that part.

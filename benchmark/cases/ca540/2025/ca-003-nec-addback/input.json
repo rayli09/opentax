@@ -1,0 +1,27 @@
+{
+  "f1099_necs": [
+    {
+      "expenses": "200000",
+      "federal_withholding": "0",
+      "nonemployee_compensation": "2000000",
+      "payer_name": "Example Client LLC",
+      "state_withholding": "0"
+    }
+  ],
+  "interest_income": "0",
+  "ordinary_dividends": "0",
+  "state": {
+    "residency": "full_year",
+    "state": "CA"
+  },
+  "status": "single",
+  "w2s": [
+    {
+      "employer_ein": "12-3456789",
+      "federal_withholding": "400000",
+      "state_wages": "5000000",
+      "state_withholding": "150000",
+      "wages": "5000000"
+    }
+  ]
+}
