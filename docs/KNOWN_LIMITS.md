@@ -64,8 +64,26 @@ This list is the contract: anything not listed as working is not claimed.
   worksheets use whole dollars, and Tax Table rows are selected by the
   floored dollar amount — a return whose lines carry cents can differ
   from a whole-dollar paper filing by a dollar.
-- Line 12 is the standard deduction only; no itemizing, no additional
-  amounts (age/blindness), no QBI deduction (line 13).
+- Line 12 is the standard deduction only; no itemizing, no QBI
+  deduction (line 13). The age-65/blind **additional** amounts ARE
+  implemented from the stored identity block (`tax return
+  set-identity`): per condition (age 65 or older — born before
+  January 2, 1961 for TY2025 — or blind) $2,000 for single / head of
+  household and $1,600 for married filing jointly / separately
+  (Rev. Proc. 2024-40; IR-2024-273; amounts and the cutoff date are
+  params data). The taxpayer's conditions always count; a spouse's
+  count only for MFJ/MFS. Identity is optional: with no identity (or
+  no date of birth) stored, line 12 is the base amount and
+  `return validate` notes the additions were not checked. NOT
+  implemented on line 12: the **dependent-filer limitation** (when
+  someone can claim the taxpayer as a dependent, the standard
+  deduction is limited to the greater of $1,350 or earned income +
+  $450, capped at the regular amount) — the identity flag
+  `can_be_claimed_as_dependent` fills the form's line 12a checkbox
+  and validation warns that the limitation itself is not computed.
+  Also NOT implemented: the OBBBA temporary $6,000 senior bonus
+  deduction (2025–2028, Schedule 1-A → line 13b) — a separate
+  deduction from the age/blind additions above.
 - Line 10 is the deductible part of self-employment tax only (Schedule 1
   line 15); no other adjustments (student loan interest, HSA, IRA…).
 - No education or foreign credits, no AMT, no NIIT. The only
@@ -106,10 +124,15 @@ This list is the contract: anything not listed as working is not claimed.
   - The ODC path does **not** model the qualifying-relative tests:
     the 50% support test, the gross-income test, and the relationship /
     member-of-household rules are not checked — any stored dependent
-    not CTC-eligible with months > 6 is credited. SSN/ITIN
-    requirements (a qualifying child needs an SSN issued by the due
-    date; the taxpayer needs an ITIN/SSN) are not modeled, and
-    dependent SSNs are not stored at all.
+    not CTC-eligible with months > 6 is credited. A dependent's SSN
+    may be stored (optional `ssn` on the dependent entry, normalized
+    to 9 digits) and then prints in the Dependents table. The legal
+    SSN requirement for the child tax credit is modeled only as a
+    validation **warning** (`dependent_ctc_ssn`: "CTC requires the
+    child to have an SSN (v1 still computes; a real filing would
+    deny)") — v1 never denies the credit for a missing SSN, and the
+    SSN-issued-by-the-due-date timing rule and taxpayer ITIN rules
+    are not modeled at all.
   - The earned income credit (EIC / EITC, Form 1040 line 27) is a
     **different credit and is NOT implemented** — nothing in v1 claims
     it. The child and dependent care credit (Schedule 3 / Form 2441)
@@ -215,13 +238,23 @@ This list is the contract: anything not listed as working is not claimed.
   file records the method and per-field evidence). Scope: computed
   amount lines, the filing-status checkbox, and the page-1 Dependents
   table for stored dependents (name split first word / remainder into
-  the (1)/(2) fields, and the question-(7) credit checkbox — the
+  the (1)/(2) fields, the (3) SSN field when an SSN is stored for
+  that dependent, and the question-(7) credit checkbox — the
   sibling `Btn` fields under the "Child tax credit" / "Credit for
   other dependents" sub-columns — for the first four dependents; more
-  than four produces a warning, and the dependent (3) SSN fields are
-  reported under `skipped` because dependent SSNs are not stored).
-  Identity fields (name/SSN/address) are NOT filled — they are not
-  stored in a return — and are reported under `skipped`. Amounts are
+  than four produces a warning). When a taxpayer identity block is
+  stored (`tax return set-identity`), the export also fills the
+  header identity fields (taxpayer/spouse names and SSNs, home
+  address), the page-2 occupations, and the standard-deduction
+  checkboxes (line 12a "You as a dependent" from
+  `can_be_claimed_as_dependent`; the born-before-January-2-1961 and
+  blind boxes for taxpayer and spouse from their DOB / blind flags —
+  all geometrically verified like the rest of the map). With no
+  identity stored, the export reports the historical aggregate skips
+  (taxpayer_name / taxpayer_ssn / home_address); with a partial
+  identity, only the pieces actually absent are reported under
+  `skipped`. SSN values in the export JSON report are masked
+  (`***-**-6789`): the full SSN appears only inside the filled PDF. Amounts are
   written as exact dollars-and-cents (e.g. `4231.50`); whole-dollar
   rounding is NOT applied in v1. TY2025 layout notes: AGI is written
   to both 11a and 11b (the form repeats it on page 2), the standard
@@ -247,4 +280,10 @@ This list is the contract: anything not listed as working is not claimed.
   structs via schemars; generation replaces the static version later.
 - `tax skills list` reads `./skills` (override with `--skills-dir`).
 - Return store is plain JSON files under `.opentax/` — no encryption at
-  rest yet. Treat the directory as sensitive (it is; it contains tax data).
+  rest yet. Treat the directory as sensitive (it is; it contains tax
+  data, and — once identity is set — taxpayer/spouse/dependent SSNs).
+  Identity is stored locally only: `return get`, `return list`, and
+  `return set-identity` show SSNs masked (`***-**-6789`), `return list`
+  is PII-free (id / year / status / completeness / identity_set), and
+  the full SSN is written only into a filled PDF produced by
+  `return export --type pdf` (the JSON export report masks it too).

@@ -13,9 +13,10 @@ use std::path::{Path, PathBuf};
 use tax_core::{FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::{
-    build_fill_values_with_dependents, compute_1040, deductible_part_of_se_tax,
-    schedule_c_net_profit, schedule_se_tax, validate_1099_div, validate_dependent, DependentInput,
-    Form1040Input, I1099BInput, I1099DivInput, I1099IntInput, I1099NecInput, W2Input,
+    additional_standard_deduction, build_fill_values_with_dependents, compute_1040,
+    deductible_part_of_se_tax, mask_ssn, normalize_ssn, schedule_c_net_profit, schedule_se_tax,
+    validate_1099_div, validate_dependent, DependentInput, Form1040Input, I1099BInput,
+    I1099DivInput, I1099IntInput, I1099NecInput, PersonIdentity, TaxpayerIdentity, W2Input,
 };
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
@@ -135,6 +136,18 @@ enum ReturnAction {
         #[arg(long)]
         r#return: String,
     },
+    /// Store the taxpayer identity block from a JSON file (names, SSNs,
+    /// DOBs, address, occupations). SSNs are normalized to digits,
+    /// stored locally only, and echoed back masked.
+    SetIdentity {
+        #[arg(long)]
+        r#return: String,
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// List stored returns (PII-free: id, year, status, completeness,
+    /// whether identity is set).
+    List,
     /// Export a stored return. json and pdf work; mef reports not_implemented.
     /// pdf requires --template (a blank TY2025 Form 1040 PDF) and --out.
     Export {
@@ -293,6 +306,10 @@ struct StoredReturn {
     entries: Vec<StoredEntry>,
     #[serde(default)]
     other_income: Option<OtherIncome>,
+    /// Taxpayer identity block (`return set-identity`). Optional:
+    /// returns stored before identity existed load unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    taxpayer: Option<TaxpayerIdentity>,
 }
 
 fn return_path(store: &Path, id: &str) -> PathBuf {
@@ -317,6 +334,79 @@ fn load_return(store: &Path, id: &str) -> CResult<StoredReturn> {
         )
     })?;
     serde_json::from_str(&text).map_err(json_err)
+}
+
+/// Render one person's identity as JSON with the SSN MASKED
+/// (`***-**-6789`). This is the only rendering of identity the CLI
+/// ever prints: the full SSN appears only inside a filled PDF.
+fn masked_person_json(p: &PersonIdentity) -> Value {
+    json!({
+        "first_name": p.first_name,
+        "last_name": p.last_name,
+        "ssn": p.ssn.as_deref().map(mask_ssn),
+        "date_of_birth": p.date_of_birth,
+        "occupation": p.occupation,
+        "blind": p.blind,
+    })
+}
+
+/// Render the stored identity block with every SSN masked.
+fn masked_identity_json(identity: &TaxpayerIdentity) -> Value {
+    let mut v = masked_person_json(&identity.person);
+    v["address"] = match &identity.address {
+        Some(a) => json!({
+            "street": a.street, "apt": a.apt, "city": a.city,
+            "state": a.state, "zip": a.zip,
+        }),
+        None => Value::Null,
+    };
+    v["spouse"] = match &identity.spouse {
+        Some(s) => masked_person_json(s),
+        None => Value::Null,
+    };
+    v["can_be_claimed_as_dependent"] = json!(identity.can_be_claimed_as_dependent);
+    v
+}
+
+/// The `return list` rows for every return in the store: PII-free
+/// (id, year, status, completeness, identity_set — never names or
+/// SSNs). A return that fails to load or compute reports
+/// `"complete": "error"` instead of failing the whole listing.
+fn list_returns(store: &Path, params: &TaxParams) -> Vec<Value> {
+    let dir = store.join("returns");
+    let mut ids: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for entry in rd.flatten() {
+            if entry.path().join("return.json").exists() {
+                ids.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+    }
+    ids.sort();
+    ids.iter()
+        .map(|id| match load_return(store, id) {
+            Ok(ret) => {
+                let complete: Value = match compute_view(&ret, params) {
+                    Ok(view) => json!(view.complete),
+                    Err(_) => json!("error"),
+                };
+                json!({
+                    "id": ret.id,
+                    "year": ret.year,
+                    "status": ret.status,
+                    "complete": complete,
+                    "identity_set": ret.taxpayer.is_some(),
+                })
+            }
+            Err(_) => json!({
+                "id": id,
+                "year": Value::Null,
+                "status": Value::Null,
+                "complete": "error",
+                "identity_set": false,
+            }),
+        })
+        .collect()
 }
 
 fn stored_w2s(ret: &StoredReturn) -> CResult<Vec<W2Input>> {
@@ -530,6 +620,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 f1099_bs: bs,
                 f1099_necs: necs,
                 dependents: deps,
+                identity: ret.taxpayer.clone(),
             };
             let computed = compute_1040(&input, params);
             warnings.extend(computed.notes.iter().cloned());
@@ -548,7 +639,10 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
             // stored documents are computed from them.
             let wages: Money = w2s.iter().map(|w| w.wages).sum();
             let w2_withholding: Money = w2s.iter().map(|w| w.federal_withholding).sum();
-            let deduction = params.standard_deduction(status);
+            // Line 12 stays computable in the partial view: the base
+            // deduction plus the identity's age-65/blind additions.
+            let deduction = params.standard_deduction(status)
+                + additional_standard_deduction(ret.taxpayer.as_ref(), status, params);
             let mut lines: BTreeMap<String, FactResult<Money>> = BTreeMap::new();
             lines.insert("1a".into(), FactResult::Complete(wages));
             lines.insert("1z".into(), FactResult::Complete(wages));
@@ -818,6 +912,10 @@ const CASE007_INPUT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/007-actc-hoh/input.json");
 const CASE007_CORRECT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/007-actc-hoh/correct.json");
+const CASE008_INPUT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/008-identity-65plus/input.json");
+const CASE008_CORRECT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/008-identity-65plus/correct.json");
 
 /// (case directory name, embedded input.json, embedded correct.json).
 const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
@@ -828,6 +926,7 @@ const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
     ("005-w2-nec", CASE005_INPUT, CASE005_CORRECT),
     ("006-family-mfj", CASE006_INPUT, CASE006_CORRECT),
     ("007-actc-hoh", CASE007_INPUT, CASE007_CORRECT),
+    ("008-identity-65plus", CASE008_INPUT, CASE008_CORRECT),
 ];
 
 fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String>)> {
@@ -960,10 +1059,39 @@ fn schema_json() -> Value {
                 "f1099_divs": {"type": "array", "items": "I1099DivInput"},
                 "f1099_bs": {"type": "array", "items": "I1099BInput"},
                 "f1099_necs": {"type": "array", "items": "I1099NecInput"},
-                "dependents": {"type": "array", "items": "DependentInput"}
+                "dependents": {"type": "array", "items": "DependentInput"},
+                "identity": {"type": "object", "items": "TaxpayerIdentity", "optional": true, "note": "the same block `return set-identity` stores; drives the age-65/blind standard-deduction additions and the PDF identity fields"}
+            },
+            "TaxpayerIdentity": {
+                "note": "Set with `tax return set-identity --return <id> --file identity.json`. SSNs accept \"123-45-6789\" or 9 digits and are stored normalized digits-only, locally only, and shown masked (***-**-6789) in every output; the full SSN appears only inside the filled PDF.",
+                "first_name": {"type": "string", "optional": true},
+                "last_name": {"type": "string", "optional": true},
+                "ssn": {"type": "string", "optional": true},
+                "date_of_birth": {"type": "string", "format": "YYYY-MM-DD", "optional": true, "note": "born before 1961-01-02 counts as age 65 for TY2025"},
+                "occupation": {"type": "string", "optional": true},
+                "blind": {"type": "boolean", "default": false},
+                "address": {"type": "object", "items": "MailingAddress", "optional": true},
+                "spouse": {"type": "object", "items": "PersonIdentity", "optional": true, "note": "meaningful for mfj/mfs; validation warns when present for single/hoh"},
+                "can_be_claimed_as_dependent": {"type": "boolean", "default": false, "note": "fills the Form 1040 line 12a checkbox; the dependent-filer standard-deduction limitation itself is NOT computed in v1 (validation warns)"}
+            },
+            "PersonIdentity": {
+                "first_name": {"type": "string", "optional": true},
+                "last_name": {"type": "string", "optional": true},
+                "ssn": {"type": "string", "optional": true},
+                "date_of_birth": {"type": "string", "format": "YYYY-MM-DD", "optional": true},
+                "occupation": {"type": "string", "optional": true},
+                "blind": {"type": "boolean", "default": false}
+            },
+            "MailingAddress": {
+                "street": {"type": "string", "optional": true},
+                "apt": {"type": "string", "optional": true},
+                "city": {"type": "string", "optional": true},
+                "state": {"type": "string", "optional": true},
+                "zip": {"type": "string", "optional": true}
             },
             "DependentInput": {
                 "name": {"type": "string", "note": "full name as it should print in the Form 1040 Dependents table"},
+                "ssn": {"type": "string", "optional": true, "note": "9 digits, dashed or not; stored normalized, shown masked; the child tax credit requires the child to have an SSN (v1 warns, does not deny)"},
                 "relationship": {"type": "enum", "values": ["child", "stepchild", "foster_child", "other"], "note": "child/stepchild/foster_child can qualify for the child tax credit; other takes the credit-for-other-dependents path only"},
                 "age": {"type": "integer", "note": "age on December 31 of the tax year; the child tax credit requires under 17"},
                 "months_lived_with_taxpayer": {"type": "integer", "minimum": 0, "maximum": 12, "default": 12, "note": "v1 models the residency test as more than half the year (> 6 months)"}
@@ -1047,7 +1175,7 @@ fn node_templates() -> Vec<(String, bool, Value)> {
         (
             "dependent".to_string(),
             true,
-            json!({"name": "", "relationship": "child", "age": 0, "months_lived_with_taxpayer": 12}),
+            json!({"name": "", "ssn": null, "relationship": "child", "age": 0, "months_lived_with_taxpayer": 12}),
         ),
     ]
 }
@@ -1134,6 +1262,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 status: status_parsed.as_str().to_string(),
                 entries: Vec::new(),
                 other_income,
+                taxpayer: None,
             };
             save_return(&cli.store, &ret)?;
             let value = json!({"returnId": ret.id, "year": ret.year, "status": ret.status});
@@ -1147,8 +1276,16 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             value["returnId"] = json!(ret.id);
             value["status"] = json!(ret.status);
             value["year"] = json!(ret.year);
+            // Identity is shown with SSNs masked — never in full.
+            value["taxpayer"] = match &ret.taxpayer {
+                Some(t) => masked_identity_json(t),
+                None => Value::Null,
+            };
             let human = {
                 let mut s = format!("return {} — complete: {}\n", ret.id, view.complete);
+                if ret.taxpayer.is_some() {
+                    s.push_str("  identity: set (SSNs masked in output)\n");
+                }
                 for (line, fr) in &view.lines {
                     s.push_str(&format!("  line {:>3}: {}\n", line, line_json(fr)));
                 }
@@ -1169,6 +1306,26 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             if ret.other_income.is_none() {
                 findings.push(json!({"code": "other_income_not_recorded", "severity": "warning",
                     "message": "interest/dividend income not recorded; totals cannot be validated as complete", "field": null}));
+            }
+            match &ret.taxpayer {
+                None => {
+                    findings.push(json!({"code": "identity_not_set", "severity": "info",
+                        "message": "identity not set — age/blind standard-deduction additions not checked (set it with `tax return set-identity`); line 12 is the base standard deduction only",
+                        "field": null, "entry": null}));
+                }
+                Some(identity) => {
+                    if identity.spouse.is_some() && matches!(ret.status.as_str(), "single" | "hoh")
+                    {
+                        findings.push(json!({"code": "identity_spouse_unexpected", "severity": "warning",
+                            "message": format!("a spouse identity block is stored but the filing status is {}; the spouse block is meaningful only for mfj/mfs and its standard-deduction conditions are not counted", ret.status),
+                            "field": null, "entry": null}));
+                    }
+                    if identity.can_be_claimed_as_dependent {
+                        findings.push(json!({"code": "dependent_filer_std_ded_not_computed", "severity": "warning",
+                            "message": "can_be_claimed_as_dependent is set: the dependent-filer standard deduction limitation (greater of $1,350 or earned income + $450, capped at the regular standard deduction) is not computed in v1 — line 12 does not apply it",
+                            "field": null, "entry": null}));
+                    }
+                }
             }
             for (i, w2) in stored_w2s(&ret)?.iter().enumerate() {
                 for f in tax_doc::validate_w2(w2, &params) {
@@ -1224,6 +1381,58 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 },
             ))
         }
+        ReturnAction::SetIdentity { r#return, file } => {
+            let text = std::fs::read_to_string(&file).map_err(io_err)?;
+            let raw: TaxpayerIdentity = serde_json::from_str(&text).map_err(json_err)?;
+            let identity = raw
+                .normalized()
+                .map_err(|e| CliErr::new("invalid_input", e))?;
+            let mut ret = load_return(&cli.store, &r#return)?;
+            ret.taxpayer = Some(identity.clone());
+            save_return(&cli.store, &ret)?;
+            let masked = masked_identity_json(&identity);
+            let human = format!(
+                "identity stored on return {} (SSNs masked: taxpayer {}, spouse {})",
+                ret.id,
+                identity
+                    .person
+                    .ssn
+                    .as_deref()
+                    .map(mask_ssn)
+                    .unwrap_or_else(|| "not set".to_string()),
+                identity
+                    .spouse
+                    .as_ref()
+                    .and_then(|s| s.ssn.as_deref())
+                    .map(mask_ssn)
+                    .unwrap_or_else(|| "not set".to_string()),
+            );
+            Ok(Out::ok(
+                json!({"returnId": ret.id, "taxpayer": masked}),
+                human,
+            ))
+        }
+        ReturnAction::List => {
+            let rows = list_returns(&cli.store, &params);
+            let human = if rows.is_empty() {
+                "no returns in store".to_string()
+            } else {
+                rows.iter()
+                    .map(|r| {
+                        format!(
+                            "{} TY{} {} complete={} identity_set={}",
+                            r["id"].as_str().unwrap_or("?"),
+                            r["year"],
+                            r["status"].as_str().unwrap_or("?"),
+                            r["complete"],
+                            r["identity_set"]
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            Ok(Out::ok(Value::Array(rows), human))
+        }
         ReturnAction::Export {
             r#return,
             export_type,
@@ -1271,18 +1480,24 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     let status = FilingStatus::parse(&ret.status)
                         .map_err(|e| CliErr::new("invalid_status", e))?;
                     let dependents = stored_dependents(&ret)?;
-                    let plan = build_fill_values_with_dependents(&view.lines, status, &dependents)
-                        .map_err(|incomplete| {
-                            CliErr::with_extra(
-                                "return_incomplete",
-                                format!(
+                    let plan = build_fill_values_with_dependents(
+                        &view.lines,
+                        status,
+                        &dependents,
+                        ret.taxpayer.as_ref(),
+                        &params,
+                    )
+                    .map_err(|incomplete| {
+                        CliErr::with_extra(
+                            "return_incomplete",
+                            format!(
                                 "return {} is incomplete; mapped lines missing or incomplete: {}",
                                 ret.id,
                                 incomplete.join(", ")
                             ),
-                                json!({"incomplete_lines": incomplete}),
-                            )
-                        })?;
+                            json!({"incomplete_lines": incomplete}),
+                        )
+                    })?;
                     let values: std::collections::HashMap<String, String> = plan
                         .values
                         .iter()
@@ -1293,10 +1508,21 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                         .map_err(|e| CliErr::new("pdf_fill_failed", e.to_string()))?;
                     let mut all_warnings = report.warnings.clone();
                     all_warnings.extend(plan.warnings.iter().cloned());
+                    // Identity-section values report with "line": null
+                    // and a "section" tag; SSN values report MASKED
+                    // (the plan's display_value) — the raw digits go
+                    // only into the PDF itself.
                     let filled: Vec<Value> = plan
                         .values
                         .iter()
-                        .map(|v| json!({"line": v.line, "field": v.field, "value": v.value}))
+                        .map(|v| {
+                            let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
+                            match &v.section {
+                                Some(section) => json!({"line": Value::Null, "section": section,
+                                    "field": v.field, "value": shown}),
+                                None => json!({"line": v.line, "field": v.field, "value": shown}),
+                            }
+                        })
                         .collect();
                     let skipped: Vec<Value> = plan
                         .skipped
@@ -1363,6 +1589,10 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
             };
             let value: Value = serde_json::from_str(&text).map_err(json_err)?;
             // Validate against the typed struct before storing anything.
+            // A dependent's SSN, when present, is validated and stored
+            // normalized (digits only); the stored JSON is rewritten
+            // from the typed value so the normalization sticks.
+            let mut value = value;
             match node_type.as_str() {
                 "w2" => {
                     let _: W2Input = serde_json::from_value(value.clone()).map_err(json_err)?;
@@ -1383,7 +1613,7 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
                         serde_json::from_value(value.clone()).map_err(json_err)?;
                 }
                 "dependent" => {
-                    let dep: DependentInput =
+                    let mut dep: DependentInput =
                         serde_json::from_value(value.clone()).map_err(json_err)?;
                     if dep.months_lived_with_taxpayer > 12 {
                         return Err(CliErr::new(
@@ -1393,6 +1623,18 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
                                 dep.name, dep.months_lived_with_taxpayer
                             ),
                         ));
+                    }
+                    if let Some(ssn) = &dep.ssn {
+                        dep.ssn = Some(normalize_ssn(ssn).ok_or_else(|| {
+                            CliErr::new(
+                                "invalid_input",
+                                format!(
+                                    "dependent {}: ssn must be 9 digits (\"123-45-6789\" or \"123456789\")",
+                                    dep.name
+                                ),
+                            )
+                        })?);
+                        value = serde_json::to_value(&dep).map_err(json_err)?;
                     }
                 }
                 _ => unreachable!(),
@@ -1623,7 +1865,21 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
         "9" => ("line 1z + line 2b + line 3b + line 7 + line 8".to_string(), "Form 1040, line 9".to_string()),
         "10" => ("the deductible part of self-employment tax: one-half of line 23 (Schedule 1 line 15, from Schedule SE line 13)".to_string(), "Form 1040, line 10; IRC 164(f)".to_string()),
         "11" => ("line 9 minus line 10 (adjustments to income)".to_string(), "Form 1040, line 11".to_string()),
-        "12" => (format!("standard deduction for filing status '{}' from params/2025.json", ret.status), params.source.clone()),
+        "12" => (match &ret.taxpayer {
+            Some(identity) => {
+                let addition = additional_standard_deduction(
+                    Some(identity),
+                    FilingStatus::parse(&ret.status).unwrap_or(FilingStatus::Single),
+                    &params,
+                );
+                if addition.cents() > 0 {
+                    format!("standard deduction for filing status '{}' from params/2025.json, plus {addition} additional for age 65 / blindness conditions from the stored identity (per-condition amount from params/2025.json)", ret.status)
+                } else {
+                    format!("standard deduction for filing status '{}' from params/2025.json (identity stored; no age-65/blind additions apply)", ret.status)
+                }
+            }
+            None => format!("standard deduction for filing status '{}' from params/2025.json", ret.status),
+        }, params.source.clone()),
         "15" => ("line 11 minus line 12, floored at zero".to_string(), "Form 1040, line 15".to_string()),
         "16" => (line16_derivation(view.line16_method.as_deref()), params.source.clone()),
         "23" => ("self-employment tax from Schedule SE, via Schedule 2 line 4: 12.4% Social Security on net SE earnings (internal key schedse_net_earnings) up to the wage-base room left after W-2 wages, plus 2.9% Medicare on all net SE earnings; rates and wage base from params/2025.json".to_string(), "Form 1040, line 23; Schedule SE; IRC 1401".to_string()),
@@ -1724,6 +1980,8 @@ fn run(cli: &Cli) -> CResult<Out> {
             ReturnAction::Create { .. }
             | ReturnAction::Get { .. }
             | ReturnAction::Validate { .. }
+            | ReturnAction::SetIdentity { .. }
+            | ReturnAction::List
             | ReturnAction::Export { .. } => {
                 // Re-dispatch with ownership-free copies: simplest is to call a
                 // helper that matches on the same enum by reference patterns
@@ -1792,6 +2050,14 @@ fn cmd_return_ref(cli: &Cli, action: &ReturnAction) -> CResult<Out> {
                 r#return: r#return.clone(),
             },
         ),
+        ReturnAction::SetIdentity { r#return, file } => cmd_return(
+            cli,
+            ReturnAction::SetIdentity {
+                r#return: r#return.clone(),
+                file: file.clone(),
+            },
+        ),
+        ReturnAction::List => cmd_return(cli, ReturnAction::List),
         ReturnAction::Export {
             r#return,
             export_type,
@@ -1854,5 +2120,116 @@ fn main() {
             eprintln!("{}", obj);
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spike_identity() -> TaxpayerIdentity {
+        TaxpayerIdentity {
+            person: PersonIdentity {
+                first_name: Some("Spike".to_string()),
+                last_name: Some("Tester".to_string()),
+                ssn: Some("123456789".to_string()),
+                date_of_birth: Some("1958-05-01".to_string()),
+                occupation: Some("Engineer".to_string()),
+                blind: false,
+            },
+            address: None,
+            spouse: Some(PersonIdentity {
+                first_name: Some("Partner".to_string()),
+                last_name: Some("Tester".to_string()),
+                ssn: Some("987654321".to_string()),
+                date_of_birth: Some("1960-11-15".to_string()),
+                occupation: None,
+                blind: true,
+            }),
+            can_be_claimed_as_dependent: false,
+        }
+    }
+
+    #[test]
+    fn masked_identity_output_never_shows_full_ssn() {
+        let rendered = serde_json::to_string(&masked_identity_json(&spike_identity())).unwrap();
+        assert!(
+            !rendered.contains("123456789"),
+            "taxpayer SSN leaked: {rendered}"
+        );
+        assert!(
+            !rendered.contains("987654321"),
+            "spouse SSN leaked: {rendered}"
+        );
+        assert!(rendered.contains("***-**-6789"), "{rendered}");
+        assert!(rendered.contains("***-**-4321"), "{rendered}");
+    }
+
+    #[test]
+    fn set_identity_normalizes_dashed_ssn() {
+        let raw: TaxpayerIdentity = serde_json::from_str(
+            r#"{"first_name":"Spike","ssn":"123-45-6789","spouse":{"ssn":"987-65-4321"}}"#,
+        )
+        .unwrap();
+        let id = raw.normalized().unwrap();
+        assert_eq!(id.person.ssn.as_deref(), Some("123456789"));
+        assert_eq!(id.spouse.unwrap().ssn.as_deref(), Some("987654321"));
+        let bad: TaxpayerIdentity = serde_json::from_str(r#"{"ssn":"123-45-678"}"#).unwrap();
+        assert!(bad.normalized().is_err());
+    }
+
+    #[test]
+    fn old_return_without_taxpayer_block_still_loads() {
+        // A return.json written before the identity block existed.
+        let text = r#"{
+            "id": "r2025-1-1", "year": 2025, "status": "single",
+            "entries": [],
+            "other_income": {"interest": "0", "dividends": "0"}
+        }"#;
+        let ret: StoredReturn = serde_json::from_str(text).unwrap();
+        assert!(ret.taxpayer.is_none());
+        // And it reserializes without inventing the block.
+        let out = serde_json::to_string(&ret).unwrap();
+        assert!(!out.contains("taxpayer"), "{out}");
+    }
+
+    #[test]
+    fn return_list_is_pii_free_with_two_returns() {
+        let store = std::env::temp_dir().join(format!("opentax-list-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let params = TaxParams::load_2025().unwrap();
+        let complete = StoredReturn {
+            id: "r2025-100-1".to_string(),
+            year: 2025,
+            status: "mfj".to_string(),
+            entries: Vec::new(),
+            other_income: Some(OtherIncome {
+                interest: Money::ZERO,
+                dividends: Money::ZERO,
+            }),
+            taxpayer: Some(spike_identity()),
+        };
+        let partial = StoredReturn {
+            id: "r2025-200-2".to_string(),
+            year: 2025,
+            status: "single".to_string(),
+            entries: Vec::new(),
+            other_income: None,
+            taxpayer: None,
+        };
+        assert!(save_return(&store, &complete).is_ok());
+        assert!(save_return(&store, &partial).is_ok());
+        let rows = list_returns(&store, &params);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], "r2025-100-1");
+        assert_eq!(rows[0]["complete"], true);
+        assert_eq!(rows[0]["identity_set"], true);
+        assert_eq!(rows[1]["id"], "r2025-200-2");
+        assert_eq!(rows[1]["complete"], false);
+        assert_eq!(rows[1]["identity_set"], false);
+        let rendered = serde_json::to_string(&rows).unwrap();
+        assert!(!rendered.contains("Tester"), "last name leaked: {rendered}");
+        assert!(!rendered.contains("123456789"), "SSN leaked: {rendered}");
+        let _ = std::fs::remove_dir_all(&store);
     }
 }

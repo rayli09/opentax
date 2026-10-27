@@ -22,9 +22,13 @@ description: Preparation skill for opentax. Use when facts/documents are entered
    or a filled Form 1040 PDF:
    `tax return export --return <id> --type pdf --template <blank TY2025 f1040.pdf> --out <file>`
    (amount lines, filing status, and the page-1 Dependents table for
-   stored dependents — names and credit checkboxes for the first four;
-   identity fields and dependent SSNs are reported as skipped, never
-   invented). MeF export returns `not_implemented` in
+   stored dependents — names, stored SSNs, and credit checkboxes for
+   the first four; when an identity block is stored via
+   `tax return set-identity`, also the header names/SSNs/address, the
+   page-2 occupations, and the standard-deduction age/blind/claim
+   checkboxes. Identity pieces that are not stored are reported as
+   skipped, never invented, and SSNs in the export report are masked —
+   the full SSN appears only inside the filled PDF). MeF export returns `not_implemented` in
    v1 — report that plainly if asked; do not claim a file exists when
    none was produced.
 6. Present a closing summary: refund/owed line values (34/37) quoted from

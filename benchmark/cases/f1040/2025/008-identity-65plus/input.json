@@ -1,0 +1,35 @@
+{
+  "status": "mfj",
+  "w2s": [
+    {
+      "employer_ein": "12-3456789",
+      "wages": "7000000",
+      "federal_withholding": "600000"
+    }
+  ],
+  "interest_income": "0",
+  "ordinary_dividends": "0",
+  "identity": {
+    "first_name": "Spike",
+    "last_name": "Tester",
+    "ssn": "123456789",
+    "date_of_birth": "1958-05-01",
+    "occupation": "Retired",
+    "blind": false,
+    "address": {
+      "street": "123 Main St",
+      "city": "Springfield",
+      "state": "IL",
+      "zip": "62704"
+    },
+    "spouse": {
+      "first_name": "Partner",
+      "last_name": "Tester",
+      "ssn": "987654321",
+      "date_of_birth": "1960-11-15",
+      "occupation": "Retired",
+      "blind": false
+    },
+    "can_be_claimed_as_dependent": false
+  }
+}

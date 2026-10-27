@@ -186,12 +186,20 @@ fn default_months_lived_with_taxpayer() -> u32 {
 /// One dependent claimed on the return (Form 1040, Dependents section).
 /// Dependents are not income documents: they feed only the Schedule
 /// 8812 credits (child tax credit, credit for other dependents,
-/// additional child tax credit). No TIN/SSN is stored — a dependent's
-/// SSN is never entered into the PDF export (see docs/KNOWN_LIMITS.md).
+/// additional child tax credit). A dependent's SSN is optional input:
+/// when stored (normalized to 9 digits, see [`normalize_ssn`]) the PDF
+/// export prints it in the Dependents table question (3); the child
+/// tax credit legally requires the child to have an SSN, which v1
+/// models as a validation warning, not a denial (docs/KNOWN_LIMITS.md).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependentInput {
     /// Full name as it should print in the Dependents table.
     pub name: String,
+    /// Social Security number, normalized digits-only when set via the
+    /// CLI (`tax form add` / identity intake). Masked in every output;
+    /// the full value appears only inside the filled PDF.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssn: Option<String>,
     pub relationship: DependentRelationship,
     /// Age on December 31 of the tax year. The child tax credit
     /// requires the child to be *under* 17 at year-end (Schedule 8812
@@ -234,6 +242,17 @@ pub fn validate_dependent(dep: &DependentInput) -> Vec<ConsistencyFinding> {
             ),
         });
     }
+    if classify_dependent(dep) == DependentCreditClass::ChildTaxCredit && dep.ssn.is_none() {
+        findings.push(ConsistencyFinding {
+            code: "dependent_ctc_ssn",
+            severity: "warning",
+            message: format!(
+                "dependent {}: CTC requires the child to have an SSN (v1 still \
+                 computes; a real filing would deny)",
+                dep.name
+            ),
+        });
+    }
     if dep.months_lived_with_taxpayer <= 6 {
         findings.push(ConsistencyFinding {
             code: "dependent_residency",
@@ -254,6 +273,181 @@ pub fn validate_dependent(dep: &DependentInput) -> Vec<ConsistencyFinding> {
 /// line 8. An empty set is a stated fact: net zero.
 pub fn schedule_c_net_profit(necs: &[I1099NecInput]) -> Money {
     necs.iter().map(|n| n.net_profit()).sum()
+}
+
+/// Normalize an SSN as typed by a user: accepts "123-45-6789" or the
+/// bare 9 digits (stray spaces are ignored). Returns the digits-only
+/// form, or `None` when the input is not exactly 9 digits.
+pub fn normalize_ssn(raw: &str) -> Option<String> {
+    let digits: String = raw.chars().filter(|c| *c != '-' && *c != ' ').collect();
+    if digits.len() == 9 && digits.chars().all(|c| c.is_ascii_digit()) {
+        Some(digits)
+    } else {
+        None
+    }
+}
+
+/// Mask an SSN for display: `"***-**-6789"`. Accepts the normalized
+/// digits-only form or a dashed form; anything unrecognized masks to
+/// `"***-**-****"` so a malformed value is never echoed in full.
+pub fn mask_ssn(ssn: &str) -> String {
+    match normalize_ssn(ssn) {
+        Some(digits) => format!("***-**-{}", &digits[5..]),
+        None => "***-**-****".to_string(),
+    }
+}
+
+/// Light structural check for a YYYY-MM-DD date (shape and plausible
+/// month/day ranges; not a calendar validation).
+fn valid_iso_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return false;
+    }
+    let num = |lo: usize, hi: usize| -> Option<u32> { s[lo..hi].parse().ok() };
+    match (num(0, 4), num(5, 7), num(8, 10)) {
+        (Some(_), Some(m), Some(d)) => (1..=12).contains(&m) && (1..=31).contains(&d),
+        _ => false,
+    }
+}
+
+/// The identity facts of one person (the taxpayer, or the spouse):
+/// what prints in the Form 1040 header / signature blocks, plus the
+/// date of birth and blindness that drive the age-65/blind standard
+/// deduction additions. Every field is optional — a partial identity
+/// fills what is present in the PDF export and skips the rest.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonIdentity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_name: Option<String>,
+    /// SSN, stored normalized digits-only (see [`normalize_ssn`]).
+    /// Local store only; masked in every CLI output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssn: Option<String>,
+    /// Date of birth, YYYY-MM-DD.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_of_birth: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occupation: Option<String>,
+    /// Legally blind (a standard-deduction condition).
+    #[serde(default)]
+    pub blind: bool,
+}
+
+impl PersonIdentity {
+    /// True when the date of birth is before the params cutoff
+    /// (TY2025: born before 1961-01-02 = considered 65). ISO dates
+    /// compare lexicographically; an absent or malformed DOB is not
+    /// age 65.
+    pub fn is_age_65(&self, params: &TaxParams) -> bool {
+        match &self.date_of_birth {
+            Some(dob) => valid_iso_date(dob) && dob.as_str() < params.age_65_born_before(),
+            None => false,
+        }
+    }
+
+    /// Number of standard-deduction conditions this person carries:
+    /// age 65 (0/1) + blind (0/1).
+    pub fn standard_deduction_conditions(&self, params: &TaxParams) -> u32 {
+        u32::from(self.is_age_65(params)) + u32::from(self.blind)
+    }
+
+    /// Validate and normalize in place: SSNs become digits-only, DOBs
+    /// must be YYYY-MM-DD. `who` ("taxpayer" / "spouse") labels errors.
+    fn normalized(mut self, who: &str) -> Result<PersonIdentity, String> {
+        if let Some(ssn) = &self.ssn {
+            self.ssn = Some(normalize_ssn(ssn).ok_or_else(|| {
+                format!("{who} SSN must be 9 digits (\"123-45-6789\" or \"123456789\")")
+            })?);
+        }
+        if let Some(dob) = &self.date_of_birth {
+            if !valid_iso_date(dob) {
+                return Err(format!("{who} date_of_birth must be YYYY-MM-DD"));
+            }
+        }
+        Ok(self)
+    }
+}
+
+/// Mailing address as printed on Form 1040 page 1. Every component is
+/// optional; the export fills what is present.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailingAddress {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub street: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub city: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zip: Option<String>,
+}
+
+/// The return-level taxpayer identity block (set with
+/// `tax return set-identity`). Optional as a whole: a return without
+/// it computes exactly as before, and the PDF export reports the
+/// identity fields as skipped instead of filling them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaxpayerIdentity {
+    #[serde(flatten)]
+    pub person: PersonIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address: Option<MailingAddress>,
+    /// Spouse identity; meaningful for MFJ/MFS (validation warns when
+    /// present for single/HoH).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spouse: Option<PersonIdentity>,
+    /// Someone can claim the taxpayer as a dependent (Form 1040 page 2,
+    /// line 12a checkbox). The dependent-filer standard-deduction
+    /// limitation is NOT computed in v1 (validation warns).
+    #[serde(default)]
+    pub can_be_claimed_as_dependent: bool,
+}
+
+impl TaxpayerIdentity {
+    /// Validate and normalize (SSNs digits-only, DOB shape) for both
+    /// the taxpayer and the spouse.
+    pub fn normalized(self) -> Result<TaxpayerIdentity, String> {
+        let person = self.person.normalized("taxpayer")?;
+        let spouse = match self.spouse {
+            Some(s) => Some(s.normalized("spouse")?),
+            None => None,
+        };
+        Ok(TaxpayerIdentity {
+            person,
+            address: self.address,
+            spouse,
+            can_be_claimed_as_dependent: self.can_be_claimed_as_dependent,
+        })
+    }
+}
+
+/// The age-65/blind addition to the standard deduction for a return:
+/// per-condition amount for the filing status times the number of
+/// conditions. The taxpayer's conditions always count; the spouse's
+/// count only for MFJ/MFS, where a spouse block exists. No identity (or
+/// no DOB) means no additions — identity is optional in v1, so line 12
+/// never becomes Incomplete for a missing date of birth.
+pub fn additional_standard_deduction(
+    identity: Option<&TaxpayerIdentity>,
+    status: FilingStatus,
+    params: &TaxParams,
+) -> Money {
+    let Some(identity) = identity else {
+        return Money::ZERO;
+    };
+    let mut conditions = identity.person.standard_deduction_conditions(params);
+    if matches!(status, FilingStatus::Mfj | FilingStatus::Mfs) {
+        if let Some(spouse) = &identity.spouse {
+            conditions += spouse.standard_deduction_conditions(params);
+        }
+    }
+    let per_condition = params.standard_deduction_addition_per_condition(status);
+    Money::from_cents(per_condition.cents() * conditions as i64)
 }
 
 /// The complete set of inputs the v1 1040 slice consumes. Scalar income
@@ -282,6 +476,12 @@ pub struct Form1040Input {
     /// Dependents claimed on the return (Schedule 8812 credits only).
     #[serde(default)]
     pub dependents: Vec<DependentInput>,
+    /// Taxpayer identity (optional in v1): drives the age-65/blind
+    /// standard-deduction additions on line 12 and the identity fields
+    /// of the PDF export. Absent = no additions, identity fields
+    /// reported skipped on export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<TaxpayerIdentity>,
 }
 
 /// A computed return: line number (Form 1040 numbering) → fact result.
@@ -495,7 +695,10 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     );
     // Line 10 (adjustments) → line 11 AGI = line 9 − line 10.
     let agi_f = add_facts(total_income_f.clone(), complete(-se_deduction));
-    let deduction = params.standard_deduction(input.status);
+    // Line 12: base standard deduction plus the age-65/blind additions
+    // from the stored identity (zero when no identity/DOB is stored).
+    let deduction = params.standard_deduction(input.status)
+        + additional_standard_deduction(input.identity.as_ref(), input.status, params);
     let taxable_f = agi_f
         .clone()
         .map(|agi| Money::from_cents((agi - deduction).cents().max(0)));
@@ -678,6 +881,16 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
          nonrefundable, line 28 additional child tax credit, line 32)."
             .to_string(),
     ];
+    let std_ded_addition =
+        additional_standard_deduction(input.identity.as_ref(), input.status, params);
+    if std_ded_addition.cents() > 0 {
+        notes.push(format!(
+            "Line 12 includes a {std_ded_addition} additional standard deduction \
+             for age 65 / blindness conditions from the stored identity \
+             (per-condition amount for filing status {} from params/2025.json).",
+            input.status.as_str()
+        ));
+    }
     if !input.dependents.is_empty() {
         notes.push(
             "Schedule 8812 is the simplified computation: MAGI is taken \
@@ -746,6 +959,11 @@ pub struct FieldMapEntry {
     /// dependent column (1–4) this field belongs to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dependent_index: Option<u32>,
+    /// For identity entries (`identity_*` kinds): which stored
+    /// identity fact feeds this field — `"taxpayer.first_name"`,
+    /// `"spouse.ssn"`, `"address.city"`, `"taxpayer.age_65"`, …
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
     /// How this assignment was verified (geometric row match).
     pub note: String,
 }
@@ -783,11 +1001,45 @@ pub fn f1040_2025_field_map() -> &'static F1040FieldMap {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FillValue {
     /// Form line (or `"filing_status"`) this value belongs to.
+    /// Identity-section values carry `"identity"` here and are told
+    /// apart by `section`.
     pub line: String,
     /// Qualified AcroForm field name.
     pub field: String,
     /// The exact string to write (formatted amount, or checkbox on-state).
     pub value: String,
+    /// What reports may show instead of `value` — set for SSN fields
+    /// (masked `"***-**-6789"`) so the full SSN never appears in an
+    /// export report; only the filled PDF carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_value: Option<String>,
+    /// `"identity"` for values sourced from the stored taxpayer
+    /// identity block (header fields, occupations, the standard
+    /// deduction checkboxes); `None` for line-driven values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
+}
+
+impl FillValue {
+    fn line_value(line: String, field: String, value: String) -> FillValue {
+        FillValue {
+            line,
+            field,
+            value,
+            display_value: None,
+            section: None,
+        }
+    }
+
+    fn identity(field: String, value: String, display_value: Option<String>) -> FillValue {
+        FillValue {
+            line: "identity".to_string(),
+            field,
+            value,
+            display_value,
+            section: Some("identity".to_string()),
+        }
+    }
 }
 
 /// A form field the export deliberately does not fill, with the reason.
@@ -807,13 +1059,65 @@ pub struct FillPlan {
     pub warnings: Vec<String>,
 }
 
-/// Identity fields a stored return does not carry today; the PDF export
-/// never invents them, it reports them as skipped.
+/// Identity pieces the PDF export reports as skipped when NO identity
+/// block is stored at all (the pre-identity behavior, unchanged). With
+/// a partial identity stored, only the pieces actually absent are
+/// reported, per field.
 const IDENTITY_SKIPS: &[(&str, &str)] = &[
     ("taxpayer_name", "not stored in return"),
     ("taxpayer_ssn", "not stored in return"),
     ("home_address", "not stored in return"),
 ];
+
+/// Resolve one identity map key against the stored identity: the text
+/// to fill, or `None` when that piece is absent.
+fn identity_text_value(identity: &TaxpayerIdentity, key: &str) -> Option<String> {
+    let person = &identity.person;
+    let spouse = identity.spouse.as_ref();
+    let address = identity.address.as_ref();
+    let nonempty = |o: &Option<String>| o.clone().filter(|s| !s.is_empty());
+    match key {
+        "taxpayer.first_name" => nonempty(&person.first_name),
+        "taxpayer.last_name" => nonempty(&person.last_name),
+        "taxpayer.occupation" => nonempty(&person.occupation),
+        "spouse.first_name" => spouse.and_then(|s| nonempty(&s.first_name)),
+        "spouse.last_name" => spouse.and_then(|s| nonempty(&s.last_name)),
+        "spouse.occupation" => spouse.and_then(|s| nonempty(&s.occupation)),
+        "address.street" => address.and_then(|a| nonempty(&a.street)),
+        "address.apt" => address.and_then(|a| nonempty(&a.apt)),
+        "address.city" => address.and_then(|a| nonempty(&a.city)),
+        "address.state" => address.and_then(|a| nonempty(&a.state)),
+        "address.zip" => address.and_then(|a| nonempty(&a.zip)),
+        _ => None,
+    }
+}
+
+/// Resolve an identity SSN map key: the normalized 9 digits to write
+/// into the comb field, or `None` when absent/unparseable.
+fn identity_ssn_value(identity: &TaxpayerIdentity, key: &str) -> Option<String> {
+    let raw = match key {
+        "taxpayer.ssn" => &identity.person.ssn,
+        "spouse.ssn" => &identity.spouse.as_ref()?.ssn,
+        _ => return None,
+    };
+    raw.as_deref().and_then(normalize_ssn)
+}
+
+/// Resolve an identity checkbox map key: whether the box is checked.
+fn identity_checkbox_value(identity: &TaxpayerIdentity, key: &str, params: &TaxParams) -> bool {
+    match key {
+        "taxpayer.can_be_claimed_as_dependent" => identity.can_be_claimed_as_dependent,
+        "taxpayer.age_65" => identity.person.is_age_65(params),
+        "taxpayer.blind" => identity.person.blind,
+        "spouse.age_65" => identity
+            .spouse
+            .as_ref()
+            .map(|s| s.is_age_65(params))
+            .unwrap_or(false),
+        "spouse.blind" => identity.spouse.as_ref().map(|s| s.blind).unwrap_or(false),
+        _ => false,
+    }
+}
 
 /// Turn computed 1040 lines + filing status into template fill values.
 ///
@@ -826,23 +1130,37 @@ pub fn build_fill_values(
     lines: &BTreeMap<String, FactResult<Money>>,
     status: FilingStatus,
 ) -> Result<FillPlan, Vec<String>> {
-    build_fill_values_with_dependents(lines, status, &[])
+    // No identity: the params only feed identity checkbox resolution,
+    // which never runs; the 2025 params are the bundled set regardless.
+    let params = TaxParams::load_2025().expect("bundled TY2025 params must parse");
+    build_fill_values_with_dependents(lines, status, &[], None, &params)
 }
 
 /// [`build_fill_values`], plus the page-1 Dependents table for the
 /// stored dependents: each dependent's name (first whitespace-separated
 /// word → the (1) First name field, the remainder → the (2) Last name
-/// field) and the question-(7) credit checkbox matching the dependent's
+/// field), the (3) SSN field when an SSN is stored for that dependent,
+/// and the question-(7) credit checkbox matching the dependent's
 /// Schedule 8812 classification ([`worksheets::classify_dependent`]:
 /// child tax credit → on-state `"1"`, credit for other dependents →
 /// `"2"`, no credit → neither box). The table has four columns: a fifth
 /// or later dependent is not printed (a warning is recorded; the
-/// credits are still computed for all dependents). Dependent SSNs are
-/// not stored, so the (3) SSN fields are reported under `skipped`.
+/// credits are still computed for all dependents).
+///
+/// When a taxpayer `identity` is stored, the header fields (names,
+/// SSNs, address), the page-2 occupations and the standard-deduction
+/// checkboxes (12a can-be-claimed, 12d/12e age-65/blind) are filled
+/// from it; pieces that are absent are reported under `skipped`
+/// individually. With no identity at all, the historical three
+/// aggregate skips (taxpayer_name / taxpayer_ssn / home_address) are
+/// reported instead. SSN fill values carry a masked `display_value`:
+/// reports must use it, never the raw digits.
 pub fn build_fill_values_with_dependents(
     lines: &BTreeMap<String, FactResult<Money>>,
     status: FilingStatus,
     dependents: &[DependentInput],
+    identity: Option<&TaxpayerIdentity>,
+    params: &TaxParams,
 ) -> Result<FillPlan, Vec<String>> {
     let map = f1040_2025_field_map();
     let mut incomplete: Vec<String> = Vec::new();
@@ -883,29 +1201,29 @@ pub fn build_fill_values_with_dependents(
         if entry.line == "37" && !keep_37 {
             continue;
         }
-        values.push(FillValue {
-            line: entry.line.clone(),
-            field: entry.qname.clone(),
-            value: format_amount(*m),
-        });
+        values.push(FillValue::line_value(
+            entry.line.clone(),
+            entry.qname.clone(),
+            format_amount(*m),
+        ));
     }
     // Filing-status checkbox for the return's status.
     for entry in &map.entries {
         if entry.kind == "checkbox" && entry.status.as_deref() == Some(status.as_str()) {
-            values.push(FillValue {
-                line: entry.line.clone(),
-                field: entry.qname.clone(),
-                value: entry
+            values.push(FillValue::line_value(
+                entry.line.clone(),
+                entry.qname.clone(),
+                entry
                     .value
                     .clone()
                     .expect("checkbox map entries carry an on-state value"),
-            });
+            ));
         }
     }
 
-    // Dependents table (page 1): names + the question-(7) credit
-    // checkbox, for the first four stored dependents (the form has
-    // exactly four columns).
+    // Dependents table (page 1): names, the (3) SSN when stored, and
+    // the question-(7) credit checkbox, for the first four stored
+    // dependents (the form has exactly four columns).
     let mut warnings: Vec<String> = Vec::new();
     if dependents.len() > 4 {
         warnings.push(format!(
@@ -928,20 +1246,31 @@ pub fn build_fill_values_with_dependents(
         let last = words.collect::<Vec<_>>().join(" ");
         if !first.is_empty() {
             if let Some(e) = dep_entry("dependent_first_name", index) {
-                values.push(FillValue {
-                    line: format!("dependent_{index}_first_name"),
-                    field: e.qname.clone(),
-                    value: first.to_string(),
-                });
+                values.push(FillValue::line_value(
+                    format!("dependent_{index}_first_name"),
+                    e.qname.clone(),
+                    first.to_string(),
+                ));
             }
         }
         if !last.is_empty() {
             if let Some(e) = dep_entry("dependent_last_name", index) {
-                values.push(FillValue {
-                    line: format!("dependent_{index}_last_name"),
-                    field: e.qname.clone(),
-                    value: last,
-                });
+                values.push(FillValue::line_value(
+                    format!("dependent_{index}_last_name"),
+                    e.qname.clone(),
+                    last,
+                ));
+            }
+        }
+        if let Some(digits) = dep.ssn.as_deref().and_then(normalize_ssn) {
+            if let Some(e) = dep_entry("dependent_ssn", index) {
+                let mut fv = FillValue::line_value(
+                    format!("dependent_{index}_ssn"),
+                    e.qname.clone(),
+                    digits.clone(),
+                );
+                fv.display_value = Some(mask_ssn(&digits));
+                values.push(fv);
             }
         }
         let credit_kind = match classify_dependent(dep) {
@@ -951,26 +1280,88 @@ pub fn build_fill_values_with_dependents(
         };
         if let Some(kind) = credit_kind {
             if let Some(e) = dep_entry(kind, index) {
-                values.push(FillValue {
-                    line: format!("dependent_{index}_credit"),
-                    field: e.qname.clone(),
-                    value: e
-                        .value
+                values.push(FillValue::line_value(
+                    format!("dependent_{index}_credit"),
+                    e.qname.clone(),
+                    e.value
                         .clone()
                         .expect("dependent credit map entries carry an on-state value"),
-                });
+                ));
             }
         }
     }
 
-    let mut skipped: Vec<SkippedField> = IDENTITY_SKIPS
+    // Identity section: header fields, occupations, and the standard
+    // deduction checkboxes, from the stored identity block.
+    let mut skipped: Vec<SkippedField> = Vec::new();
+    match identity {
+        None => {
+            skipped.extend(IDENTITY_SKIPS.iter().map(|(field, reason)| SkippedField {
+                field: field.to_string(),
+                reason: reason.to_string(),
+            }));
+        }
+        Some(identity) => {
+            for entry in &map.entries {
+                let Some(key) = entry.key.as_deref() else {
+                    continue;
+                };
+                // Spouse pieces are reported/filled only when a spouse
+                // is relevant: MFJ/MFS, or a spouse block is stored.
+                let spouse_piece = key.starts_with("spouse.");
+                if spouse_piece
+                    && !matches!(status, FilingStatus::Mfj | FilingStatus::Mfs)
+                    && identity.spouse.is_none()
+                {
+                    continue;
+                }
+                match entry.kind.as_str() {
+                    "identity_text" => match identity_text_value(identity, key) {
+                        Some(v) => values.push(FillValue::identity(entry.qname.clone(), v, None)),
+                        None => {
+                            // An absent apartment number is ordinary,
+                            // not a gap worth reporting.
+                            if key != "address.apt" {
+                                skipped.push(SkippedField {
+                                    field: key.replace('.', "_"),
+                                    reason: "not stored in return".to_string(),
+                                });
+                            }
+                        }
+                    },
+                    "identity_ssn" => match identity_ssn_value(identity, key) {
+                        Some(digits) => values.push(FillValue::identity(
+                            entry.qname.clone(),
+                            digits.clone(),
+                            Some(mask_ssn(&digits)),
+                        )),
+                        None => skipped.push(SkippedField {
+                            field: key.replace('.', "_"),
+                            reason: "not stored in return".to_string(),
+                        }),
+                    },
+                    "identity_checkbox" if identity_checkbox_value(identity, key, params) => {
+                        values.push(FillValue::identity(
+                            entry.qname.clone(),
+                            entry
+                                .value
+                                .clone()
+                                .expect("identity checkbox entries carry an on-state"),
+                            None,
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    // A dependent among the first four without a stored SSN leaves the
+    // (3) SSN cell blank; report it once, as before.
+    if dependents
         .iter()
-        .map(|(field, reason)| SkippedField {
-            field: field.to_string(),
-            reason: reason.to_string(),
-        })
-        .collect();
-    if !dependents.is_empty() {
+        .take(4)
+        .any(|d| d.ssn.as_deref().and_then(normalize_ssn).is_none())
+    {
         skipped.push(SkippedField {
             field: "dependent_ssn".to_string(),
             reason: "not stored in return".to_string(),
@@ -1006,6 +1397,7 @@ mod tests {
             f1099_bs: vec![],
             f1099_necs: vec![],
             dependents: vec![],
+            identity: None,
         }
     }
 
@@ -1602,6 +1994,7 @@ mod tests {
     ) -> DependentInput {
         DependentInput {
             name: name.into(),
+            ssn: None,
             relationship,
             age,
             months_lived_with_taxpayer: months,
@@ -1763,8 +2156,19 @@ mod tests {
         assert!(f
             .iter()
             .any(|x| x.code == "dependent_odc_only" && x.severity == "info"));
+        // A CTC-eligible child without an SSN: the SSN warning (v1
+        // computes anyway; a real filing would deny the credit).
         let f = validate_dependent(&dependent("D", DependentRelationship::Child, 10, 12));
-        assert!(f.is_empty(), "an ordinary qualifying child raises nothing");
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].code, "dependent_ctc_ssn");
+        assert_eq!(f[0].severity, "warning");
+        assert!(f[0]
+            .message
+            .contains("CTC requires the child to have an SSN"));
+        // With an SSN stored, an ordinary qualifying child raises nothing.
+        let mut with_ssn = dependent("E", DependentRelationship::Child, 10, 12);
+        with_ssn.ssn = Some("123456789".to_string());
+        assert!(validate_dependent(&with_ssn).is_empty());
     }
 
     #[test]
@@ -1772,9 +2176,14 @@ mod tests {
         let params = TaxParams::load_2025().unwrap();
         let input = case006_input();
         let r = compute_1040(&input, &params);
-        let plan =
-            build_fill_values_with_dependents(&r.lines, FilingStatus::Mfj, &input.dependents)
-                .unwrap();
+        let plan = build_fill_values_with_dependents(
+            &r.lines,
+            FilingStatus::Mfj,
+            &input.dependents,
+            None,
+            &params,
+        )
+        .unwrap();
         let get = |l: &str| plan.values.iter().find(|v| v.line == l);
         // Names: first word -> (1) first name, remainder -> (2) last name.
         assert_eq!(get("dependent_1_first_name").unwrap().value, "Kid");
@@ -1821,9 +2230,14 @@ mod tests {
             dependent("F Six", DependentRelationship::Child, 3, 4),
         ];
         let r = compute_1040(&input, &params);
-        let plan =
-            build_fill_values_with_dependents(&r.lines, FilingStatus::Hoh, &input.dependents)
-                .unwrap();
+        let plan = build_fill_values_with_dependents(
+            &r.lines,
+            FilingStatus::Hoh,
+            &input.dependents,
+            None,
+            &params,
+        )
+        .unwrap();
         // Only the first four columns are printed; the warning says so.
         assert!(plan
             .values
@@ -1845,14 +2259,213 @@ mod tests {
         let mut input2 = case007_input();
         input2.dependents = vec![dependent("Short Stay", DependentRelationship::Child, 5, 4)];
         let r2 = compute_1040(&input2, &params);
-        let plan2 =
-            build_fill_values_with_dependents(&r2.lines, FilingStatus::Hoh, &input2.dependents)
-                .unwrap();
+        let plan2 = build_fill_values_with_dependents(
+            &r2.lines,
+            FilingStatus::Hoh,
+            &input2.dependents,
+            None,
+            &params,
+        )
+        .unwrap();
         assert!(plan2
             .values
             .iter()
             .any(|v| v.line == "dependent_1_first_name"));
         assert!(!plan2.values.iter().any(|v| v.line == "dependent_1_credit"));
+    }
+
+    // -- Identity / age-65-blind standard deduction -------------------
+
+    fn person(dob: Option<&str>, blind: bool) -> PersonIdentity {
+        PersonIdentity {
+            date_of_birth: dob.map(str::to_string),
+            blind,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ssn_normalize_and_mask() {
+        assert_eq!(normalize_ssn("123-45-6789").as_deref(), Some("123456789"));
+        assert_eq!(normalize_ssn("123456789").as_deref(), Some("123456789"));
+        assert_eq!(normalize_ssn("123-45-678"), None);
+        assert_eq!(normalize_ssn("12345678a"), None);
+        assert_eq!(mask_ssn("123456789"), "***-**-6789");
+        assert_eq!(mask_ssn("123-45-6789"), "***-**-6789");
+        assert_eq!(mask_ssn("garbage"), "***-**-****");
+    }
+
+    #[test]
+    fn std_ded_addition_amounts() {
+        let params = TaxParams::load_2025().unwrap();
+        // No identity -> no additions.
+        assert_eq!(
+            additional_standard_deduction(None, FilingStatus::Single, &params),
+            Money::ZERO
+        );
+        // Single, 65+ (born 1960-06-15): +$2,000 (TY2025 unmarried amount).
+        let id = TaxpayerIdentity {
+            person: person(Some("1960-06-15"), false),
+            ..Default::default()
+        };
+        assert_eq!(
+            additional_standard_deduction(Some(&id), FilingStatus::Single, &params).cents(),
+            200_000
+        );
+        // Cutoff boundary: born 1961-01-01 is 65; born 1961-01-02 is not.
+        let id = TaxpayerIdentity {
+            person: person(Some("1961-01-01"), false),
+            ..Default::default()
+        };
+        assert_eq!(
+            additional_standard_deduction(Some(&id), FilingStatus::Hoh, &params).cents(),
+            200_000
+        );
+        let id = TaxpayerIdentity {
+            person: person(Some("1961-01-02"), false),
+            ..Default::default()
+        };
+        assert_eq!(
+            additional_standard_deduction(Some(&id), FilingStatus::Single, &params),
+            Money::ZERO
+        );
+        // MFJ, both spouses both conditions: 4 x $1,600 = $6,400.
+        let id = TaxpayerIdentity {
+            person: person(Some("1955-01-01"), true),
+            spouse: Some(person(Some("1958-01-01"), true)),
+            ..Default::default()
+        };
+        assert_eq!(
+            additional_standard_deduction(Some(&id), FilingStatus::Mfj, &params).cents(),
+            640_000
+        );
+        // DOB absent -> no age addition (blind still counts).
+        let id = TaxpayerIdentity {
+            person: person(None, true),
+            ..Default::default()
+        };
+        assert_eq!(
+            additional_standard_deduction(Some(&id), FilingStatus::Single, &params).cents(),
+            200_000
+        );
+        let id = TaxpayerIdentity::default();
+        assert_eq!(
+            additional_standard_deduction(Some(&id), FilingStatus::Single, &params),
+            Money::ZERO
+        );
+        // Spouse conditions are ignored for single (no spouse counts).
+        let id = TaxpayerIdentity {
+            person: person(None, false),
+            spouse: Some(person(Some("1950-01-01"), true)),
+            ..Default::default()
+        };
+        assert_eq!(
+            additional_standard_deduction(Some(&id), FilingStatus::Single, &params),
+            Money::ZERO
+        );
+    }
+
+    #[test]
+    fn line12_includes_age_blind_additions() {
+        let params = TaxParams::load_2025().unwrap();
+        // Single filer, 65+: line 12 = 15,750 + 2,000.
+        let mut input = golden_input();
+        input.identity = Some(TaxpayerIdentity {
+            person: person(Some("1959-03-01"), false),
+            ..Default::default()
+        });
+        let r = compute_1040(&input, &params);
+        assert_eq!(r.lines["12"].value().copied().unwrap().cents(), 1_775_000);
+        // The golden input without identity keeps the base amount.
+        let r = compute_1040(&golden_input(), &params);
+        assert_eq!(r.lines["12"].value().copied().unwrap().cents(), 1_575_000);
+    }
+
+    #[test]
+    fn fill_plan_identity_section() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut input = case006_input();
+        input.identity = Some(TaxpayerIdentity {
+            person: PersonIdentity {
+                first_name: Some("Spike".into()),
+                last_name: Some("Tester".into()),
+                ssn: Some("123456789".into()),
+                date_of_birth: Some("1958-05-01".into()),
+                occupation: Some("Engineer".into()),
+                blind: false,
+            },
+            address: Some(MailingAddress {
+                street: Some("123 Main St".into()),
+                apt: None,
+                city: Some("Springfield".into()),
+                state: Some("IL".into()),
+                zip: Some("62704".into()),
+            }),
+            spouse: Some(PersonIdentity {
+                first_name: Some("Partner".into()),
+                last_name: Some("Tester".into()),
+                ssn: Some("987654321".into()),
+                date_of_birth: Some("1960-11-15".into()),
+                occupation: None,
+                blind: true,
+            }),
+            can_be_claimed_as_dependent: false,
+        });
+        input.dependents[0].ssn = Some("111223333".into());
+        let r = compute_1040(&input, &params);
+        let plan = build_fill_values_with_dependents(
+            &r.lines,
+            FilingStatus::Mfj,
+            &input.dependents,
+            input.identity.as_ref(),
+            &params,
+        )
+        .unwrap();
+        let by_field = |suffix: &str| {
+            plan.values
+                .iter()
+                .find(|v| v.field.ends_with(suffix))
+                .unwrap_or_else(|| panic!("no fill value for field {suffix}"))
+        };
+        // Header fields.
+        assert_eq!(by_field("f1_14[0]").value, "Spike");
+        assert_eq!(by_field("f1_15[0]").value, "Tester");
+        assert_eq!(by_field("f1_17[0]").value, "Partner");
+        assert_eq!(by_field("f1_22[0]").value, "Springfield");
+        assert_eq!(by_field("f2_40[0]").value, "Engineer");
+        // SSN fields: raw digits for the PDF, masked display value,
+        // identity section tag.
+        let ssn = by_field("f1_16[0]");
+        assert_eq!(ssn.value, "123456789");
+        assert_eq!(ssn.display_value.as_deref(), Some("***-**-6789"));
+        assert_eq!(ssn.section.as_deref(), Some("identity"));
+        assert_eq!(
+            by_field("f1_19[0]").display_value.as_deref(),
+            Some("***-**-4321")
+        );
+        // Age/blind checkboxes: taxpayer 65 (c2_5), spouse 65 (c2_7)
+        // and spouse blind (c2_8) checked; taxpayer blind (c2_6) not.
+        assert_eq!(by_field("c2_5[0]").value, "1");
+        assert_eq!(by_field("c2_7[0]").value, "1");
+        assert_eq!(by_field("c2_8[0]").value, "1");
+        assert!(!plan.values.iter().any(|v| v.field.ends_with("c2_6[0]")));
+        // Dependent 1 SSN filled masked; dependents 2/3 have none, so
+        // the aggregate dependent_ssn skip remains.
+        let dssn = plan
+            .values
+            .iter()
+            .find(|v| v.line == "dependent_1_ssn")
+            .unwrap();
+        assert_eq!(dssn.value, "111223333");
+        assert_eq!(dssn.display_value.as_deref(), Some("***-**-3333"));
+        assert!(dssn.field.ends_with("Row3[0].f1_39[0]"));
+        assert!(plan.skipped.iter().any(|s| s.field == "dependent_ssn"));
+        // Identity skips: only pieces actually absent — the spouse
+        // occupation is not stored; names/SSNs/address are all filled.
+        assert!(plan.skipped.iter().any(|s| s.field == "spouse_occupation"));
+        assert!(!plan.skipped.iter().any(|s| s.field == "taxpayer_ssn"));
+        assert!(!plan.skipped.iter().any(|s| s.field == "taxpayer_name"));
+        assert!(!plan.skipped.iter().any(|s| s.field == "home_address"));
     }
 
     #[test]
