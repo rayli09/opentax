@@ -350,6 +350,186 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     }
 }
 
+/// Format a money amount for a PDF form field: exact decimal dollars, no
+/// thousands separators, always two decimals (`423150` cents ->
+/// `"4231.50"`, `-50000` -> `"-500.00"`, `0` -> `"0.00"`). Whole-dollar
+/// rounding is NOT applied (see docs/KNOWN_LIMITS.md).
+pub fn format_amount(m: Money) -> String {
+    m.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Form 1040 (TY2025) line -> AcroForm field map (PDF export)
+// ---------------------------------------------------------------------------
+
+/// One entry of the 1040 field map (`forms/f1040-2025-field-map.json`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldMapEntry {
+    /// Form line this field prints on the paper form (engine numbering;
+    /// for TY2025 the paper form prints some of these with suffixes —
+    /// 7a, 11a/11b, 12e — see `note`). `"filing_status"` for checkboxes.
+    pub line: String,
+    /// Engine line whose value feeds this field, when it differs from
+    /// `line` (e.g. form line 24 is fed by engine line 16).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_line: Option<String>,
+    /// Fully qualified AcroForm field name in the IRS TY2025 template.
+    pub qname: String,
+    /// `"amount"` or `"checkbox"`.
+    pub kind: String,
+    /// For checkboxes: the `FilingStatus::as_str()` this box represents
+    /// (`"qss"` is recorded for completeness; the engine has no QSS).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// For checkboxes: the field's on-state name (`"1"`..`"5"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// How this assignment was verified (geometric row match).
+    pub note: String,
+}
+
+impl FieldMapEntry {
+    /// The engine line this entry draws its value from.
+    pub fn source_line(&self) -> &str {
+        self.source_line.as_deref().unwrap_or(&self.line)
+    }
+}
+
+/// The TY2025 Form 1040 line -> field map, as data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct F1040FieldMap {
+    pub form: String,
+    pub year: u32,
+    /// How the map was derived (geometric verification method).
+    pub derivation: String,
+    pub entries: Vec<FieldMapEntry>,
+}
+
+const F1040_2025_FIELD_MAP_JSON: &str = include_str!("../forms/f1040-2025-field-map.json");
+
+/// The parsed TY2025 Form 1040 field map (parsed once, leaked to 'static —
+/// the map is immutable process-lifetime data).
+pub fn f1040_2025_field_map() -> &'static F1040FieldMap {
+    static MAP: std::sync::OnceLock<F1040FieldMap> = std::sync::OnceLock::new();
+    MAP.get_or_init(|| {
+        serde_json::from_str(F1040_2025_FIELD_MAP_JSON)
+            .expect("bundled f1040-2025-field-map.json must parse")
+    })
+}
+
+/// One value to write into the template PDF.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FillValue {
+    /// Form line (or `"filing_status"`) this value belongs to.
+    pub line: String,
+    /// Qualified AcroForm field name.
+    pub field: String,
+    /// The exact string to write (formatted amount, or checkbox on-state).
+    pub value: String,
+}
+
+/// A form field the export deliberately does not fill, with the reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SkippedField {
+    pub field: String,
+    pub reason: String,
+}
+
+/// The plan for one PDF export: the values to fill, plus what was skipped.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FillPlan {
+    pub values: Vec<FillValue>,
+    pub skipped: Vec<SkippedField>,
+}
+
+/// Identity fields a stored return does not carry today; the PDF export
+/// never invents them, it reports them as skipped.
+const IDENTITY_SKIPS: &[(&str, &str)] = &[
+    ("taxpayer_name", "not stored in return"),
+    ("taxpayer_ssn", "not stored in return"),
+    ("home_address", "not stored in return"),
+];
+
+/// Turn computed 1040 lines + filing status into template fill values.
+///
+/// Returns `Err(incomplete_lines)` — the deduplicated engine line keys, in
+/// map order — when any mapped line is missing, `Incomplete`, or only a
+/// `Placeholder`: an incomplete return is never exported (and never
+/// zero-filled). Lines 34 and 37 are mutually exclusive on the form: only
+/// the one that is > 0 is filled; when both are 0, neither is.
+pub fn build_fill_values(
+    lines: &BTreeMap<String, FactResult<Money>>,
+    status: FilingStatus,
+) -> Result<FillPlan, Vec<String>> {
+    let map = f1040_2025_field_map();
+    let mut incomplete: Vec<String> = Vec::new();
+    let mut amounts: Vec<(FieldMapEntry, Money)> = Vec::new();
+    for entry in &map.entries {
+        if entry.kind != "amount" {
+            continue;
+        }
+        let src = entry.source_line();
+        match lines.get(src) {
+            Some(FactResult::Complete(m)) => amounts.push((entry.clone(), *m)),
+            _ => {
+                if !incomplete.iter().any(|l| l == src) {
+                    incomplete.push(src.to_string());
+                }
+            }
+        }
+    }
+    if !incomplete.is_empty() {
+        return Err(incomplete);
+    }
+
+    // Lines 34 (overpaid) and 37 (owed) are mutually exclusive on the form.
+    let val = |line: &str| -> Option<Money> {
+        amounts
+            .iter()
+            .find(|(e, _)| e.line == line)
+            .map(|(_, m)| *m)
+    };
+    let keep_34 = val("34").map(|m| m.cents() > 0).unwrap_or(false);
+    let keep_37 = val("37").map(|m| m.cents() > 0).unwrap_or(false);
+
+    let mut values: Vec<FillValue> = Vec::new();
+    for (entry, m) in &amounts {
+        if entry.line == "34" && !keep_34 {
+            continue;
+        }
+        if entry.line == "37" && !keep_37 {
+            continue;
+        }
+        values.push(FillValue {
+            line: entry.line.clone(),
+            field: entry.qname.clone(),
+            value: format_amount(*m),
+        });
+    }
+    // Filing-status checkbox for the return's status.
+    for entry in &map.entries {
+        if entry.kind == "checkbox" && entry.status.as_deref() == Some(status.as_str()) {
+            values.push(FillValue {
+                line: entry.line.clone(),
+                field: entry.qname.clone(),
+                value: entry
+                    .value
+                    .clone()
+                    .expect("checkbox map entries carry an on-state value"),
+            });
+        }
+    }
+
+    let skipped = IDENTITY_SKIPS
+        .iter()
+        .map(|(field, reason)| SkippedField {
+            field: field.to_string(),
+            reason: reason.to_string(),
+        })
+        .collect();
+    Ok(FillPlan { values, skipped })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,5 +766,144 @@ mod tests {
         assert_eq!(line("25d"), 460_000, "25d adds INT/DIV/B Box 4 amounts");
         assert_eq!(line("2a"), 70_000, "1099-INT Box 8 lands on line 2a");
         assert_eq!(line("2b"), 0, "tax-exempt interest is not taxable interest");
+    }
+
+    // -- PDF export: field map + fill values -------------------------------
+
+    #[test]
+    fn format_amount_exact_decimals() {
+        assert_eq!(format_amount(Money::from_cents(423_150)), "4231.50");
+        assert_eq!(format_amount(Money::from_cents(-50_000)), "-500.00");
+        assert_eq!(format_amount(Money::ZERO), "0.00");
+        assert_eq!(format_amount(Money::from_cents(5)), "0.05");
+        assert_eq!(format_amount(Money::from_cents(-5)), "-0.05");
+        // No thousands separators, ever.
+        assert_eq!(format_amount(Money::from_cents(123_456_789)), "1234567.89");
+    }
+
+    #[test]
+    fn field_map_loads_with_qnames() {
+        let map = f1040_2025_field_map();
+        assert_eq!(map.form, "f1040");
+        assert_eq!(map.year, 2025);
+        assert!(!map.derivation.is_empty());
+        let amounts: Vec<_> = map.entries.iter().filter(|e| e.kind == "amount").collect();
+        // 20 mapped amount fields: 1a 1z 2a 2b 3a 3b 7 9 11a 11b 12e 14 15
+        // 16 24 25a 25d 33 34 37 — engine line 11 feeds both 11a and 11b,
+        // line 12 feeds 12e and 14, and line 16 feeds 16 and 24.
+        assert_eq!(amounts.len(), 20);
+        for e in &map.entries {
+            assert!(e.qname.starts_with("topmostSubform[0]."), "{}", e.qname);
+            assert!(!e.note.is_empty(), "every entry documents its evidence");
+        }
+        let src = |line: &str| {
+            map.entries
+                .iter()
+                .find(|e| e.kind == "amount" && e.line == line)
+                .map(|e| e.source_line().to_string())
+        };
+        assert_eq!(src("24").as_deref(), Some("16"));
+        assert_eq!(src("14").as_deref(), Some("12"));
+    }
+
+    /// A complete lines map with benign values; 34/37 set per test.
+    fn complete_lines(overpaid: i64, owed: i64) -> BTreeMap<String, FactResult<Money>> {
+        let mut lines = BTreeMap::new();
+        for l in [
+            "1a", "1z", "2a", "2b", "3a", "3b", "7", "9", "11", "12", "15", "16", "25a", "25d",
+            "33",
+        ] {
+            lines.insert(l.to_string(), FactResult::Complete(Money::from_cents(100)));
+        }
+        lines.insert(
+            "34".to_string(),
+            FactResult::Complete(Money::from_cents(overpaid)),
+        );
+        lines.insert(
+            "37".to_string(),
+            FactResult::Complete(Money::from_cents(owed)),
+        );
+        lines
+    }
+
+    #[test]
+    fn fill_values_owed_fills_37_only() {
+        let plan = build_fill_values(&complete_lines(0, 23_150), FilingStatus::Single).unwrap();
+        let by_line = |l: &str| plan.values.iter().find(|v| v.line == l);
+        assert!(
+            by_line("34").is_none(),
+            "line 34 stays blank when 37 is owed"
+        );
+        assert_eq!(by_line("37").unwrap().value, "231.50");
+        // All other mapped lines are filled, including complete zeros set
+        // to 100 cents here and the derived fields 11b/14/24.
+        assert_eq!(by_line("11").unwrap().value, "1.00");
+        assert!(plan
+            .values
+            .iter()
+            .any(|v| v.field.ends_with("f2_01[0]") && v.value == "1.00"));
+        assert!(plan
+            .values
+            .iter()
+            .any(|v| v.line == "14" && v.value == "1.00"));
+        assert!(plan
+            .values
+            .iter()
+            .any(|v| v.line == "24" && v.value == "1.00"));
+        // Identity fields are reported skipped, never invented.
+        assert_eq!(plan.skipped.len(), 3);
+        assert!(plan
+            .skipped
+            .iter()
+            .all(|s| s.reason == "not stored in return"));
+    }
+
+    #[test]
+    fn fill_values_refund_fills_34_only_and_zero_zero_neither() {
+        let plan = build_fill_values(&complete_lines(12_850, 0), FilingStatus::Single).unwrap();
+        assert_eq!(
+            plan.values.iter().find(|v| v.line == "34").unwrap().value,
+            "128.50"
+        );
+        assert!(plan.values.iter().all(|v| v.line != "37"));
+        let plan = build_fill_values(&complete_lines(0, 0), FilingStatus::Single).unwrap();
+        assert!(plan.values.iter().all(|v| v.line != "34" && v.line != "37"));
+    }
+
+    #[test]
+    fn fill_values_incomplete_line_blocks_export() {
+        let mut lines = complete_lines(0, 0);
+        lines.insert("7".to_string(), FactResult::Incomplete);
+        lines.remove("25d");
+        let err = build_fill_values(&lines, FilingStatus::Single).unwrap_err();
+        assert_eq!(err, vec!["7".to_string(), "25d".to_string()]);
+    }
+
+    #[test]
+    fn status_checkbox_mapping() {
+        let cases = [
+            (FilingStatus::Single, "c1_8[0]", "1"),
+            (FilingStatus::Mfj, "c1_8[1]", "2"),
+            (FilingStatus::Mfs, "c1_8[2]", "3"),
+            (FilingStatus::Hoh, "c1_8[0]", "4"),
+        ];
+        for (status, leaf, on_state) in cases {
+            let plan = build_fill_values(&complete_lines(0, 0), status).unwrap();
+            let cb: Vec<_> = plan
+                .values
+                .iter()
+                .filter(|v| v.line == "filing_status")
+                .collect();
+            assert_eq!(cb.len(), 1, "exactly one status box for {status:?}");
+            assert!(cb[0].field.ends_with(leaf), "{} vs {leaf}", cb[0].field);
+            assert_eq!(cb[0].value, on_state);
+            if status == FilingStatus::Hoh {
+                // HOH shares the leaf name with Single but lives directly
+                // under Page1[0], not under Checkbox_ReadOrder[0].
+                assert!(!cb[0].field.contains("Checkbox_ReadOrder"));
+            } else {
+                assert!(cb[0].field.contains("Checkbox_ReadOrder"));
+            }
+        }
     }
 }

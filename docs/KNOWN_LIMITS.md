@@ -92,13 +92,28 @@ This list is the contract: anything not listed as working is not claimed.
 - pdfer_forms 0.3.x pulls lopdf ^0.40 alongside this crate's lopdf 0.46.
   Accepted: `PdferBackend` works on file paths only and never shares
   `Document` objects across the boundary.
-- PDF *export of a computed return* is still `not_implemented` — the
-  blocker is now the 1040 line→field mapping (the next step), not the
-  fill backend. `tax pdf inspect|fill` primitives work on real forms.
+- PDF *export of a computed return* is implemented:
+  `tax return export --return <id> --type pdf --template <blank TY2025
+  f1040.pdf> --out <file>` fills a user-supplied TY2025 Form 1040
+  template through the audited fill backend, using the geometrically
+  verified line→field map in `crates/tax-forms/forms/f1040-2025-field-map.json`
+  (widget rectangles matched against the printed line labels; the map
+  file records the method and per-field evidence). Scope: computed
+  amount lines + the filing-status checkbox only. Identity fields
+  (name/SSN/address) are NOT filled — they are not stored in a return —
+  and are reported under `skipped`. Amounts are written as exact
+  dollars-and-cents (e.g. `4231.50`); whole-dollar rounding is NOT
+  applied in v1. TY2025 layout notes: AGI is written to both 11a and
+  11b (the form repeats it on page 2), the standard deduction to 12e
+  and to line 14 (= 12e + 13a + 13b, and the engine computes no
+  13a/13b), and total tax to both 16 and 24 (= 22 + 23, no 17–23
+  amounts). Schedules are not exported. An incomplete return is
+  refused (`return_incomplete`, no file written).
 
 ## Filing
 
-- No e-file. MeF export returns `not_implemented`. JSON export only.
+- No e-file. MeF export returns `not_implemented`. JSON and filled-PDF
+  export only (PDF scope above).
 - No IRS/state credential handling of any kind, by design (v1).
 
 ## CLI

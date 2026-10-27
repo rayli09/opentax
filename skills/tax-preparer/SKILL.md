@@ -18,9 +18,13 @@ description: Preparation skill for opentax. Use when facts/documents are entered
    citation. Do not improvise an explanation the CLI did not produce.
 4. Validate: `tax return validate --return <id>`. Surface **all**
    findings, grouped by severity. Errors block export-as-final.
-5. Export the artifact: `tax return export --return <id> --type json`.
-   MeF and PDF export return `not_implemented` in v1 — report that
-   plainly if asked; do not claim a file exists when none was produced.
+5. Export the artifact: `tax return export --return <id> --type json`,
+   or a filled Form 1040 PDF:
+   `tax return export --return <id> --type pdf --template <blank TY2025 f1040.pdf> --out <file>`
+   (amount lines + filing status only; identity fields are reported as
+   skipped, never invented). MeF export returns `not_implemented` in
+   v1 — report that plainly if asked; do not claim a file exists when
+   none was produced.
 6. Present a closing summary: refund/owed line values (34/37) quoted from
    engine output, completeness status, open findings, and the exported
    file path. Then offer tax-reviewer (independent check) and
