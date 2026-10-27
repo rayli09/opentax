@@ -351,12 +351,19 @@ fn stored_bs(ret: &StoredReturn) -> CResult<Vec<I1099BInput>> {
 }
 
 /// Aggregate the 1099-B entries of a partial return the same way the
-/// engine does: (net_short, net_long, capital_gain) facts — Incomplete
-/// when any transaction is missing proceeds or basis — plus the total
-/// 1099-B withholding.
+/// engine does: (net_short, net_long, line_7, schd_net_capital_gain)
+/// facts — Incomplete when any transaction is missing proceeds or
+/// basis — plus the total 1099-B withholding. Line 7 and the QDCG gain
+/// come from the same Schedule D combination the engine uses (loss
+/// limit included). The carryover keys are NOT produced here: the
+/// carryover worksheet needs taxable income, which a partial return
+/// does not determine.
 fn partial_b_nets(
     bs: &[I1099BInput],
+    status: FilingStatus,
+    params: &TaxParams,
 ) -> (
+    FactResult<Money>,
     FactResult<Money>,
     FactResult<Money>,
     FactResult<Money>,
@@ -382,13 +389,16 @@ fn partial_b_nets(
             FactResult::Incomplete,
             FactResult::Incomplete,
             FactResult::Incomplete,
+            FactResult::Incomplete,
             withholding,
         )
     } else {
+        let comb = tax_forms::combine_schedule_d(net_short, net_long, status, params);
         (
             FactResult::Complete(net_short),
             FactResult::Complete(net_long),
-            FactResult::Complete(net_short + net_long),
+            FactResult::Complete(comb.line7),
+            FactResult::Complete(comb.net_capital_gain),
             withholding,
         )
     }
@@ -415,6 +425,7 @@ struct ComputedView {
     complete: bool,
     incomplete: Vec<String>,
     warnings: Vec<String>,
+    line16_method: Option<String>,
 }
 
 /// All line keys the current engine/view knows, in display order.
@@ -428,6 +439,9 @@ const ALL_LINES: &[&str] = &[
     "7",
     "schd_net_short",
     "schd_net_long",
+    "schd_net_capital_gain",
+    "schd_carryover_short",
+    "schd_carryover_long",
     "9",
     "11",
     "12",
@@ -466,6 +480,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
             lines,
             complete: false,
             warnings: vec!["no documents have been added to this return".to_string()],
+            line16_method: None,
         });
     }
 
@@ -487,6 +502,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 complete: computed.complete,
                 lines: computed.lines,
                 warnings,
+                line16_method: computed.line16_method.clone(),
             })
         }
         None => {
@@ -512,10 +528,11 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
             }
             let mut b_withholding = Money::ZERO;
             if !bs.is_empty() {
-                let (ns, nl, cap, wh) = partial_b_nets(&bs);
+                let (ns, nl, cap, gain, wh) = partial_b_nets(&bs, status, params);
                 lines.insert("schd_net_short".into(), ns);
                 lines.insert("schd_net_long".into(), nl);
                 lines.insert("7".into(), cap);
+                lines.insert("schd_net_capital_gain".into(), gain);
                 b_withholding = wh;
             }
             if !ints.is_empty() || !divs.is_empty() || !bs.is_empty() {
@@ -541,6 +558,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 lines,
                 complete: false,
                 warnings,
+                line16_method: None,
             })
         }
     }
@@ -557,6 +575,7 @@ fn view_json(view: &ComputedView) -> Value {
         "complete": view.complete,
         "incomplete": view.incomplete,
         "warnings": view.warnings,
+        "line16_method": view.line16_method,
     })
 }
 
@@ -674,11 +693,21 @@ const CASE002_INPUT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/002-w2-1099s/input.json");
 const CASE002_CORRECT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/002-w2-1099s/correct.json");
+const CASE003_INPUT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/003-capital-loss-limit/input.json");
+const CASE003_CORRECT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/003-capital-loss-limit/correct.json");
+const CASE004_INPUT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/004-qdcg-showcase/input.json");
+const CASE004_CORRECT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/004-qdcg-showcase/correct.json");
 
 /// (case directory name, embedded input.json, embedded correct.json).
 const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
     ("001-single-w2-minimal", GOLDEN_INPUT, GOLDEN_CORRECT),
     ("002-w2-1099s", CASE002_INPUT, CASE002_CORRECT),
+    ("003-capital-loss-limit", CASE003_INPUT, CASE003_CORRECT),
+    ("004-qdcg-showcase", CASE004_INPUT, CASE004_CORRECT),
 ];
 
 fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String>)> {
@@ -708,6 +737,15 @@ fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String
         }
     } else {
         mismatches.push("correct.json has no \"lines\" object".to_string());
+    }
+    if let Some(expected_method) = correct.get("line16_method").and_then(|m| m.as_str()) {
+        match computed.line16_method.as_deref() {
+            Some(actual) if actual == expected_method => {}
+            other => mismatches.push(format!(
+                "line16_method: expected {expected_method}, got {}",
+                other.unwrap_or("<none>")
+            )),
+        }
     }
     Ok((mismatches.is_empty(), mismatches))
 }
@@ -1321,6 +1359,16 @@ fn cmd_pdf(action: PdfAction) -> CResult<Out> {
     }
 }
 
+/// How line 16 was figured, for `tax explain --line 16`.
+fn line16_derivation(method: Option<&str>) -> String {
+    match method {
+        Some("qdcg") => "Qualified Dividends and Capital Gain Tax Worksheet (Instructions for Form 1040, line 16): qualified dividends (line 3a) plus the Schedule D capital gain (smaller of Schedule D lines 15/16, floored at 0) are taxed at 0%/15%/20% (thresholds per Rev. Proc. 2024-40, section 3.03); the rest is taxed by the Tax Table / Tax Computation Worksheet, and the result is capped at the ordinary tax on all of line 15".to_string(),
+        Some("tax_table") => "TY2025 Tax Table on line 15 (taxable income under $100,000); table extracted from Publication 1040, Tax and Earned Income Credit Tables (params/2025-tax-table.json)".to_string(),
+        Some("tax_computation") => "Tax Computation Worksheet on line 15 (ordinary brackets, params/2025.json); applies at $100,000 or more of taxable income".to_string(),
+        _ => "not figured yet (line 16 is incomplete for this return); when computed it is the QDCG worksheet, the Tax Table, or the Tax Computation Worksheet, per the line 16 instructions".to_string(),
+    }
+}
+
 fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) -> CResult<Out> {
     let fact_map: &[(&str, &str)] = &[
         ("wages", "1a"),
@@ -1329,6 +1377,9 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
         ("qualified_dividends", "3a"),
         ("ordinary_dividends", "3b"),
         ("capital_gain", "7"),
+        ("net_capital_gain", "schd_net_capital_gain"),
+        ("capital_loss_carryover_short", "schd_carryover_short"),
+        ("capital_loss_carryover_long", "schd_carryover_long"),
         ("total_income", "9"),
         ("agi", "11"),
         ("standard_deduction", "12"),
@@ -1366,26 +1417,32 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
         "2b" => ("taxable interest recorded directly plus sum of interest income (Box 1) over all stored 1099-INT entries".to_string(), "Form 1040, line 2b".to_string()),
         "3a" => ("sum of qualified dividends (Box 1b) over all stored 1099-DIV entries".to_string(), "Form 1040, line 3a".to_string()),
         "3b" => ("ordinary dividends recorded directly plus sum of total ordinary dividends (Box 1a) over all stored 1099-DIV entries".to_string(), "Form 1040, line 3b".to_string()),
-        "7" => ("net short-term gain/loss plus net long-term gain/loss from stored 1099-B transactions (internal keys schd_net_short / schd_net_long)".to_string(), "Form 1040, line 7 (capital gain or loss, via Schedule D)".to_string()),
+        "7" => ("Schedule D combination of the 1099-B nets (internal keys schd_net_short / schd_net_long): the combined gain in full, or a loss limited to $3,000 ($1,500 MFS) by IRC 1211(b), with the rest carried over".to_string(), "Form 1040, line 7 (capital gain or loss, via Schedule D lines 16/21)".to_string()),
         "schd_net_short" => ("sum of (proceeds - basis + adjustment) over short-term 1099-B transactions".to_string(), "Form 8949 / Schedule D aggregation (internal key)".to_string()),
         "schd_net_long" => ("sum of (proceeds - basis + adjustment) over long-term 1099-B transactions".to_string(), "Form 8949 / Schedule D aggregation (internal key)".to_string()),
         "9" => ("line 1z + line 2b + line 3b + line 7".to_string(), "Form 1040, line 9".to_string()),
         "11" => ("line 9 minus adjustments — v1 has no adjustments, so AGI = line 9".to_string(), "Form 1040, line 11".to_string()),
         "12" => (format!("standard deduction for filing status '{}' from params/2025.json", ret.status), params.source.clone()),
         "15" => ("line 11 minus line 12, floored at zero".to_string(), "Form 1040, line 15".to_string()),
-        "16" => ("bracket tax on line 15 (ordinary brackets, params/2025.json); Tax Table/QDCG worksheet not implemented in v1".to_string(), params.source.clone()),
+        "16" => (line16_derivation(view.line16_method.as_deref()), params.source.clone()),
+        "schd_net_capital_gain" => ("the QDCG worksheet's capital-gain input: the smaller of Schedule D lines 15 and 16 when both are gains, else 0".to_string(), "Qualified Dividends and Capital Gain Tax Worksheet, line 3 (Instructions for Form 1040)".to_string()),
+        "schd_carryover_short" => ("short-term capital loss carried to next year per the Capital Loss Carryover Worksheet (the $3,000/$1,500 allowance is absorbed against short-term losses first)".to_string(), "Instructions for Schedule D, Capital Loss Carryover Worksheet".to_string()),
+        "schd_carryover_long" => ("long-term capital loss carried to next year per the Capital Loss Carryover Worksheet".to_string(), "Instructions for Schedule D, Capital Loss Carryover Worksheet".to_string()),
         "34" => ("line 33 minus line 16 when payments exceed tax, else 0".to_string(), "Form 1040, line 34".to_string()),
         "37" => ("line 16 minus line 33 when tax exceeds payments, else 0".to_string(), "Form 1040, line 37".to_string()),
         _ => ("computed directly from stored inputs".to_string(), "Form 1040 instructions".to_string()),
     };
 
-    let value = json!({
+    let mut value = json!({
         "returnId": ret.id,
         "line": line_no,
         "result": line_json(&fr),
         "derivation": derivation,
         "citation": citation,
     });
+    if line_no == "16" {
+        value["line16_method"] = json!(view.line16_method);
+    }
     let human = format!(
         "line {line_no}: {} — {derivation} [{citation}]",
         line_json(&fr)

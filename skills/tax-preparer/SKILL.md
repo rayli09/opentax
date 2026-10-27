@@ -39,6 +39,8 @@ not from your own calculation, not from a prior draft.
 ## Authority limits
 
 v1 computes a TY2025 Form 1040 slice from W-2, 1099-INT, 1099-DIV, and
-1099-B entries (see `docs/KNOWN_LIMITS.md`). Line 16 is bracket tax, not
-the Tax Table / QDCG worksheet — say so when presenting it. Preparation
+1099-B entries (see `docs/KNOWN_LIMITS.md`). Line 16 is figured by the
+prescribed method — the QDCG worksheet, the Tax Table, or the Tax
+Computation Worksheet — and the engine reports which one as
+`line16_method`; name the method when presenting the tax. Preparation
 is not filing: this skill never submits.

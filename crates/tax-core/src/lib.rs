@@ -364,6 +364,16 @@ pub struct Bracket {
     pub rate_bp: u32,
 }
 
+/// Capital-gain rate breakpoints for one filing status (money = cents):
+/// preferential income is taxed at 0% up to `zero_rate_up_to_cents` of
+/// taxable income, at 15% up to `twenty_rate_from_cents`, and at 20%
+/// above that (Rev. Proc. 2024-40, §3.03, for TY2025).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CapitalGainThresholds {
+    pub zero_rate_up_to_cents: i64,
+    pub twenty_rate_from_cents: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaxParams {
     pub year: u32,
@@ -372,6 +382,12 @@ pub struct TaxParams {
     pub standard_deduction_cents: HashMap<String, i64>,
     pub social_security_wage_base_cents: i64,
     pub ordinary_brackets: HashMap<String, Vec<Bracket>>,
+    /// IRC §1211(b) capital-loss allowance per filing status (cents).
+    #[serde(default)]
+    pub capital_loss_limit_cents: HashMap<String, i64>,
+    /// §1(j)(5)(B) maximum zero / 15-percent rate amounts per status.
+    #[serde(default)]
+    pub capital_gain_thresholds_cents: HashMap<String, CapitalGainThresholds>,
 }
 
 impl TaxParams {
@@ -395,6 +411,23 @@ impl TaxParams {
         )
     }
 
+    /// IRC §1211(b) capital-loss limit for the status ($3,000; $1,500 MFS).
+    pub fn capital_loss_limit(&self, status: FilingStatus) -> Money {
+        Money::from_cents(
+            *self
+                .capital_loss_limit_cents
+                .get(status.as_str())
+                .unwrap_or(&300_000),
+        )
+    }
+
+    /// §1(j)(5)(B) capital-gain breakpoints for the status, if present.
+    pub fn capital_gain_thresholds(&self, status: FilingStatus) -> Option<CapitalGainThresholds> {
+        self.capital_gain_thresholds_cents
+            .get(status.as_str())
+            .copied()
+    }
+
     /// Bracket table in [`Op::BracketTax`] / [`bracket_tax`] form.
     pub fn bracket_table(&self, status: FilingStatus) -> Vec<(Money, u32)> {
         let Some(brackets) = self.ordinary_brackets.get(status.as_str()) else {
@@ -409,6 +442,110 @@ impl TaxParams {
                 )
             })
             .collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TY2025 Tax Table (DATA: extracted from the official IRS table, never
+// synthesized from the bracket formulas — see the file's `source` field)
+// ---------------------------------------------------------------------------
+
+/// One row of the Tax Table: for taxable income in
+/// `[from_dollars, to_dollars)` the tax is the per-status whole-dollar
+/// amount. Row widths are the table's own (5/10/25 dollars at the bottom,
+/// 50 dollars from $3,000 up).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaxTableRow {
+    pub from_dollars: i64,
+    pub to_dollars: i64,
+    pub single: i64,
+    pub mfj: i64,
+    pub mfs: i64,
+    pub hoh: i64,
+}
+
+impl TaxTableRow {
+    /// The table's tax (whole dollars) for a filing status.
+    pub fn tax(&self, status: FilingStatus) -> i64 {
+        match status {
+            FilingStatus::Single => self.single,
+            FilingStatus::Mfj => self.mfj,
+            FilingStatus::Mfs => self.mfs,
+            FilingStatus::Hoh => self.hoh,
+        }
+    }
+}
+
+/// The TY2025 Tax Table, embedded from `params/2025-tax-table.json`.
+#[derive(Debug, Clone)]
+pub struct TaxTable {
+    pub year: u32,
+    pub source: String,
+    pub rows: Vec<TaxTableRow>,
+}
+
+#[derive(Deserialize)]
+struct TaxTableFile {
+    year: u32,
+    source: String,
+    #[allow(dead_code)]
+    unit: String,
+    #[allow(dead_code)]
+    columns: Vec<String>,
+    rows: Vec<[i64; 6]>,
+}
+
+impl TaxTable {
+    /// The embedded TY2025 table (parsed once; the rows are immutable
+    /// process-lifetime data).
+    pub fn load_2025() -> &'static TaxTable {
+        static TABLE: std::sync::OnceLock<TaxTable> = std::sync::OnceLock::new();
+        TABLE.get_or_init(|| {
+            let file: TaxTableFile =
+                serde_json::from_str(include_str!("../params/2025-tax-table.json"))
+                    .expect("bundled 2025-tax-table.json must parse");
+            TaxTable {
+                year: file.year,
+                source: file.source,
+                rows: file
+                    .rows
+                    .iter()
+                    .map(|r| TaxTableRow {
+                        from_dollars: r[0],
+                        to_dollars: r[1],
+                        single: r[2],
+                        mfj: r[3],
+                        mfs: r[4],
+                        hoh: r[5],
+                    })
+                    .collect(),
+            }
+        })
+    }
+
+    /// Tax Table lookup for a taxable-income amount.
+    ///
+    /// The table applies only below $100,000 of taxable income; returns
+    /// `None` at or above $100,000 (the Tax Computation Worksheet applies
+    /// there) or for a negative amount. The row is selected by the whole
+    /// dollars of the amount (the amount floored to dollars — the form
+    /// itself is figured in whole dollars; see docs/KNOWN_LIMITS.md).
+    /// The returned tax is a whole-dollar amount, as printed.
+    pub fn tax(&self, status: FilingStatus, taxable: Money) -> Option<Money> {
+        if taxable.cents() < 0 {
+            return None;
+        }
+        let dollars = taxable.cents().div_euclid(100);
+        if dollars >= 100_000 {
+            return None;
+        }
+        let idx = self.rows.partition_point(|r| r.to_dollars <= dollars);
+        let row = self.rows.get(idx)?;
+        if row.from_dollars <= dollars && dollars < row.to_dollars {
+            Some(Money::from_cents(row.tax(status) * 100))
+        } else {
+            None
+        }
     }
 }
 
@@ -523,5 +660,87 @@ mod tests {
         assert_eq!(p.standard_deduction(FilingStatus::Hoh).cents(), 2362500);
         assert_eq!(p.standard_deduction(FilingStatus::Mfs).cents(), 1575000);
         assert!(p.source.contains("Rev. Proc. 2024-40"));
+    }
+
+    #[test]
+    fn params_2025_capital_loss_limit_and_thresholds() {
+        let p = TaxParams::load_2025().unwrap();
+        // IRC 1211(b): $3,000, halved for MFS.
+        assert_eq!(p.capital_loss_limit(FilingStatus::Single).cents(), 300_000);
+        assert_eq!(p.capital_loss_limit(FilingStatus::Mfj).cents(), 300_000);
+        assert_eq!(p.capital_loss_limit(FilingStatus::Hoh).cents(), 300_000);
+        assert_eq!(p.capital_loss_limit(FilingStatus::Mfs).cents(), 150_000);
+        // Rev. Proc. 2024-40, section 3.03 (maximum zero / 15% rate amounts).
+        let t = |s: FilingStatus| p.capital_gain_thresholds(s).unwrap();
+        assert_eq!(t(FilingStatus::Single).zero_rate_up_to_cents, 4_835_000);
+        assert_eq!(t(FilingStatus::Single).twenty_rate_from_cents, 53_340_000);
+        assert_eq!(t(FilingStatus::Mfj).zero_rate_up_to_cents, 9_670_000);
+        assert_eq!(t(FilingStatus::Mfj).twenty_rate_from_cents, 60_005_000);
+        assert_eq!(t(FilingStatus::Hoh).zero_rate_up_to_cents, 6_475_000);
+        assert_eq!(t(FilingStatus::Hoh).twenty_rate_from_cents, 56_670_000);
+        assert_eq!(t(FilingStatus::Mfs).zero_rate_up_to_cents, 4_835_000);
+        assert_eq!(t(FilingStatus::Mfs).twenty_rate_from_cents, 30_000_000);
+    }
+
+    #[test]
+    fn tax_table_structure_tiles_and_is_monotonic() {
+        let table = TaxTable::load_2025();
+        assert_eq!(table.year, 2025);
+        // The official table has 2,062 rows: 0-5, 5-15, 15-25, then $25
+        // rows to $3,000 and $50 rows to $100,000.
+        assert_eq!(table.rows.len(), 2062);
+        let mut expect = 0;
+        for row in &table.rows {
+            assert_eq!(row.from_dollars, expect, "rows must tile [0, 100000)");
+            expect = row.to_dollars;
+        }
+        assert_eq!(expect, 100_000);
+        for (i, row) in table.rows.iter().enumerate().skip(1) {
+            let prev = &table.rows[i - 1];
+            for s in [
+                FilingStatus::Single,
+                FilingStatus::Mfj,
+                FilingStatus::Mfs,
+                FilingStatus::Hoh,
+            ] {
+                assert!(row.tax(s) >= prev.tax(s), "column {s:?} must not decrease");
+            }
+        }
+    }
+
+    #[test]
+    fn tax_table_lookup_boundaries() {
+        let table = TaxTable::load_2025();
+        let tax = |s: FilingStatus, cents: i64| table.tax(s, Money::from_cents(cents));
+        // First rows of the printed table.
+        assert_eq!(tax(FilingStatus::Single, 0), Some(Money::from_cents(0)));
+        assert_eq!(tax(FilingStatus::Single, 499), Some(Money::from_cents(0))); // $4.99 -> row 0-5
+        assert_eq!(tax(FilingStatus::Single, 500), Some(Money::from_cents(100))); // $5 -> row 5-15, tax $1
+        assert_eq!(
+            tax(FilingStatus::Mfj, 100_000),
+            Some(Money::from_cents(10_100))
+        ); // $1,000 row: $101
+           // Golden-case rows (single).
+        assert_eq!(
+            tax(FilingStatus::Single, 3_425_000),
+            Some(Money::from_cents(387_500))
+        ); // 34,250 -> $3,875
+        assert_eq!(
+            tax(FilingStatus::Single, 3_424_999),
+            Some(Money::from_cents(386_900))
+        ); // $34,249.99 -> row below
+           // Cents are floored to dollars for row selection.
+        assert_eq!(
+            tax(FilingStatus::Single, 3_425_099),
+            Some(Money::from_cents(387_500))
+        );
+        // Top of the table and beyond.
+        assert_eq!(
+            tax(FilingStatus::Single, 9_999_999),
+            Some(Money::from_cents(1_690_900))
+        );
+        assert_eq!(tax(FilingStatus::Single, 10_000_000), None); // $100,000: table no longer applies
+        assert_eq!(tax(FilingStatus::Single, 10_000_100), None);
+        assert_eq!(tax(FilingStatus::Single, -100), None);
     }
 }
