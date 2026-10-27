@@ -44,14 +44,22 @@ This list is the contract: anything not listed as working is not claimed.
   requested fails the fill and **no output file is written**. The lopdf
   backend remains the inspect default and an honest `/V`-only fallback
   (its FillReport says so and reports `appearance_verified: 0`).
-- **Duplicate-leaf fills are blocked by that audit, by design.** pdfer_forms
-  also matches on leaf names, so when two fields share a leaf the fill
-  over-matches and the audit refuses the output. Concretely: Form 1040's
-  five filing-status fields include two with leaf `c1_8[0]` (Single under
-  `Checkbox_ReadOrder[0]`, HOH as a direct Page1 child) — filling Single
-  also sets HOH, the audit fails it, and **filing status cannot be filled
-  on f1040 via this path yet**. Needs an id-based fill or a post-fill
-  repair pass; future work, not hidden.
+- **Duplicate-leaf *text* fills are blocked by that audit, by design.**
+  pdfer_forms also matches on leaf names, so when two non-button fields
+  share a leaf the fill over-matches and the audit refuses the output.
+- **Button fields (checkboxes, radios) no longer go through pdfer_forms.**
+  They are filled by a direct lopdf pass inside `PdferBackend` that
+  resolves the EXACT qualified name, sets the field's `/V` to the
+  on-state as a proper name, and selects the widget carrying that state
+  via `/AS` (all other widgets of the field get `/AS = /Off`). Designer
+  widgets already carry their on-state `/AP` templates, so no appearance
+  streams are generated in this path. A requested on-state that the
+  field's widgets do not offer is an error naming the available states.
+  Verified on the real TY2025 f1040: filling filing-status Single
+  (`…Checkbox_ReadOrder[0].c1_8[0]` = `/1`) plus one text field changed
+  exactly those two fields — the same-leaf sibling
+  (`…Page1[0].c1_8[0]`, state `/4`) stayed `/Off`, where pdfer's leaf
+  matching had previously set it and tripped the audit.
 - **Comb appearances under pdfer_forms are crammed, not cell-spread**
   (data-correct; the regenerated appearance ignores the comb flag —
   pdfcpu spreads correctly). Filling a comb field adds a warning to the
@@ -64,7 +72,8 @@ This list is the contract: anything not listed as working is not claimed.
 - Checkbox *rendering* is still not verifiable with poppler (it does not
   render Designer radio on-states for any tool, including a hand-built
   control); checkbox correctness rests on data-level `/V` name + `/AS`
-  state, which pdfer_forms gets right (spike evidence).
+  state, which the direct button pass sets and the post-fill audit +
+  independent readback verify (see above).
 - pdfer_forms 0.3.x pulls lopdf ^0.40 alongside this crate's lopdf 0.46.
   Accepted: `PdferBackend` works on file paths only and never shares
   `Document` objects across the boundary.
