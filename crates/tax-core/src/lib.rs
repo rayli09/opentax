@@ -384,6 +384,12 @@ fn default_actc_earned_income_threshold_cents() -> i64 {
 fn default_actc_rate_bp() -> u32 {
     1500
 }
+fn default_age_65_born_before() -> String {
+    // TY2025: a taxpayer born before this date is considered 65 at the
+    // end of 2025 (Instructions for Form 1040 (2025), Standard
+    // Deduction; the date is printed on the form).
+    "1961-01-02".to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bracket {
@@ -408,6 +414,17 @@ pub struct TaxParams {
     /// Human-readable citation for every value in this file.
     pub source: String,
     pub standard_deduction_cents: HashMap<String, i64>,
+    /// Additional standard deduction per age-65-or-blind condition, per
+    /// filing status (cents). TY2025: $1,600 per condition for married
+    /// statuses, $2,000 for single / head of household (Rev. Proc.
+    /// 2024-40; IR-2024-273).
+    #[serde(default)]
+    pub standard_deduction_addition_per_condition_cents: HashMap<String, i64>,
+    /// A person born before this ISO date (exclusive) is considered
+    /// age 65 for the tax year: TY2025 "1961-01-02" (born on or before
+    /// 1961-01-01). ISO dates compare lexicographically.
+    #[serde(default = "default_age_65_born_before")]
+    pub age_65_born_before: String,
     pub social_security_wage_base_cents: i64,
     /// Self-employment (Schedule SE) Social Security rate, basis points
     /// (12.4% per IRC §1401(a)).
@@ -477,6 +494,28 @@ impl TaxParams {
                 .get(status.as_str())
                 .unwrap_or(&0),
         )
+    }
+
+    /// Additional standard deduction for ONE age-65-or-blind condition
+    /// under the given filing status (TY2025: $2,000 single/HoH,
+    /// $1,600 MFJ/MFS — Rev. Proc. 2024-40; IR-2024-273).
+    pub fn standard_deduction_addition_per_condition(&self, status: FilingStatus) -> Money {
+        let fallback = match status {
+            FilingStatus::Single | FilingStatus::Hoh => 200_000,
+            FilingStatus::Mfj | FilingStatus::Mfs => 160_000,
+        };
+        Money::from_cents(
+            *self
+                .standard_deduction_addition_per_condition_cents
+                .get(status.as_str())
+                .unwrap_or(&fallback),
+        )
+    }
+
+    /// ISO date cutoff: a person born strictly before this date is
+    /// considered age 65 for the tax year (TY2025: "1961-01-02").
+    pub fn age_65_born_before(&self) -> &str {
+        &self.age_65_born_before
     }
 
     /// IRC §1211(b) capital-loss limit for the status ($3,000; $1,500 MFS).

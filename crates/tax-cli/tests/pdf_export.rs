@@ -242,6 +242,7 @@ fn case002_input() -> Form1040Input {
         }],
         f1099_necs: vec![],
         dependents: vec![],
+        identity: None,
     }
 }
 
@@ -271,6 +272,7 @@ fn case005_input() -> Form1040Input {
             expenses: Money::from_cents(200_000),
         }],
         dependents: vec![],
+        identity: None,
     }
 }
 

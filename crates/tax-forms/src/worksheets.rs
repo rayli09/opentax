@@ -756,6 +756,7 @@ mod tests {
     fn dep(relationship: DependentRelationship, age: u32, months: u32) -> DependentInput {
         DependentInput {
             name: "Test Dependent".into(),
+            ssn: None,
             relationship,
             age,
             months_lived_with_taxpayer: months,

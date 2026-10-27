@@ -16,7 +16,12 @@ with its source recorded.
 > `docs/KNOWN_LIMITS.md` for exactly what is missing. JSON export and
 > filled-PDF export (amounts, filing status, and the Dependents table
 > onto a user-supplied TY2025 1040 template) work; MeF e-file does not
-> (it reports `not_implemented` honestly).
+> (it reports `not_implemented` honestly). Taxpayer identity can be
+> stored per return (`tax return set-identity`): it drives the
+> age-65/blind standard-deduction additions and fills the form's
+> identity fields and standard-deduction checkboxes on PDF export.
+> SSNs are stored locally only and masked in every CLI output;
+> `tax return list` gives a PII-free overview of the store.
 
 ## Iron rules
 
