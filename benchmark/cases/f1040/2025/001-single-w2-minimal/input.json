@@ -1,0 +1,12 @@
+{
+  "status": "single",
+  "w2s": [
+    {
+      "employer_ein": "12-3456789",
+      "wages": "5000000",
+      "federal_withholding": "400000"
+    }
+  ],
+  "interest_income": "0",
+  "ordinary_dividends": "0"
+}

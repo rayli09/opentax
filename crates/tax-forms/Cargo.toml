@@ -1,0 +1,14 @@
+[package]
+name = "tax-forms"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Typed form inputs and computations for TY2025 (Form 1040 minimal slice) built on tax-core."
+
+[dependencies]
+tax-core = { path = "../tax-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

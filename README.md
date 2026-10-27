@@ -1,0 +1,88 @@
+# opentax
+
+An **agent-first, open-source US tax CLI** in Rust. The CLI supplies
+deterministic functionality — calculation, validation, PDF inspection,
+document checks — and **AI agents drive it** through a set of bundled
+skills: interview → document ingest → compute → review → filing guidance.
+
+The agent never does arithmetic. Every number on a return is produced by
+tested, deterministic code, or transcribed verbatim from a source document
+with its source recorded.
+
+> **Status: scaffold.** A working vertical slice (TY2025 Form 1040 with W-2
+> income), not a finished tax product. See `docs/KNOWN_LIMITS.md` for
+> exactly what is missing. JSON export works; MeF e-file and PDF export do
+> not (they report `not_implemented` honestly).
+
+## Iron rules
+
+1. The LLM never calculates. Quote engine output only.
+2. Missing input is **incomplete**, never silently zero.
+3. Every extracted number is a verbatim transcription with its source recorded.
+4. The validator must pass before a computed return is trusted.
+5. No credentials are ever handled; the user alone submits/files.
+6. Everything is local by default. Documents do not leave the machine.
+
+## Quickstart
+
+```sh
+cargo build --release          # binary: target/release/tax
+
+tax doctor                     # environment + parameter-pack checks
+tax selftest                   # runs the golden cases before anything else
+
+tax return create --year 2025 --status single
+# -> {"returnId": "r2025-..."}
+
+cat > w2.json <<'JSON'
+{"employer_ein":"12-3456789","wages":"5000000","federal_withholding":"400000"}
+JSON
+tax form add --return <id> --node-type w2 --file w2.json
+
+tax return get --return <id>   # lines, completeness, warnings (JSON when piped)
+tax return validate --return <id>
+tax explain --return <id> --line 15
+tax return export --return <id> --type json
+
+tax node list
+tax node template --document w2
+tax doc classify --file some-document.pdf
+tax skills list
+```
+
+Money in JSON is **integer cents as a string**: `"5000000"` is $50,000.00.
+No floats anywhere in the filed path.
+
+### The golden example
+
+Single filer, one W-2, $50,000 wages, $4,000 withheld, nothing else:
+AGI $50,000 − standard deduction $15,750 = taxable $34,250;
+tax = 11,925×10% + 22,325×12% = **$3,871.50**; refund **$128.50**.
+This case lives at `benchmark/cases/f1040/2025/001-single-w2-minimal/` and
+`tax selftest` checks the engine against it.
+
+## Layout
+
+```text
+crates/tax-core   Money (integer cents), fact-completeness model, expression
+                  graph, per-year parameters as DATA (params/2025.json)
+crates/tax-forms  Form 1040 TY2025 minimal slice + input types (W-2, 1099s)
+crates/tax-pdf    AcroForm inspect/fill on lopdf, behind a PdfBackend trait
+crates/tax-doc    Document classification, W-2 cross-checks, OCR/text traits
+crates/tax-cli    The `tax` binary (clap; JSON on stdout when piped)
+skills/           Router + intake / ingest / preparer / reviewer / filing-guide
+benchmark/cases/  Golden cases with per-value source citations
+docs/             ARCHITECTURE.md, KNOWN_LIMITS.md
+```
+
+## Design in one paragraph
+
+Hybrid engine: per-year **parameters as data** + a serde **expression graph**
+with IRS Fact Graph completeness semantics + hardcoded Rust modules for
+procedural worksheets. Layered document pipeline: born-digital text first,
+geometric templates second, agent vision as supervised fallback, OCR as a
+pluggable trait — with a deterministic validation layer as the trust moat.
+PDF form *filling* is the known weak link in pure Rust; a fill-and-verify
+spike against PDFium/pdfcpu is planned (see `docs/ARCHITECTURE.md`).
+
+License: MIT © 2026 Ray Li.

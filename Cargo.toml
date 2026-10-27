@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["crates/tax-core", "crates/tax-forms", "crates/tax-pdf", "crates/tax-doc", "crates/tax-cli"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[workspace.lints.clippy]
+all = "warn"
