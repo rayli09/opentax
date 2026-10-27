@@ -18,11 +18,18 @@ of (a) facts to provide and (b) documents to gather. No computation here.
    relationship (child / stepchild / foster child / other), their age
    on December 31 of the tax year, how many months they lived with
    the taxpayer — these drive the child tax credit / credit for other
-   dependents (simplified Schedule 8812) — and their **SSN**: a
-   dependent's SSN is stored with the entry and prints in the
-   Dependents table; the child tax credit legally requires the child
-   to have one (the engine warns, but still computes, when it is
-   missing — collect it whenever the user has it).
+   dependents (simplified Schedule 8812) and the earned income
+   credit — and their **SSN**: a dependent's SSN is stored with the
+   entry and prints in the Dependents table; the child tax credit
+   legally requires the child to have one (the engine warns, but
+   still computes, when it is missing), and the **earned income
+   credit does not count a child without one at all** — collect it
+   whenever the user has it. For each child also ask the two EIC
+   facts: were they a **full-time student** (during some part of each
+   of 5 calendar months — `full_time_student`), and are they
+   **permanently and totally disabled** (`permanently_disabled`)?
+   These decide whether a child who is 19 or older can still be an
+   EIC qualifying child.
 3. Create the return:
    `tax return create --year 2025 --status <status>`
    Record the returned `returnId` and keep using exactly that id.
@@ -37,7 +44,12 @@ of (a) facts to provide and (b) documents to gather. No computation here.
    computed in v1). The dates of birth and blindness drive the
    age-65/blind standard-deduction additions, so ask them explicitly
    — "were you (or your spouse) born before January 2, 1961, or
-   blind?" is the fact behind them. Identity is stored locally only
+   blind?" is the fact behind them. The taxpayer's (and spouse's)
+   dates of birth also decide the **no-children earned income
+   credit** (age 25–64 at year-end): with no dependents and no date
+   of birth stored, the engine cannot determine it and takes no
+   childless EIC (validate reports `eic_childless_age_unknown`).
+   Identity is stored locally only
    and every CLI output shows SSNs masked; say so once, plainly.
 5. If the user can state interest and dividend totals now, re-create is not
    needed later only if they were passed at create time
@@ -61,10 +73,11 @@ privacy warning before reading documents).
 ## Authority limits
 
 Scope is TY2025 Form 1040 with W-2 wages, interest/dividends/capital
-gains from 1099s, 1099-NEC side income (simplified Schedule C/SE), and
+gains from 1099s, 1099-NEC side income (simplified Schedule C/SE),
 dependents with the child tax credit / credit for other dependents /
-additional child tax credit (simplified Schedule 8812) at the engine
-level. If the user's situation needs anything in
-`docs/KNOWN_LIMITS.md` (Schedule E, other credits — the earned income
-credit is NOT implemented — state returns…), say so now — before
+additional child tax credit (simplified Schedule 8812), and the
+earned income credit (line 27, v1 scope in `docs/KNOWN_LIMITS.md`)
+at the engine level. If the user's situation needs anything in
+`docs/KNOWN_LIMITS.md` (Schedule E, other credits, state returns…),
+say so now — before
 collecting documents — and stop that part.

@@ -11,9 +11,10 @@ use tax_core::{FactResult, Money, TaxParams};
 
 pub mod worksheets;
 pub use worksheets::{
-    capital_loss_carryover, classify_dependent, combine_schedule_d, deductible_part_of_se_tax,
-    line16_tax, qdcg_tax, schedule_8812, schedule_se_tax, tax_on_amount, DependentCreditClass,
-    Schedule8812, ScheduleDCombination, ScheduleSe,
+    capital_loss_carryover, classify_dependent, classify_eic_child, combine_schedule_d,
+    deductible_part_of_se_tax, earned_income_credit, eic_age_test, eic_childless_age_outcome,
+    eic_qualifying_children, line16_tax, qdcg_tax, schedule_8812, schedule_se_tax, tax_on_amount,
+    DependentCreditClass, EarnedIncomeCredit, Schedule8812, ScheduleDCombination, ScheduleSe,
 };
 
 /// One W-2 (Form W-2, Wage and Tax Statement). Money = cents.
@@ -184,13 +185,17 @@ fn default_months_lived_with_taxpayer() -> u32 {
 }
 
 /// One dependent claimed on the return (Form 1040, Dependents section).
-/// Dependents are not income documents: they feed only the Schedule
-/// 8812 credits (child tax credit, credit for other dependents,
-/// additional child tax credit). A dependent's SSN is optional input:
+/// Dependents are not income documents: they feed the Schedule 8812
+/// credits (child tax credit, credit for other dependents, additional
+/// child tax credit) and the earned income credit's qualifying-child
+/// count. A dependent's SSN is optional input:
 /// when stored (normalized to 9 digits, see [`normalize_ssn`]) the PDF
 /// export prints it in the Dependents table question (3); the child
 /// tax credit legally requires the child to have an SSN, which v1
 /// models as a validation warning, not a denial (docs/KNOWN_LIMITS.md).
+/// The earned income credit is stricter in v1: a child without a
+/// stored SSN does not count as an EIC qualifying child at all
+/// ([`worksheets::classify_eic_child`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependentInput {
     /// Full name as it should print in the Dependents table.
@@ -210,6 +215,21 @@ pub struct DependentInput {
     /// year", i.e. strictly more than 6 months.
     #[serde(default = "default_months_lived_with_taxpayer")]
     pub months_lived_with_taxpayer: u32,
+    /// Full-time student during some part of each of 5 calendar months
+    /// of the tax year. Used only by the earned income credit's age
+    /// test (a qualifying child who is a full-time student counts
+    /// until age 24); the child tax credit does not ask. This is the
+    /// fact behind the "Full-time student" check box on row (6) of
+    /// the Form 1040 Dependents section.
+    #[serde(default)]
+    pub full_time_student: bool,
+    /// Permanently and totally disabled at any time during the tax
+    /// year. Used only by the earned income credit's age test (a
+    /// permanently and totally disabled child counts at any age);
+    /// the fact behind the "Permanently and totally disabled" check
+    /// box on row (6) of the Dependents section.
+    #[serde(default)]
+    pub permanently_disabled: bool,
 }
 
 /// Consistency findings for one dependent entry, mirroring
@@ -249,6 +269,29 @@ pub fn validate_dependent(dep: &DependentInput) -> Vec<ConsistencyFinding> {
             message: format!(
                 "dependent {}: CTC requires the child to have an SSN (v1 still \
                  computes; a real filing would deny)",
+                dep.name
+            ),
+        });
+    }
+    // The EIC side of the same fact: a child who meets the EIC
+    // relationship / age / residency tests but has no SSN stored does
+    // not count as an EIC qualifying child in v1 at all (the credit
+    // legally requires a valid SSN; the engine cannot take the child
+    // into account without one).
+    let eic_shaped = matches!(
+        dep.relationship,
+        DependentRelationship::Child
+            | DependentRelationship::Stepchild
+            | DependentRelationship::FosterChild
+    ) && dep.months_lived_with_taxpayer > 6
+        && eic_age_test(dep);
+    if eic_shaped && dep.ssn.is_none() {
+        findings.push(ConsistencyFinding {
+            code: "dependent_eic_ssn",
+            severity: "warning",
+            message: format!(
+                "dependent {}: EIC requires the child to have an SSN (a child \
+                 without one does not count as an EIC qualifying child in v1)",
                 dep.name
             ),
         });
@@ -498,7 +541,12 @@ pub struct Form1040Input {
 /// SE tax as it enters Schedule 2 line 4, equal to line 23) — plus the
 /// Schedule 8812 keys `sched8812_tentative` (line 8 tentative credit
 /// before the phaseout), `sched8812_credit_after_phaseout` (line 12)
-/// and `sched8812_earned_income` (Part II-A line 18a, v1 definition).
+/// and `sched8812_earned_income` (Part II-A line 18a, v1 definition)
+/// — plus the earned income credit keys `eic_earned_income` (the EIC
+/// Worksheets' earned income figure), `eic_investment_income` (the
+/// IRC §32(i) aggregate as scoped in v1) and `eic_qualifying_children`
+/// (a COUNT, expressed in the money map as count × $1.00 — e.g. two
+/// qualifying children is `"200"` cents; it is not an amount of money).
 /// They are not Form 1040 line numbers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComputedReturn {
@@ -569,12 +617,14 @@ pub fn validate_1099_div(div: &I1099DivInput) -> Vec<ConsistencyFinding> {
 /// Schedule 3 line 14 is zero), 22 tax after nonrefundable credits
 /// (max(0, 16 − 21)), 23 other taxes (v1: the Schedule SE tax, via
 /// Schedule 2 line 4), 24 total tax (22 + 23), 25a W-2 withholding,
-/// 25d total withheld (W-2 + 1099-INT/DIV/B/NEC Box 4), 28 additional
-/// child tax credit (Schedule 8812 Part II-A), 32 total other payments
-/// and refundable credits (= 28 in v1), 33 total payments (25d + 32),
+/// 25d total withheld (W-2 + 1099-INT/DIV/B/NEC Box 4), 27 earned
+/// income credit (EIC Worksheets A/B), 28 additional child tax credit
+/// (Schedule 8812 Part II-A), 32 total other payments and refundable
+/// credits (= 27 + 28 in v1), 33 total payments (25d + 32),
 /// 34 overpaid (refund) when payments exceed line 24, 37 amount owed
 /// otherwise. Plus the internal `schd_*` / `schc_*` / `schedse_*` /
-/// `sched2_*` / `sched8812_*` keys described on [`ComputedReturn`].
+/// `sched2_*` / `sched8812_*` / `eic_*` keys described on
+/// [`ComputedReturn`].
 ///
 /// Line 16 is figured by the method the 1040 instructions prescribe
 /// (see [`worksheets::line16_tax`]): the Qualified Dividends and Capital
@@ -591,14 +641,24 @@ pub fn validate_1099_div(div: &I1099DivInput) -> Vec<ConsistencyFinding> {
 /// Schedule 8812 credit lines (19, 21, 22, 28, 32 — and 33 through 32)
 /// depend on AGI and line 16 when dependents are stored, so they are
 /// `Incomplete` then too; with no dependents stored they are a stated
-/// zero (the tentative credit is zero regardless of income).
+/// zero (the tentative credit is zero regardless of income). The
+/// earned income credit (line 27, and 32/33 through it) depends on AGI
+/// and the capital gain line for its investment-income scope, so it is
+/// `Incomplete` then too — EXCEPT when the credit is zero regardless
+/// of AGI and investment income (MFS, no positive earned income, or
+/// no qualifying children with the childless age test unmet or
+/// undeterminable): then it stays a stated zero. When eligibility is
+/// determinable the credit is a stated amount (zero when disqualified
+/// or age-undeterminable — see [`worksheets::earned_income_credit`]).
 ///
 /// Simplifications (docs/KNOWN_LIMITS.md): the only adjustment to income
 /// is the deductible part of SE tax; no itemizing, no QBI. The only
 /// credits are the Schedule 8812 family credits, in the simplified
 /// form of [`worksheets::schedule_8812`] (MAGI = AGI; no Schedule 3
-/// nonrefundable credits; Part II-B not implemented; the earned income
-/// credit is a different credit and is NOT implemented). Schedule D is
+/// nonrefundable credits; Part II-B not implemented), and the earned
+/// income credit in the v1 scope of [`worksheets::earned_income_credit`]
+/// (no combat-pay election, no separated-spouse exception for MFS).
+/// Schedule D is
 /// the simplified two-net combination (no K-1 / Forms 6252/4684 /
 /// capital gain distribution components, no 28%-rate or unrecaptured
 /// §1250 amounts), so the Schedule D Tax Worksheet is never triggered;
@@ -784,10 +844,97 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
             .max(0),
         )),
     };
+    // Earned income credit (Form 1040 line 27; EIC Worksheets A and B
+    // of the Instructions for Form 1040 (2025), see
+    // worksheets::earned_income_credit). Earned income: wages (Form
+    // 1040 line 1z — Worksheet A, Step 5; Worksheet B, Part 4, line
+    // 3b) plus the self-employment amount of Worksheet B, Part 1:
+    // Schedule SE line 3 net earnings (= the Schedule C net profit
+    // UNADJUSTED) minus Schedule SE line 13, the deductible part of
+    // SE tax (Part 1, lines 1a-1e; worksheet total, Part 4, line 4a).
+    // The 92.35% factor of Schedule SE line 2 applies only to figuring
+    // the SE TAX (Schedule SE line 4a), not to EIC earned income —
+    // Pub 596 (2025), chapter 3, says it in words: "your net earnings
+    // from self-employment are reduced by the deduction for one-half
+    // of your SE tax" (optional-methods add-back not modeled).
+    // Investment income (IRC 32(i); Pub 596, chapter 2; the line 27
+    // instructions, Step 2), scoped to the lines this engine has:
+    // tax-exempt interest (line 2a) + taxable interest (2b) + ordinary
+    // dividends (3b) + capital gain net income (the positive part of
+    // line 7, which equals Schedule D line 16 when it is positive).
+    // The worksheet needs AGI, so with a poisoned 1099-B the EIC lines
+    // are Incomplete too.
+    let eic_earned_income = wages + schc_net - se_deduction;
+    let eic_investment_income_f = capital_gain_f
+        .clone()
+        .map(|cg| tax_exempt + line2b + line3b + Money::from_cents(cg.cents().max(0)));
+    // The EIC can be a stated zero even when AGI / investment income
+    // are not computable, when the disqualifier does not depend on
+    // them: MFS, no positive earned income, or no qualifying children
+    // combined with a childless age test that is not met (or cannot
+    // be determined — v1 takes no credit). This keeps lines 27/32/33
+    // complete for returns whose only gap is an unrelated poisoned
+    // input (e.g. a 1099-B on a dependent-free return).
+    let eic_zero_disqualifier: Option<&'static str> = if input.status == FilingStatus::Mfs {
+        Some("mfs")
+    } else if eic_earned_income.cents() <= 0 {
+        Some("no_earned_income")
+    } else if eic_qualifying_children(&input.dependents) == 0 {
+        match eic_childless_age_outcome(input.identity.as_ref(), input.status, params) {
+            Some(true) => None,
+            Some(false) => Some("childless_age_not_met"),
+            None => Some("childless_age_unknown"),
+        }
+    } else {
+        None
+    };
+    let eic_f: FactResult<EarnedIncomeCredit> =
+        match (agi_f.clone(), eic_investment_income_f.clone()) {
+            (FactResult::Complete(agi), FactResult::Complete(inv)) => {
+                FactResult::Complete(earned_income_credit(
+                    &input.dependents,
+                    input.status,
+                    input.identity.as_ref(),
+                    eic_earned_income,
+                    agi,
+                    inv,
+                    params,
+                ))
+            }
+            (FactResult::Incomplete, _) | (_, FactResult::Incomplete) => {
+                match eic_zero_disqualifier {
+                    Some(dq) => FactResult::Complete(EarnedIncomeCredit {
+                        qualifying_children: eic_qualifying_children(&input.dependents),
+                        earned_income: eic_earned_income,
+                        // Not computable here; the eic_investment_income
+                        // key itself stays Incomplete. The credit is
+                        // zero regardless of its value.
+                        investment_income: Money::ZERO,
+                        credit: Money::ZERO,
+                        disqualifier: Some(dq),
+                    }),
+                    None => FactResult::Incomplete,
+                }
+            }
+            (a, b) => FactResult::Placeholder(earned_income_credit(
+                &input.dependents,
+                input.status,
+                input.identity.as_ref(),
+                eic_earned_income,
+                *a.value().expect("non-incomplete fact has a value"),
+                *b.value().expect("non-incomplete fact has a value"),
+                params,
+            )),
+        };
     let total_tax_f = add_facts(line22_f.clone(), complete(se.tax));
-    // Line 28 (ACTC); line 32 = line 28 in v1; line 33 = 25d + 32.
+    // Line 28 (ACTC); line 32 = line 27 (EIC) + line 28;
+    // line 33 = 25d + 32.
+    let line27_f = eic_f.clone().map(|e| e.credit);
+    let eic_children_f = eic_f
+        .clone()
+        .map(|e| Money::from_cents(i64::from(e.qualifying_children) * 100));
     let line28_f = s8812_f.map(|s| s.additional_child_tax_credit);
-    let line32_f = line28_f.clone();
+    let line32_f = add_facts(line27_f.clone(), line28_f.clone());
     let payments_f = add_facts(complete(total_withholding), line32_f.clone());
     // Overpayment / amount owed compare line 33 payments against
     // line 24, per the form.
@@ -847,6 +994,13 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     lines.insert("24".into(), total_tax_f);
     lines.insert("25a".into(), complete(w2_withholding));
     lines.insert("25d".into(), complete(total_withholding));
+    lines.insert("27".into(), line27_f);
+    lines.insert("eic_earned_income".into(), complete(eic_earned_income));
+    lines.insert(
+        "eic_investment_income".into(),
+        eic_investment_income_f.clone(),
+    );
+    lines.insert("eic_qualifying_children".into(), eic_children_f);
     lines.insert("28".into(), line28_f);
     lines.insert("32".into(), line32_f);
     lines.insert("33".into(), payments_f);
@@ -878,7 +1032,8 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
         "The only adjustment to income (line 10) is the deductible part of \
          self-employment tax; no itemized deductions in v1. The only \
          credits are the Schedule 8812 family credits (lines 19/21 \
-         nonrefundable, line 28 additional child tax credit, line 32)."
+         nonrefundable, line 28 additional child tax credit) and the \
+         earned income credit (line 27); line 32 = 27 + 28."
             .to_string(),
     ];
     let std_ded_addition =
@@ -897,10 +1052,48 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
              to be AGI, the nonrefundable credit is limited by line 16 \
              (Credit Limit Worksheet A), and the additional child tax \
              credit uses Part II-A only (the three-or-more-children \
-             Part II-B formula is not implemented). The earned income \
-             credit (EIC) is a different credit and is not implemented."
+             Part II-B formula is not implemented)."
                 .to_string(),
         );
+    }
+    if let FactResult::Complete(eic) | FactResult::Placeholder(eic) = &eic_f {
+        if eic.credit.cents() > 0 || eic.disqualifier.is_some() {
+            let why = match eic.disqualifier {
+                Some("mfs") => {
+                    " Filing status married filing separately takes \
+                     no EIC in v1 (the separated-spouse exception is not modeled)."
+                }
+                Some("investment_income_limit") => {
+                    " Investment income exceeds \
+                     the IRC 32(i) limit, so no credit is allowed."
+                }
+                Some("no_earned_income") => {
+                    " Earned income is not positive, \
+                     so there is no credit."
+                }
+                Some("over_completed_phaseout") => {
+                    " AGI or earned income is at \
+                     or above the completed phaseout amount for the number of \
+                     qualifying children."
+                }
+                Some("childless_age_not_met") => {
+                    " With no qualifying children, \
+                     the age-25-to-64 test is not met by any date of birth on \
+                     file."
+                }
+                Some("childless_age_unknown") => {
+                    " With no qualifying children \
+                     and no date of birth on file, the age-25-to-64 test cannot \
+                     be determined; v1 takes no credit (docs/KNOWN_LIMITS.md)."
+                }
+                _ => "",
+            };
+            notes.push(format!(
+                "Earned income credit (line 27): {} qualifying child(ren), \
+                 earned income {}, investment income {}; credit {}.{}",
+                eic.qualifying_children, eic.earned_income, eic.investment_income, eic.credit, why
+            ));
+        }
     }
     if !input.f1099_necs.is_empty() {
         notes.push(
@@ -1894,11 +2087,11 @@ mod tests {
         assert_eq!(map.year, 2025);
         assert!(!map.derivation.is_empty());
         let amounts: Vec<_> = map.entries.iter().filter(|e| e.kind == "amount").collect();
-        // 28 mapped amount fields: 1a 1z 2a 2b 3a 3b 7 8 9 10 11a 11b 12e
-        // 14 15 16 19 21 22 23 24 25a 25d 28 32 33 34 37 — engine line 11
+        // 29 mapped amount fields: 1a 1z 2a 2b 3a 3b 7 8 9 10 11a 11b 12e
+        // 14 15 16 19 21 22 23 24 25a 25d 27 28 32 33 34 37 — engine line 11
         // feeds both 11a and 11b, line 12 feeds 12e and 14, and line 24
         // is fed by the engine's own line 24 (= 22 + 23).
-        assert_eq!(amounts.len(), 28);
+        assert_eq!(amounts.len(), 29);
         for e in &map.entries {
             assert!(e.qname.starts_with("topmostSubform[0]."), "{}", e.qname);
             assert!(!e.note.is_empty(), "every entry documents its evidence");
@@ -1918,7 +2111,7 @@ mod tests {
         let mut lines = BTreeMap::new();
         for l in [
             "1a", "1z", "2a", "2b", "3a", "3b", "7", "8", "9", "10", "11", "12", "15", "16", "19",
-            "21", "22", "23", "24", "25a", "25d", "28", "32", "33",
+            "21", "22", "23", "24", "25a", "25d", "27", "28", "32", "33",
         ] {
             lines.insert(l.to_string(), FactResult::Complete(Money::from_cents(100)));
         }
@@ -1998,6 +2191,8 @@ mod tests {
             relationship,
             age,
             months_lived_with_taxpayer: months,
+            full_time_student: false,
+            permanently_disabled: false,
         }
     }
 
@@ -2040,6 +2235,11 @@ mod tests {
         assert_eq!(line("23"), 0);
         assert_eq!(line("24"), 164_600, "total tax = 22 + 23");
         assert_eq!(line("28"), 0, "no ACTC: credit fully absorbed");
+        // EIC: AGI $90,000 is over the MFJ completed phaseout amount
+        // ($68,675 at most) — and none of the dependents has an SSN,
+        // so the EIC qualifying-child count is zero anyway.
+        assert_eq!(line("27"), 0, "no EIC");
+        assert_eq!(line("eic_qualifying_children"), 0);
         assert_eq!(line("32"), 0);
         assert_eq!(line("33"), 800_000, "25d + 32");
         assert_eq!(line("34"), 635_400, "refund $6,354");
@@ -2051,17 +2251,25 @@ mod tests {
         input.status = FilingStatus::Hoh;
         input.w2s[0].wages = Money::from_cents(3_000_000);
         input.w2s[0].federal_withholding = Money::from_cents(100_000);
-        input.dependents = vec![dependent("Kid One", DependentRelationship::Child, 5, 12)];
+        let mut kid = dependent("Kid One", DependentRelationship::Child, 5, 12);
+        // The child carries an SSN in the case input: the EIC counts
+        // only children with one (v1), while Schedule 8812 does not
+        // depend on it.
+        kid.ssn = Some("123456789".into());
+        input.dependents = vec![kid];
         input
     }
 
     /// Golden case 007 (benchmark/cases/f1040/2025/007-actc-hoh): HoH,
-    /// W-2 $30,000 / $1,000 withheld, one child age 5. Hand-derived in
-    /// the case's _sources: taxable $6,375 → Tax Table HoH $638;
-    /// tentative CTC $2,200; nonrefundable limited to $638 (Credit
-    /// Limit Worksheet A = line 16); ACTC = 2200 − 638 = $1,562 (under
-    /// the $1,700 cap and the $4,125 earned-income measure); refund
-    /// = $1,000 withholding + $1,562 ACTC = $2,562.
+    /// W-2 $30,000 / $1,000 withheld, one child age 5 (with an SSN).
+    /// Hand-derived in the case's _sources: taxable $6,375 → Tax Table
+    /// HoH $638; tentative CTC $2,200; nonrefundable limited to $638
+    /// (Credit Limit Worksheet A = line 16); ACTC = 2200 − 638 =
+    /// $1,562 (under the $1,700 cap and the $4,125 earned-income
+    /// measure); EIC on earned income = AGI = $30,000 with 1
+    /// qualifying child = $3,261 (TY2025 EIC Table); refund = $1,000
+    /// withholding + $3,261 EIC + $1,562 ACTC = $5,823. (The EIC
+    /// landing supersedes the pre-EIC refund of $2,562.)
     #[test]
     fn golden_actc_hoh() {
         let params = TaxParams::load_2025().unwrap();
@@ -2076,10 +2284,60 @@ mod tests {
         assert_eq!(line("21"), 63_800);
         assert_eq!(line("22"), 0);
         assert_eq!(line("24"), 0);
+        assert_eq!(line("27"), 326_100, "EIC $3,261");
+        assert_eq!(line("eic_earned_income"), 3_000_000);
+        assert_eq!(line("eic_investment_income"), 0);
+        assert_eq!(line("eic_qualifying_children"), 100, "count x $1.00");
         assert_eq!(line("28"), 156_200, "ACTC $1,562");
-        assert_eq!(line("32"), 156_200);
-        assert_eq!(line("33"), 256_200, "25d 1000 + 32 1562");
-        assert_eq!(line("34"), 256_200, "refund $2,562");
+        assert_eq!(line("32"), 482_300, "27 + 28");
+        assert_eq!(line("33"), 582_300, "25d 1000 + 32 4823");
+        assert_eq!(line("34"), 582_300, "refund $5,823");
+        assert_eq!(line("37"), 0);
+    }
+
+    fn case009_input() -> Form1040Input {
+        let mut input = golden_input();
+        input.status = FilingStatus::Single;
+        input.w2s[0].wages = Money::from_cents(3_800_000);
+        input.w2s[0].federal_withholding = Money::from_cents(250_000);
+        let mut kid1 = dependent("Kid One", DependentRelationship::Child, 9, 12);
+        kid1.ssn = Some("123456789".into());
+        let mut kid2 = dependent("Kid Two", DependentRelationship::Child, 6, 12);
+        kid2.ssn = Some("123456789".into());
+        input.dependents = vec![kid1, kid2];
+        input
+    }
+
+    /// Golden case 009 (benchmark/cases/f1040/2025/009-eic-two-kids):
+    /// single, W-2 $38,000 / $2,500 withheld, children 9 and 6 (both
+    /// with SSNs). Hand-derived in the case's _sources: taxable
+    /// $22,250 → Tax Table single $2,435; CTC tentative 2 × $2,200 =
+    /// $4,400, nonrefundable $2,435, ACTC = 4400 − 2435 = $1,965
+    /// (under the 2 × $1,700 cap and the earned-income measure); EIC
+    /// on $38,000 with 2 qualifying children = $4,061 (TY2025 EIC
+    /// Table); refund = 2500 + 4061 + 1965 = $8,526.
+    #[test]
+    fn golden_eic_two_kids() {
+        let params = TaxParams::load_2025().unwrap();
+        let r = compute_1040(&case009_input(), &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("11"), 3_800_000, "AGI $38,000");
+        assert_eq!(line("15"), 2_225_000, "taxable $22,250");
+        assert_eq!(line("16"), 243_500, "tax $2,435 (Tax Table single)");
+        assert_eq!(r.line16_method.as_deref(), Some("tax_table"));
+        assert_eq!(line("sched8812_tentative"), 440_000);
+        assert_eq!(line("19"), 243_500, "nonrefundable = line 16");
+        assert_eq!(line("21"), 243_500);
+        assert_eq!(line("22"), 0);
+        assert_eq!(line("24"), 0);
+        assert_eq!(line("27"), 406_100, "EIC $4,061");
+        assert_eq!(line("eic_earned_income"), 3_800_000);
+        assert_eq!(line("eic_qualifying_children"), 200, "count x $1.00");
+        assert_eq!(line("28"), 196_500, "ACTC $1,965");
+        assert_eq!(line("32"), 602_600, "27 + 28");
+        assert_eq!(line("33"), 852_600, "25d 2500 + 32 6026");
+        assert_eq!(line("34"), 852_600, "refund $8,526");
         assert_eq!(line("37"), 0);
     }
 
@@ -2115,6 +2373,7 @@ mod tests {
         assert_eq!(line("21"), 0);
         assert_eq!(line("22"), line("16"));
         assert_eq!(line("24"), line("16") + line("23"));
+        assert_eq!(line("27"), 0, "no EIC without DOBs / dependents");
         assert_eq!(line("28"), 0);
         assert_eq!(line("32"), 0);
         assert_eq!(line("33"), line("25d"));
@@ -2135,10 +2394,30 @@ mod tests {
                 "line {line} must be incomplete"
             );
         }
+        // Line 27 is the exception: this dependent has no SSN, so the
+        // EIC qualifying-child count is zero, and with no identity
+        // DOB stored the childless credit is a stated zero under every
+        // AGI — it does not inherit the poison.
+        assert_eq!(
+            r.lines["27"],
+            FactResult::Complete(Money::ZERO),
+            "line 27 is determinable (zero) without AGI here"
+        );
         // Earned income depends only on W-2/NEC entries: still exact.
         assert_eq!(
             r.lines["sched8812_earned_income"].value().copied().unwrap(),
             Money::from_cents(5_000_000)
+        );
+        // EIC earned income likewise (wages only here); the
+        // investment-income scope inherits the poisoned capital gain.
+        assert_eq!(
+            r.lines["eic_earned_income"].value().copied().unwrap(),
+            Money::from_cents(5_000_000)
+        );
+        assert_eq!(
+            r.lines["eic_investment_income"],
+            FactResult::Incomplete,
+            "investment income needs line 7"
         );
     }
 
@@ -2156,15 +2435,22 @@ mod tests {
         assert!(f
             .iter()
             .any(|x| x.code == "dependent_odc_only" && x.severity == "info"));
-        // A CTC-eligible child without an SSN: the SSN warning (v1
-        // computes anyway; a real filing would deny the credit).
+        // A CTC-eligible child without an SSN: two SSN warnings — the
+        // CTC one (v1 computes anyway; a real filing would deny the
+        // credit) and the EIC one (the child does not count as an EIC
+        // qualifying child in v1 at all).
         let f = validate_dependent(&dependent("D", DependentRelationship::Child, 10, 12));
-        assert_eq!(f.len(), 1);
+        assert_eq!(f.len(), 2);
         assert_eq!(f[0].code, "dependent_ctc_ssn");
         assert_eq!(f[0].severity, "warning");
         assert!(f[0]
             .message
             .contains("CTC requires the child to have an SSN"));
+        assert_eq!(f[1].code, "dependent_eic_ssn");
+        assert_eq!(f[1].severity, "warning");
+        assert!(f[1]
+            .message
+            .contains("EIC requires the child to have an SSN"));
         // With an SSN stored, an ordinary qualifying child raises nothing.
         let mut with_ssn = dependent("E", DependentRelationship::Child, 10, 12);
         with_ssn.ssn = Some("123456789".to_string());

@@ -1,0 +1,1 @@
+{"dependents":[{"age":9,"months_lived_with_taxpayer":12,"name":"Kid One","relationship":"child","ssn":"123456789"},{"age":6,"months_lived_with_taxpayer":12,"name":"Kid Two","relationship":"child","ssn":"123456789"}],"interest_income":"0","ordinary_dividends":"0","status":"single","w2s":[{"employer_ein":"12-3456789","federal_withholding":"250000","wages":"3800000"}]}
