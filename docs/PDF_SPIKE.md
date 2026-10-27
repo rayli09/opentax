@@ -314,6 +314,18 @@ update datasets) rather than inherit one by accident.
 
 ## Recommendation
 
+> **Status: implemented in commit `64046ca`** ("tax-pdf: PDF string
+> decoding fix + pdfer_forms fill backend with audit"). Item 1 (string
+> decoding) ✓, item 2 (PdferBackend behind `PdfBackend`; dual lopdf
+> versions accepted at the file-path boundary) ✓, item 3 (duplicate-leaf
+> warnings + post-fill changed-field audit that fails the fill) ✓,
+> item 4 (comb defect) tracked in docs/KNOWN_LIMITS.md, item 7 (XFA)
+> decided: preserve as-is + warning in every FillReport. Items 5/6
+> unchanged. One consequence the spike predicted and implementation
+> confirmed on the real f1040.pdf: filing-status fills trip the audit
+> (the two `c1_8[0]` fields) and are refused until an id-based fill
+> exists — see KNOWN_LIMITS.
+
 **Default backend: pdfer_forms, behind the existing `PdfBackend`
 trait — with guards. Do not keep lopdf `/V`-only filling; do not rely
 on `NeedAppearances`.** (Decision + implied code changes only; this
