@@ -34,6 +34,7 @@ not from your own calculation, not from a prior draft.
 
 ## Authority limits
 
-v1 computes a TY2025 Form 1040 slice (see `docs/KNOWN_LIMITS.md`). Line 16
-is bracket tax, not the Tax Table / QDCG worksheet — say so when
-presenting it. Preparation is not filing: this skill never submits.
+v1 computes a TY2025 Form 1040 slice from W-2, 1099-INT, 1099-DIV, and
+1099-B entries (see `docs/KNOWN_LIMITS.md`). Line 16 is bracket tax, not
+the Tax Table / QDCG worksheet — say so when presenting it. Preparation
+is not filing: this skill never submits.

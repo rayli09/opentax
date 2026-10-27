@@ -4,14 +4,29 @@ This list is the contract: anything not listed as working is not claimed.
 
 ## Compute (tax-forms)
 
-- Only Form 1040, only these lines: 1a, 1z, 2b, 3b, 9, 11, 12, 15, 16, 25a,
-  25d, 33, 34, 37.
-- Income sources: W-2 wages, taxable interest, ordinary dividends. No
-  Schedule C/D/E, no capital gains computation, no K-1, no crypto.
+- Only Form 1040, only these lines: 1a, 1z, 2a, 2b, 3a, 3b, 7, 9, 11, 12,
+  15, 16, 25a, 25d, 33, 34, 37 — plus two internal keys in the computed
+  lines map, `schd_net_short` / `schd_net_long` (net short-/long-term
+  gain or loss from 1099-B), which feed a future Schedule D and are not
+  Form 1040 line numbers.
+- Income sources: W-2 wages; 1099-INT (Box 1 → line 2b, Box 8
+  tax-exempt interest → line 2a, Box 4 withholding → line 25d);
+  1099-DIV (Box 1a → line 3b, Box 1b qualified → line 3a, Box 4 →
+  line 25d); 1099-B (per-transaction Box 1d proceeds − Box 1e basis +
+  Box 1g adjustment as reported, aggregated by term → line 7). A 1099-B
+  transaction missing proceeds or basis makes the capital-gain lines
+  (7, both `schd_*` keys, and everything downstream) Incomplete, never
+  zero. Wash-sale and other adjustments are taken as reported in
+  Box 1g — they are not computed. No Schedule C/E, no K-1, no crypto,
+  and Schedule D itself is not produced: line 7 is the direct net of
+  the reported 1099-B transactions, with no Schedule D worksheet,
+  netting rules beyond the short/long split, or loss limits.
 - Line 16 is **bracket tax** on taxable income for all amounts, named
   honestly: the IRS Tax Table (required below $100,000) and the Qualified
   Dividends and Capital Gain Tax Worksheet are NOT implemented in v1, so
-  line 16 differs from a filed return wherever those would apply.
+  qualified dividends (line 3a) and capital gains (line 7) are taxed at
+  ordinary rates here, and line 16 differs from a filed return wherever
+  those would apply.
 - Line 12 is the standard deduction only; no itemizing, no additional
   amounts (age/blindness), no QBI deduction (line 13).
 - AGI = total income: no adjustments (student loan interest, HSA, SE tax…).

@@ -32,59 +32,130 @@ pub struct W2Input {
     pub medicare_tax: Option<Money>,
 }
 
-/// 1099-INT input shape (template/ingest contract in v1; compute does not
-/// yet consume it — see `tax node list`, `compute: false`).
+/// One 1099-INT (Interest Income). Money = cents.
+///
+/// Field names follow the pre-existing ingest template; amounts that a
+/// payer reports as none are represented by an absent field deserializing
+/// to zero (the template's convention — a reported fact, not a missing
+/// input).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct I1099IntInput {
     pub payer_name: String,
-    /// Box 1: interest income.
+    /// Payer's EIN (optional; identification only, never computed on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer_ein: Option<String>,
+    /// Box 1: interest income → Form 1040 line 2b.
     pub interest_income: Money,
-    /// Box 4: federal income tax withheld.
+    /// Box 8: tax-exempt interest → Form 1040 line 2a.
+    #[serde(default)]
+    pub tax_exempt_interest: Money,
+    /// Box 4: federal income tax withheld → Form 1040 line 25d component.
     #[serde(default)]
     pub federal_withholding: Money,
 }
 
-/// 1099-DIV input shape (template/ingest contract in v1; compute: false).
+/// One 1099-DIV (Dividends and Distributions). Money = cents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct I1099DivInput {
     pub payer_name: String,
-    /// Box 1a: total ordinary dividends.
+    /// Payer's EIN (optional; identification only, never computed on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer_ein: Option<String>,
+    /// Box 1a: total ordinary dividends → Form 1040 line 3b.
     pub total_ordinary_dividends: Money,
-    /// Box 1b: qualified dividends.
+    /// Box 1b: qualified dividends → Form 1040 line 3a.
     #[serde(default)]
     pub qualified_dividends: Money,
-    /// Box 4: federal income tax withheld.
+    /// Box 4: federal income tax withheld → Form 1040 line 25d component.
     #[serde(default)]
     pub federal_withholding: Money,
 }
 
-/// 1099-B input shape (template/ingest contract in v1; compute: false).
+/// Whether a sale is short-term or long-term (1099-B / Schedule D).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TxnTerm {
+    Short,
+    Long,
+}
+
+/// One transaction from a 1099-B (Proceeds From Broker and Barter
+/// Exchange Transactions). Money = cents.
+///
+/// `proceeds`/`cost_basis` are `Option`s on purpose: a transaction whose
+/// Box 1d or 1e was not transcribed is *incomplete* and must poison every
+/// line that depends on it (missing ≠ 0). `adjustment` is different: an
+/// absent adjustment means the broker reported none (Box 1g = 0), which
+/// is a reported fact, so it defaults to zero.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrokerTxn {
+    /// Description of property (Box 1a), e.g. "100 sh XYZ".
+    pub description: String,
+    /// Box 1d: proceeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proceeds: Option<Money>,
+    /// Box 1e: cost or other basis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_basis: Option<Money>,
+    /// Box 1g: adjustments (e.g. wash-sale loss disallowed), as reported.
+    #[serde(default)]
+    pub adjustment: Money,
+    /// Short-term or long-term, per the broker's reporting.
+    pub term: TxnTerm,
+}
+
+impl BrokerTxn {
+    /// Gain (loss) = proceeds − basis + adjustment, when fully reported.
+    pub fn gain(&self) -> Option<Money> {
+        match (self.proceeds, self.cost_basis) {
+            (Some(p), Some(b)) => Some(p - b + self.adjustment),
+            _ => None,
+        }
+    }
+}
+
+/// One 1099-B: a broker's transactions for the year. Money = cents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct I1099BInput {
     pub payer_name: String,
-    /// Sum of proceeds (Box 1d) across transactions, cents.
-    pub total_proceeds: Money,
-    /// Sum of cost or other basis (Box 1e) across transactions, cents.
-    pub total_basis: Money,
-    /// Box 4: federal income tax withheld.
+    /// Broker's EIN (optional; identification only, never computed on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer_ein: Option<String>,
+    pub transactions: Vec<BrokerTxn>,
+    /// Box 4: federal income tax withheld → Form 1040 line 25d component.
     #[serde(default)]
     pub federal_withholding: Money,
 }
 
-/// The complete set of inputs the v1 1040 slice consumes. Every field is
-/// required: an absent field is a deserialization error, not a zero.
+/// The complete set of inputs the v1 1040 slice consumes. Scalar income
+/// fields are required: an absent field is a deserialization error, not a
+/// zero. Document collections default to empty (no such documents is a
+/// stated fact about the input set, as with `w2s`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Form1040Input {
     pub status: FilingStatus,
     #[serde(default)]
     pub w2s: Vec<W2Input>,
-    /// Schedule B / line 2b: taxable interest (explicitly provided, may be 0).
+    /// Schedule B / line 2b: taxable interest entered directly (in
+    /// addition to any 1099-INT Box 1 amounts).
     pub interest_income: Money,
-    /// Line 3b: ordinary dividends.
+    /// Line 3b: ordinary dividends entered directly (in addition to any
+    /// 1099-DIV Box 1a amounts).
     pub ordinary_dividends: Money,
+    #[serde(default)]
+    pub f1099_ints: Vec<I1099IntInput>,
+    #[serde(default)]
+    pub f1099_divs: Vec<I1099DivInput>,
+    #[serde(default)]
+    pub f1099_bs: Vec<I1099BInput>,
 }
 
 /// A computed return: line number (Form 1040 numbering) → fact result.
+///
+/// In addition to numbered 1040 lines, the map carries two internal keys
+/// that feed a future Schedule D: `schd_net_short` and `schd_net_long`
+/// (net short-term / long-term gain or loss aggregated from 1099-B
+/// transactions). They are not Form 1040 line numbers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComputedReturn {
     pub lines: BTreeMap<String, FactResult<Money>>,
@@ -94,60 +165,184 @@ pub struct ComputedReturn {
     pub notes: Vec<String>,
 }
 
+/// Add two money facts, propagating completeness (Fact Graph semantics).
+fn add_facts(a: FactResult<Money>, b: FactResult<Money>) -> FactResult<Money> {
+    use FactResult::*;
+    match (a, b) {
+        (Incomplete, _) | (_, Incomplete) => Incomplete,
+        (Placeholder(x), Placeholder(y)) => Placeholder(x + y),
+        (Placeholder(x), Complete(y)) | (Complete(x), Placeholder(y)) => Placeholder(x + y),
+        (Complete(x), Complete(y)) => Complete(x + y),
+    }
+}
+
+/// A deterministic consistency finding about a single document.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsistencyFinding {
+    pub code: &'static str,
+    pub severity: &'static str,
+    pub message: String,
+}
+
+/// Consistency checks for one 1099-DIV. Qualified dividends (Box 1b) are
+/// by definition a subset of total ordinary dividends (Box 1a), so 1b > 1a
+/// is always a transcription or payer error worth surfacing.
+pub fn validate_1099_div(div: &I1099DivInput) -> Vec<ConsistencyFinding> {
+    let mut findings = Vec::new();
+    if div.qualified_dividends > div.total_ordinary_dividends {
+        findings.push(ConsistencyFinding {
+            code: "div_qualified_exceeds_ordinary",
+            severity: "warning",
+            message: format!(
+                "1099-DIV from {}: qualified dividends (Box 1b, {}) exceed total ordinary \
+                 dividends (Box 1a, {}); qualified dividends are a subset of ordinary \
+                 dividends — check the transcription",
+                div.payer_name, div.qualified_dividends, div.total_ordinary_dividends
+            ),
+        });
+    }
+    findings
+}
+
 /// Compute the v1 slice of Form 1040.
 ///
 /// Lines computed (2025 Form 1040 numbering):
-/// 1a/1z total amount from Form W-2 (wages), 2b taxable interest,
-/// 3b ordinary dividends, 9 total income, 11 AGI, 12 standard deduction,
-/// 15 taxable income, 16 tax, 25a W-2 withholding, 25d total withheld,
-/// 33 total other payments and refundable credits (simplified: = 25d),
-/// 34 overpaid (refund) when payments exceed tax, 37 amount owed otherwise.
+/// 1a/1z total amount from Form W-2 (wages), 2a tax-exempt interest
+/// (Σ 1099-INT Box 8), 2b taxable interest (direct + Σ 1099-INT Box 1),
+/// 3a qualified dividends (Σ 1099-DIV Box 1b), 3b ordinary dividends
+/// (direct + Σ 1099-DIV Box 1a), 7 capital gain/loss (net short + net
+/// long from 1099-B transactions), 9 total income, 11 AGI, 12 standard
+/// deduction, 15 taxable income, 16 tax, 25a W-2 withholding, 25d total
+/// withheld (W-2 + 1099-INT/DIV/B Box 4), 33 total other payments and
+/// refundable credits (simplified: = 25d), 34 overpaid (refund) when
+/// payments exceed tax, 37 amount owed otherwise. Plus the internal
+/// `schd_net_short` / `schd_net_long` keys described on
+/// [`ComputedReturn`].
+///
+/// Completeness: a 1099-B transaction missing proceeds or basis makes
+/// lines 7, 9, 11, 15, 16, 34, 37 (and both `schd_*` keys) `Incomplete`;
+/// independent lines stay `Complete`.
 ///
 /// Simplifications (docs/KNOWN_LIMITS.md): no adjustments to income (AGI =
-/// total income), no itemizing, no credits, and line 16 is *bracket tax* on
-/// taxable income for all amounts — the Tax Table (< $100k) and the
-/// Qualified Dividends and Capital Gain Tax Worksheet are out of scope v1.
+/// total income), no itemizing, no credits, no Schedule D worksheet, and
+/// line 16 is *bracket tax* on taxable income for all amounts — the Tax
+/// Table (< $100k) and the Qualified Dividends and Capital Gain Tax
+/// Worksheet are out of scope v1, so qualified dividends and capital
+/// gains are taxed at ordinary rates here.
 pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn {
     let wages: Money = input.w2s.iter().map(|w| w.wages).sum();
-    let withholding: Money = input.w2s.iter().map(|w| w.federal_withholding).sum();
+    let w2_withholding: Money = input.w2s.iter().map(|w| w.federal_withholding).sum();
 
-    let total_income = wages + input.interest_income + input.ordinary_dividends;
-    let agi = total_income;
-    let deduction = params.standard_deduction(input.status);
-    let taxable = Money::from_cents((agi - deduction).cents().max(0));
-    let tax = bracket_tax(taxable, &params.bracket_table(input.status));
-    let payments = withholding;
-    let (overpaid, owed) = if payments.cents() > tax.cents() {
-        (payments - tax, Money::ZERO)
+    // 1099-INT: Box 1 → 2b, Box 8 → 2a, Box 4 → 25d.
+    let int_interest: Money = input.f1099_ints.iter().map(|f| f.interest_income).sum();
+    let tax_exempt: Money = input.f1099_ints.iter().map(|f| f.tax_exempt_interest).sum();
+    let int_withholding: Money = input.f1099_ints.iter().map(|f| f.federal_withholding).sum();
+
+    // 1099-DIV: Box 1a → 3b, Box 1b → 3a, Box 4 → 25d.
+    let div_ordinary: Money = input
+        .f1099_divs
+        .iter()
+        .map(|f| f.total_ordinary_dividends)
+        .sum();
+    let div_qualified: Money = input.f1099_divs.iter().map(|f| f.qualified_dividends).sum();
+    let div_withholding: Money = input.f1099_divs.iter().map(|f| f.federal_withholding).sum();
+
+    // 1099-B: per-transaction gains, split by term. One transaction with
+    // unreported proceeds or basis poisons both nets (missing ≠ 0).
+    let b_withholding: Money = input.f1099_bs.iter().map(|f| f.federal_withholding).sum();
+    let mut net_short = Money::ZERO;
+    let mut net_long = Money::ZERO;
+    let mut b_incomplete = false;
+    for form in &input.f1099_bs {
+        for txn in &form.transactions {
+            match txn.gain() {
+                Some(g) => match txn.term {
+                    TxnTerm::Short => net_short = net_short + g,
+                    TxnTerm::Long => net_long = net_long + g,
+                },
+                None => b_incomplete = true,
+            }
+        }
+    }
+    let net_short_f = if b_incomplete {
+        FactResult::Incomplete
     } else {
-        (Money::ZERO, tax - payments)
+        FactResult::Complete(net_short)
+    };
+    let net_long_f = if b_incomplete {
+        FactResult::Incomplete
+    } else {
+        FactResult::Complete(net_long)
+    };
+    let capital_gain_f = add_facts(net_short_f.clone(), net_long_f.clone());
+
+    let line2b = input.interest_income + int_interest;
+    let line3b = input.ordinary_dividends + div_ordinary;
+    let total_withholding = w2_withholding + int_withholding + div_withholding + b_withholding;
+
+    let complete = |v: Money| FactResult::Complete(v);
+    let total_income_f = add_facts(
+        add_facts(complete(wages), complete(line2b)),
+        add_facts(complete(line3b), capital_gain_f.clone()),
+    );
+    let agi_f = total_income_f.clone();
+    let deduction = params.standard_deduction(input.status);
+    let taxable_f = agi_f
+        .clone()
+        .map(|agi| Money::from_cents((agi - deduction).cents().max(0)));
+    let tax_f = taxable_f
+        .clone()
+        .map(|t| bracket_tax(t, &params.bracket_table(input.status)));
+    let payments_f = complete(total_withholding);
+    let (overpaid_f, owed_f) = match tax_f.clone() {
+        FactResult::Complete(tax) | FactResult::Placeholder(tax) => {
+            let wrap = |v: Money| match tax_f {
+                FactResult::Placeholder(_) => FactResult::Placeholder(v),
+                _ => FactResult::Complete(v),
+            };
+            if total_withholding.cents() > tax.cents() {
+                (wrap(total_withholding - tax), wrap(Money::ZERO))
+            } else {
+                (wrap(Money::ZERO), wrap(tax - total_withholding))
+            }
+        }
+        FactResult::Incomplete => (FactResult::Incomplete, FactResult::Incomplete),
     };
 
     let mut lines: BTreeMap<String, FactResult<Money>> = BTreeMap::new();
-    let mut put = |line: &str, v: Money| {
-        lines.insert(line.to_string(), FactResult::Complete(v));
-    };
-    put("1a", wages);
-    put("1z", wages);
-    put("2b", input.interest_income);
-    put("3b", input.ordinary_dividends);
-    put("9", total_income);
-    put("11", agi);
-    put("12", deduction);
-    put("15", taxable);
-    put("16", tax);
-    put("25a", withholding);
-    put("25d", withholding);
-    put("33", payments);
-    put("34", overpaid);
-    put("37", owed);
+    lines.insert("1a".into(), complete(wages));
+    lines.insert("1z".into(), complete(wages));
+    lines.insert("2a".into(), complete(tax_exempt));
+    lines.insert("2b".into(), complete(line2b));
+    lines.insert("3a".into(), complete(div_qualified));
+    lines.insert("3b".into(), complete(line3b));
+    lines.insert("7".into(), capital_gain_f);
+    lines.insert("schd_net_short".into(), net_short_f);
+    lines.insert("schd_net_long".into(), net_long_f);
+    lines.insert("9".into(), total_income_f);
+    lines.insert("11".into(), agi_f);
+    lines.insert("12".into(), complete(deduction));
+    lines.insert("15".into(), taxable_f);
+    lines.insert("16".into(), tax_f);
+    lines.insert("25a".into(), complete(w2_withholding));
+    lines.insert("25d".into(), complete(total_withholding));
+    lines.insert("33".into(), payments_f);
+    lines.insert("34".into(), overpaid_f);
+    lines.insert("37".into(), owed_f);
 
+    let complete = lines.values().all(|f| f.is_complete());
     ComputedReturn {
-        complete: true,
+        complete,
         lines,
         notes: vec![
-            "Line 16 is bracket tax (ordinary brackets) for all taxable income; \
-             Tax Table and QDCG worksheet are out of scope in v1."
+            "Line 16 is bracket tax (ordinary brackets) on all taxable income, \
+             including qualified dividends (line 3a) and capital gains (line 7): \
+             the Qualified Dividends and Capital Gain Tax Worksheet and the Tax \
+             Table are out of scope in v1, so those amounts are taxed at \
+             ordinary rates here."
+                .to_string(),
+            "Line 7 is the direct net of 1099-B transactions; the Schedule D \
+             worksheet is not produced in v1."
                 .to_string(),
             "AGI equals total income: no adjustments, credits, or itemized deductions in v1."
                 .to_string(),
@@ -173,6 +368,9 @@ mod tests {
             }],
             interest_income: Money::ZERO,
             ordinary_dividends: Money::ZERO,
+            f1099_ints: vec![],
+            f1099_divs: vec![],
+            f1099_bs: vec![],
         }
     }
 
@@ -214,5 +412,179 @@ mod tests {
         let r = compute_1040(&input, &params);
         assert_eq!(r.lines["34"].value().copied().unwrap(), Money::ZERO);
         assert_eq!(r.lines["37"].value().copied().unwrap().cents(), 87_150);
+    }
+
+    fn case002_input() -> Form1040Input {
+        let mut input = golden_input();
+        input.f1099_ints = vec![I1099IntInput {
+            payer_name: "Example Bank".into(),
+            payer_ein: None,
+            interest_income: Money::from_cents(50_000),
+            tax_exempt_interest: Money::ZERO,
+            federal_withholding: Money::ZERO,
+        }];
+        input.f1099_divs = vec![I1099DivInput {
+            payer_name: "Example Fund".into(),
+            payer_ein: None,
+            total_ordinary_dividends: Money::from_cents(100_000),
+            qualified_dividends: Money::from_cents(60_000),
+            federal_withholding: Money::ZERO,
+        }];
+        input.f1099_bs = vec![I1099BInput {
+            payer_name: "Example Broker".into(),
+            payer_ein: None,
+            transactions: vec![
+                BrokerTxn {
+                    description: "100 sh EXAMPLE".into(),
+                    proceeds: Some(Money::from_cents(800_000)),
+                    cost_basis: Some(Money::from_cents(600_000)),
+                    adjustment: Money::ZERO,
+                    term: TxnTerm::Short,
+                },
+                BrokerTxn {
+                    description: "50 sh EXAMPLE".into(),
+                    proceeds: Some(Money::from_cents(300_000)),
+                    cost_basis: Some(Money::from_cents(350_000)),
+                    adjustment: Money::ZERO,
+                    term: TxnTerm::Long,
+                },
+            ],
+            federal_withholding: Money::ZERO,
+        }];
+        input
+    }
+
+    /// Golden case 002 (benchmark/cases/f1040/2025/002-w2-1099s): W-2 plus
+    /// one each of 1099-INT/DIV/B. All amounts verified by hand:
+    /// total income 50000 + 500 + 1000 + (2000 − 500) = $53,000; taxable
+    /// 53000 − 15750 = $37,250; bracket tax 11925×10% + 25325×12%
+    /// = 1192.50 + 3039.00 = $4,231.50; owed 4231.50 − 4000 = $231.50.
+    #[test]
+    fn golden_w2_with_1099s() {
+        let params = TaxParams::load_2025().unwrap();
+        let r = compute_1040(&case002_input(), &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("1a"), 5_000_000);
+        assert_eq!(line("2a"), 0, "no tax-exempt interest reported");
+        assert_eq!(line("2b"), 50_000, "1099-INT Box 1 $500");
+        assert_eq!(line("3a"), 60_000, "1099-DIV Box 1b $600");
+        assert_eq!(line("3b"), 100_000, "1099-DIV Box 1a $1,000");
+        assert_eq!(line("schd_net_short"), 200_000, "ST gain $2,000");
+        assert_eq!(line("schd_net_long"), -50_000, "LT loss −$500");
+        assert_eq!(line("7"), 150_000, "net capital gain $1,500");
+        assert_eq!(line("9"), 5_300_000, "total income $53,000");
+        assert_eq!(line("11"), 5_300_000, "AGI $53,000");
+        assert_eq!(line("12"), 1_575_000);
+        assert_eq!(line("15"), 3_725_000, "taxable $37,250");
+        assert_eq!(line("16"), 423_150, "tax $4,231.50");
+        assert_eq!(line("25a"), 400_000);
+        assert_eq!(line("25d"), 400_000);
+        assert_eq!(line("33"), 400_000);
+        assert_eq!(line("34"), 0, "nothing overpaid");
+        assert_eq!(line("37"), 23_150, "amount owed $231.50");
+    }
+
+    #[test]
+    fn case002_json_round_trip() {
+        let json = r#"{
+            "status": "single",
+            "w2s": [{"employer_ein": "12-3456789", "wages": "5000000", "federal_withholding": "400000"}],
+            "interest_income": "0",
+            "ordinary_dividends": "0",
+            "f1099_ints": [{"payer_name": "Example Bank", "interest_income": "50000"}],
+            "f1099_divs": [{"payer_name": "Example Fund", "total_ordinary_dividends": "100000", "qualified_dividends": "60000"}],
+            "f1099_bs": [{"payer_name": "Example Broker", "transactions": [
+                {"description": "100 sh EXAMPLE", "proceeds": "800000", "cost_basis": "600000", "term": "short"},
+                {"description": "50 sh EXAMPLE", "proceeds": "300000", "cost_basis": "350000", "term": "long"}
+            ]}]
+        }"#;
+        let input: Form1040Input = serde_json::from_str(json).unwrap();
+        assert_eq!(input, case002_input());
+    }
+
+    #[test]
+    fn div_qualified_exceeding_ordinary_is_flagged() {
+        let mut div = I1099DivInput {
+            payer_name: "Bad Fund".into(),
+            payer_ein: None,
+            total_ordinary_dividends: Money::from_cents(100_000),
+            qualified_dividends: Money::from_cents(60_000),
+            federal_withholding: Money::ZERO,
+        };
+        assert!(validate_1099_div(&div).is_empty());
+        div.qualified_dividends = Money::from_cents(100_001);
+        let findings = validate_1099_div(&div);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].code, "div_qualified_exceeds_ordinary");
+        assert_eq!(findings[0].severity, "warning");
+    }
+
+    #[test]
+    fn incomplete_1099b_poisons_only_dependent_lines() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut input = case002_input();
+        input.f1099_bs[0].transactions[0].cost_basis = None;
+        let r = compute_1040(&input, &params);
+        assert!(!r.complete);
+        for line in [
+            "7",
+            "schd_net_short",
+            "schd_net_long",
+            "9",
+            "11",
+            "15",
+            "16",
+            "34",
+            "37",
+        ] {
+            assert_eq!(
+                r.lines[line],
+                FactResult::Incomplete,
+                "line {line} must be incomplete"
+            );
+        }
+        // Independent lines stay complete and exact.
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("1a"), 5_000_000);
+        assert_eq!(line("2b"), 50_000);
+        assert_eq!(line("3a"), 60_000);
+        assert_eq!(line("3b"), 100_000);
+        assert_eq!(line("12"), 1_575_000);
+        assert_eq!(line("25d"), 400_000);
+        assert_eq!(line("33"), 400_000);
+    }
+
+    #[test]
+    fn withholding_from_1099s_flows_to_25d() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut input = golden_input();
+        input.f1099_ints = vec![I1099IntInput {
+            payer_name: "Bank".into(),
+            payer_ein: None,
+            interest_income: Money::ZERO,
+            tax_exempt_interest: Money::from_cents(70_000),
+            federal_withholding: Money::from_cents(10_000),
+        }];
+        input.f1099_divs = vec![I1099DivInput {
+            payer_name: "Fund".into(),
+            payer_ein: None,
+            total_ordinary_dividends: Money::ZERO,
+            qualified_dividends: Money::ZERO,
+            federal_withholding: Money::from_cents(20_000),
+        }];
+        input.f1099_bs = vec![I1099BInput {
+            payer_name: "Broker".into(),
+            payer_ein: None,
+            transactions: vec![],
+            federal_withholding: Money::from_cents(30_000),
+        }];
+        let r = compute_1040(&input, &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("25a"), 400_000, "25a is W-2 withholding only");
+        assert_eq!(line("25d"), 460_000, "25d adds INT/DIV/B Box 4 amounts");
+        assert_eq!(line("2a"), 70_000, "1099-INT Box 8 lands on line 2a");
+        assert_eq!(line("2b"), 0, "tax-exempt interest is not taxable interest");
     }
 }
