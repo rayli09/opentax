@@ -736,18 +736,18 @@ fn emit_header(
     xml.push_str("  <ReturnHeader binaryAttachmentCnt=\"0\">\n");
     let mut h = String::new();
     let e = Emitter::new("ReturnHeader");
-    e.text(&mut h, 3, "ReturnTs", generated_at);
-    e.text(&mut h, 3, "TaxYr", &tax_year.to_string());
-    e.text(&mut h, 3, "TaxPeriodBeginDt", &format!("{tax_year}-01-01"));
-    e.text(&mut h, 3, "TaxPeriodEndDt", &format!("{tax_year}-12-31"));
-    e.text(&mut h, 3, "ReturnTypeCd", "1040");
-    e.open(&mut h, 3, "Filer");
-    e.text(&mut h, 4, "PrimarySSN", primary_ssn);
+    e.text(&mut h, 2, "ReturnTs", generated_at);
+    e.text(&mut h, 2, "TaxYr", &tax_year.to_string());
+    e.text(&mut h, 2, "TaxPeriodBeginDt", &format!("{tax_year}-01-01"));
+    e.text(&mut h, 2, "TaxPeriodEndDt", &format!("{tax_year}-12-31"));
+    e.text(&mut h, 2, "ReturnTypeCd", "1040");
+    e.open(&mut h, 2, "Filer");
+    e.text(&mut h, 3, "PrimarySSN", primary_ssn);
     let spouse = identity.spouse.as_ref();
     let joint = status == FilingStatus::Mfj;
     if joint {
         match spouse.and_then(|s| s.ssn.as_deref()).and_then(normalize_ssn) {
-            Some(spouse_ssn) => e.text(&mut h, 4, "SpouseSSN", &spouse_ssn),
+            Some(spouse_ssn) => e.text(&mut h, 3, "SpouseSSN", &spouse_ssn),
             None => notes.push(
                 "the ReturnHeader Filer has no SpouseSSN: this is a joint return but \
                  no spouse SSN is stored in the identity"
@@ -761,13 +761,13 @@ fn emit_header(
         (true, Some(spouse_name)) => format!("{primary_name} & {spouse_name}"),
         _ => primary_name.to_string(),
     };
-    e.text(&mut h, 4, "NameLine1Txt", &name_line);
+    e.text(&mut h, 3, "NameLine1Txt", &name_line);
     if let Some(last) = identity.person.last_name.as_deref() {
-        e.text(&mut h, 4, "PrimaryNameControlTxt", &name_control(last));
+        e.text(&mut h, 3, "PrimaryNameControlTxt", &name_control(last));
     }
     if joint {
         if let Some(spouse_last) = spouse.and_then(|s| s.last_name.as_deref()) {
-            e.text(&mut h, 4, "SpouseNameControlTxt", &name_control(spouse_last));
+            e.text(&mut h, 3, "SpouseNameControlTxt", &name_control(spouse_last));
         }
     }
     match &identity.address {
@@ -777,17 +777,17 @@ fn emit_header(
             let state = addr.state.as_deref().unwrap_or("").trim();
             let zip = addr.zip.as_deref().unwrap_or("").trim();
             if !street.is_empty() && !city.is_empty() && !state.is_empty() && !zip.is_empty() {
-                e.open(&mut h, 4, "USAddress");
-                e.text(&mut h, 5, "AddressLine1Txt", street);
+                e.open(&mut h, 3, "USAddress");
+                e.text(&mut h, 4, "AddressLine1Txt", street);
                 if let Some(apt) = addr.apt.as_deref().map(str::trim) {
                     if !apt.is_empty() {
-                        e.text(&mut h, 5, "AddressLine2Txt", apt);
+                        e.text(&mut h, 4, "AddressLine2Txt", apt);
                     }
                 }
-                e.text(&mut h, 5, "CityNm", city);
-                e.text(&mut h, 5, "StateAbbreviationCd", state);
-                e.text(&mut h, 5, "ZIPCd", zip);
-                e.close(&mut h, 4, "USAddress");
+                e.text(&mut h, 4, "CityNm", city);
+                e.text(&mut h, 4, "StateAbbreviationCd", state);
+                e.text(&mut h, 4, "ZIPCd", zip);
+                e.close(&mut h, 3, "USAddress");
             } else {
                 notes.push(
                     "the ReturnHeader Filer has no USAddress: the stored mailing \
@@ -803,7 +803,7 @@ fn emit_header(
                 .to_string(),
         ),
     }
-    e.close(&mut h, 3, "Filer");
+    e.close(&mut h, 2, "Filer");
     xml.push_str(&h);
     xml.push_str("  </ReturnHeader>\n");
 }
@@ -1161,7 +1161,9 @@ fn emit_schedule_c(
             out,
             4,
             "Desc",
-            "Business expenses — single aggregate (not itemized in v1)",
+            // ASCII hyphen, not the packet PDF's em dash: the
+            // schema's LineExplanationType pattern excludes it.
+            "Business expenses - single aggregate (not itemized in v1)",
         );
         em.amt(out, 4, "Amt", expenses);
         em.close(out, 3, "OtherExpenseDetail");
