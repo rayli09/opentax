@@ -1145,6 +1145,7 @@ dependencies = [
 name = "tax-doc"
 version = "0.1.0"
 dependencies = [
+ "lopdf 0.46.0",
  "serde",
  "serde_json",
  "tax-core",

@@ -10,6 +10,11 @@ use std::path::Path;
 use tax_core::{Money, TaxParams};
 use tax_forms::W2Input;
 
+pub mod afm;
+pub mod extract;
+
+pub use extract::{extract_document, extract_words, ExtractReport, ExtractStatus, Word};
+
 // ---------------------------------------------------------------------------
 // Classification
 // ---------------------------------------------------------------------------
