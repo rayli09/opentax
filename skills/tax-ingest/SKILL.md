@@ -23,8 +23,9 @@ touches raw documents; treat every file as sensitive.
    printed, even if it looks wrong.
 4. Enter each document:
    `tax form add --return <id> --node-type w2 --file <entry.json>`
-   (v1 computes W-2 entries; 1099 templates exist but entering them
-   returns `not_implemented` — tell the user, don't work around it.)
+   (v1 computes W-2, 1099-INT, 1099-DIV, and 1099-B entries; any other
+   node type returns `not_implemented` — tell the user, don't work
+   around it.)
 5. Run `tax return validate --return <id>`. The deterministic checks
    (e.g. W-2 Social Security/Medicare rate cross-checks) will flag
    transcription errors and genuinely odd documents alike. Report every
