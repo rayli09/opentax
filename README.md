@@ -11,8 +11,9 @@ with its source recorded.
 
 > **Status: scaffold.** A working vertical slice (TY2025 Form 1040 with W-2
 > income), not a finished tax product. See `docs/KNOWN_LIMITS.md` for
-> exactly what is missing. JSON export works; MeF e-file and PDF export do
-> not (they report `not_implemented` honestly).
+> exactly what is missing. JSON export and filled-PDF export (amounts +
+> filing status onto a user-supplied TY2025 1040 template) work; MeF
+> e-file does not (it reports `not_implemented` honestly).
 
 ## Iron rules
 

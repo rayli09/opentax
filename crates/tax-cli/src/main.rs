@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use tax_core::{FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::{
-    compute_1040, validate_1099_div, Form1040Input, I1099BInput, I1099DivInput, I1099IntInput,
-    W2Input,
+    build_fill_values, compute_1040, validate_1099_div, Form1040Input, I1099BInput, I1099DivInput,
+    I1099IntInput, W2Input,
 };
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
@@ -134,12 +134,17 @@ enum ReturnAction {
         #[arg(long)]
         r#return: String,
     },
-    /// Export a stored return. json works; mef/pdf report not_implemented.
+    /// Export a stored return. json and pdf work; mef reports not_implemented.
+    /// pdf requires --template (a blank TY2025 Form 1040 PDF) and --out.
     Export {
         #[arg(long)]
         r#return: String,
         #[arg(long = "type", default_value = "json")]
         export_type: String,
+        #[arg(long)]
+        template: Option<PathBuf>,
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -205,6 +210,9 @@ enum SkillsAction {
 struct CliErr {
     code: String,
     message: String,
+    /// Extra JSON fields merged into the error object (e.g.
+    /// `incomplete_lines` for `return_incomplete`).
+    extra: Option<Value>,
 }
 
 impl CliErr {
@@ -212,6 +220,15 @@ impl CliErr {
         CliErr {
             code: code.to_string(),
             message: message.into(),
+            extra: None,
+        }
+    }
+
+    fn with_extra(code: &str, message: impl Into<String>, extra: Value) -> CliErr {
+        CliErr {
+            code: code.to_string(),
+            message: message.into(),
+            extra: Some(extra),
         }
     }
 }
@@ -1016,6 +1033,8 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
         ReturnAction::Export {
             r#return,
             export_type,
+            template,
+            out,
         } => {
             let ret = load_return(&cli.store, &r#return)?;
             match export_type.as_str() {
@@ -1044,11 +1063,63 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                             "detail": "MeF XML export is not implemented in v1; no file was produced. JSON export is the supported artifact."}),
                     "mef export: not implemented in v1 (no file produced)".to_string(),
                 )),
-                "pdf" => Ok(Out::ok(
-                    json!({"status": "not_implemented", "format": export_type,
-                            "detail": "Filled-PDF export of a computed return is not implemented in v1: the 1040 line-to-field mapping is the next step. The fill primitive itself works — see `tax pdf fill` (pdfer_forms backend). No file was produced. JSON export is the supported artifact."}),
-                    "pdf export: not implemented in v1 (line-to-field mapping is the next step; no file produced)".to_string(),
-                )),
+                "pdf" => {
+                    let template = template.as_ref().ok_or_else(|| {
+                        CliErr::new(
+                            "missing_template",
+                            "pdf export requires --template <blank TY2025 Form 1040 PDF>",
+                        )
+                    })?;
+                    let out_path = out.as_ref().ok_or_else(|| {
+                        CliErr::new("missing_out", "pdf export requires --out <output PDF path>")
+                    })?;
+                    let view = compute_view(&ret, &params)?;
+                    let status = FilingStatus::parse(&ret.status)
+                        .map_err(|e| CliErr::new("invalid_status", e))?;
+                    let plan = build_fill_values(&view.lines, status).map_err(|incomplete| {
+                        CliErr::with_extra(
+                            "return_incomplete",
+                            format!(
+                                "return {} is incomplete; mapped lines missing or incomplete: {}",
+                                ret.id,
+                                incomplete.join(", ")
+                            ),
+                            json!({"incomplete_lines": incomplete}),
+                        )
+                    })?;
+                    let values: std::collections::HashMap<String, String> = plan
+                        .values
+                        .iter()
+                        .map(|v| (v.field.clone(), v.value.clone()))
+                        .collect();
+                    let report: FillReport = PdferBackend
+                        .fill_fields(template, &values, out_path)
+                        .map_err(|e| CliErr::new("pdf_fill_failed", e.to_string()))?;
+                    let filled: Vec<Value> = plan
+                        .values
+                        .iter()
+                        .map(|v| json!({"line": v.line, "field": v.field, "value": v.value}))
+                        .collect();
+                    let skipped: Vec<Value> = plan
+                        .skipped
+                        .iter()
+                        .map(|s| json!({"field": s.field, "reason": s.reason}))
+                        .collect();
+                    Ok(Out::ok(
+                        json!({"success": true, "type": "pdf",
+                                "output": out_path.display().to_string(),
+                                "backend": report.backend,
+                                "filled": filled,
+                                "skipped": skipped,
+                                "warnings": report.warnings}),
+                        format!(
+                            "exported filled PDF to {} ({} fields, backend {})",
+                            out_path.display(),
+                            report.changed_fields.len(),
+                            report.backend
+                        ),
+                    ))
+                }
                 other => Err(CliErr::new(
                     "invalid_export_type",
                     format!("unknown export type '{other}' (use json|mef|pdf)"),
@@ -1453,11 +1524,15 @@ fn cmd_return_ref(cli: &Cli, action: &ReturnAction) -> CResult<Out> {
         ReturnAction::Export {
             r#return,
             export_type,
+            template,
+            out,
         } => cmd_return(
             cli,
             ReturnAction::Export {
                 r#return: r#return.clone(),
                 export_type: export_type.clone(),
+                template: template.clone(),
+                out: out.clone(),
             },
         ),
     }
@@ -1497,10 +1572,15 @@ fn main() {
             std::process::exit(out.exit_code);
         }
         Err(e) => {
-            eprintln!(
-                "{}",
-                json!({"success": false, "error": e.message, "code": e.code})
-            );
+            let mut obj = json!({"success": false, "error": e.message, "code": e.code});
+            if let (Some(extra), Some(map)) = (e.extra, obj.as_object_mut()) {
+                if let Some(extra_map) = extra.as_object() {
+                    for (k, v) in extra_map {
+                        map.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            eprintln!("{}", obj);
             std::process::exit(1);
         }
     }
