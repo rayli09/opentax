@@ -1962,7 +1962,11 @@ fn utc_now_iso() -> String {
         .unwrap_or(0);
     let days = (secs / 86_400) as i64;
     let secs_of_day = secs % 86_400;
-    let (hh, mm, ss) = (secs_of_day / 3600, (secs_of_day % 3600) / 60, secs_of_day % 60);
+    let (hh, mm, ss) = (
+        secs_of_day / 3600,
+        (secs_of_day % 3600) / 60,
+        secs_of_day % 60,
+    );
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = (z - era * 146_097) as u64;
@@ -1990,9 +1994,8 @@ fn utc_now_iso() -> String {
 /// validation — `scripts/mef_acceptance.py` validates the emitted
 /// form documents against the official TY2025v5.2 XSDs.
 fn mef_export(ret: &StoredReturn, params: &TaxParams, out: Option<&PathBuf>) -> CResult<Out> {
-    let out_path = out.ok_or_else(|| {
-        CliErr::new("missing_out", "mef export requires --out <output XML path>")
-    })?;
+    let out_path = out
+        .ok_or_else(|| CliErr::new("missing_out", "mef export requires --out <output XML path>"))?;
     let view = compute_view(ret, params)?;
     if !view.complete {
         return Err(CliErr::with_extra(
@@ -2025,14 +2028,14 @@ fn mef_export(ret: &StoredReturn, params: &TaxParams, out: Option<&PathBuf>) -> 
     );
     Ok(Out::ok(
         json!({"status": "generated", "type": "mef", "format": "mef",
-                "output": out_path.display().to_string(),
-                "documents": export.documents,
-                "document_count": export.documents.len(),
-                "validation": {
-                    "xsd_validated": false,
-                    "schema_version": tax_forms::mef::MEF_SCHEMA_VERSION,
-                    "notes": export.notes,
-                }}),
+        "output": out_path.display().to_string(),
+        "documents": export.documents,
+        "document_count": export.documents.len(),
+        "validation": {
+            "xsd_validated": false,
+            "schema_version": tax_forms::mef::MEF_SCHEMA_VERSION,
+            "notes": export.notes,
+        }}),
         human,
     ))
 }

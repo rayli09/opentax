@@ -42,9 +42,17 @@ description: Preparation skill for opentax. Use when facts/documents are entered
    page-2 occupations, and the standard-deduction age/blind/claim
    checkboxes. Identity pieces that are not stored are reported as
    skipped, never invented, and SSNs in the export report are masked —
-   the full SSN appears only inside the filled PDF). MeF export returns `not_implemented` in
-   v1 — report that plainly if asked; do not claim a file exists when
-   none was produced.
+   the full SSN appears only inside the filled PDF). MeF export
+   (`--type mef --out <file.xml>`) also works: it writes the return as
+   MeF-shaped XML (TY2025v5.2 form documents — IRS1040 and the
+   schedules the engine computes — in a Return/ReturnHeader/ReturnData
+   envelope; whole-dollar amounts; validated against the official
+   XSDs by scripts/mef_acceptance.py). It requires a stored identity
+   and a complete return; the full SSN appears inside the XML (it is
+   the filing artifact) but never in its stdout report, and it is
+   NOT transmissible — no e-file credentials exist in this tool; say
+   so plainly if asked whether it can be filed. See
+   docs/KNOWN_LIMITS.md (Filing) for the exact scope and caveats.
 6. Present a closing summary: refund/owed line values (34/37) quoted from
    engine output, completeness status, open findings, and the exported
    file path. Then offer tax-reviewer (independent check) and

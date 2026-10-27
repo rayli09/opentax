@@ -442,13 +442,7 @@ pub fn build_mef(
     let mut em = Emitter::new("IRS1040");
     let mut body = String::new();
     emit_irs1040(
-        input,
-        computed,
-        params,
-        identity,
-        &mut em,
-        &mut body,
-        &mut notes,
+        input, computed, params, identity, &mut em, &mut body, &mut notes,
     );
     rounded.append(&mut em.rounded);
     documents.push(("IRS1040".to_string(), body));
@@ -508,14 +502,7 @@ pub fn build_mef(
         let mut em = Emitter::new("IRS1040ScheduleSE");
         let mut body = String::new();
         emit_schedule_se(
-            input,
-            computed,
-            params,
-            &primary_name,
-            &primary_ssn,
-            &mut em,
-            &mut body,
-            &mut notes,
+            input, computed, params, identity, &mut em, &mut body, &mut notes,
         );
         rounded.append(&mut em.rounded);
         documents.push(("IRS1040ScheduleSE".to_string(), body));
@@ -535,7 +522,14 @@ pub fn build_mef(
         documents.push(("IRS1040Schedule8812".to_string(), body));
     }
 
-    emit_schedule_eic_check(input, computed, tax_year, &mut documents, &mut rounded, &mut notes);
+    emit_schedule_eic_check(
+        input,
+        computed,
+        tax_year,
+        &mut documents,
+        &mut rounded,
+        &mut notes,
+    );
 
     let agi = fact(&computed.lines, "11");
     let bonus = schedule_1a_senior_deduction(input.identity.as_ref(), input.status, agi, params);
@@ -574,8 +568,6 @@ pub fn build_mef(
     emit_header(
         identity,
         input.status,
-        &primary_ssn,
-        &primary_name,
         tax_year,
         generated_at,
         &mut xml,
@@ -688,7 +680,12 @@ fn emit_eic_child(
         .and_then(normalize_ssn)
         .unwrap_or_default();
     em.open(out, 3, "QualifyingChildInformation");
-    em.text(out, 4, "QualifyingChildNameControlTxt", &name_control(&last));
+    em.text(
+        out,
+        4,
+        "QualifyingChildNameControlTxt",
+        &name_control(&last),
+    );
     em.open(out, 4, "ChildFirstAndLastName");
     em.text(out, 5, "PersonFirstNm", &first);
     em.text(out, 5, "PersonLastNm", &last);
@@ -696,16 +693,16 @@ fn emit_eic_child(
     em.text(out, 4, "QualifyingChildSSN", &ssn);
     // Age is stored as of December 31 of the tax year, so the birth
     // year is exact: tax_year - age.
-    em.text(
-        out,
-        4,
-        "ChildBirthYr",
-        &(tax_year - dep.age).to_string(),
-    );
+    em.text(out, 4, "ChildBirthYr", &(tax_year - dep.age).to_string());
     let student_under_24 = dep.full_time_student && dep.age < 24;
     em.boolean(out, 4, "ChildIsAStudentUnder24Ind", student_under_24);
     if !student_under_24 {
-        em.boolean(out, 4, "ChildPermanentlyDisabledInd", dep.permanently_disabled);
+        em.boolean(
+            out,
+            4,
+            "ChildPermanentlyDisabledInd",
+            dep.permanently_disabled,
+        );
     }
     if let Some(cd) = relationship_cd_eic(dep.relationship) {
         em.text(out, 4, "ChildRelationshipCd", cd);
@@ -726,13 +723,19 @@ fn emit_eic_child(
 fn emit_header(
     identity: &TaxpayerIdentity,
     status: FilingStatus,
-    primary_ssn: &str,
-    primary_name: &str,
     tax_year: u32,
     generated_at: &str,
     xml: &mut String,
     notes: &mut Vec<String>,
 ) {
+    // Presence of the name/SSN is gated in build_mef; re-derive here.
+    let primary_ssn = identity
+        .person
+        .ssn
+        .as_deref()
+        .and_then(normalize_ssn)
+        .unwrap_or_default();
+    let primary_name = full_name(&identity.person).unwrap_or_default();
     xml.push_str("  <ReturnHeader binaryAttachmentCnt=\"0\">\n");
     let mut h = String::new();
     let e = Emitter::new("ReturnHeader");
@@ -742,11 +745,14 @@ fn emit_header(
     e.text(&mut h, 2, "TaxPeriodEndDt", &format!("{tax_year}-12-31"));
     e.text(&mut h, 2, "ReturnTypeCd", "1040");
     e.open(&mut h, 2, "Filer");
-    e.text(&mut h, 3, "PrimarySSN", primary_ssn);
+    e.text(&mut h, 3, "PrimarySSN", &primary_ssn);
     let spouse = identity.spouse.as_ref();
     let joint = status == FilingStatus::Mfj;
     if joint {
-        match spouse.and_then(|s| s.ssn.as_deref()).and_then(normalize_ssn) {
+        match spouse
+            .and_then(|s| s.ssn.as_deref())
+            .and_then(normalize_ssn)
+        {
             Some(spouse_ssn) => e.text(&mut h, 3, "SpouseSSN", &spouse_ssn),
             None => notes.push(
                 "the ReturnHeader Filer has no SpouseSSN: this is a joint return but \
@@ -759,7 +765,7 @@ fn emit_header(
     // spouse on a joint return.
     let name_line = match (joint, spouse.and_then(full_name)) {
         (true, Some(spouse_name)) => format!("{primary_name} & {spouse_name}"),
-        _ => primary_name.to_string(),
+        _ => primary_name.clone(),
     };
     e.text(&mut h, 3, "NameLine1Txt", &name_line);
     if let Some(last) = identity.person.last_name.as_deref() {
@@ -767,7 +773,12 @@ fn emit_header(
     }
     if joint {
         if let Some(spouse_last) = spouse.and_then(|s| s.last_name.as_deref()) {
-            e.text(&mut h, 3, "SpouseNameControlTxt", &name_control(spouse_last));
+            e.text(
+                &mut h,
+                3,
+                "SpouseNameControlTxt",
+                &name_control(spouse_last),
+            );
         }
     }
     match &identity.address {
@@ -962,11 +973,7 @@ fn emit_irs1040(
         notes,
         "IRS1040/TotalIncomeAmt",
         r9,
-        whole_dollars(wages)
-            + whole_dollars(l("2b"))
-            + whole_dollars(l("3b"))
-            + r7
-            + r8,
+        whole_dollars(wages) + whole_dollars(l("2b")) + whole_dollars(l("3b")) + r7 + r8,
     );
     em.amt_nz(out, 3, "TotalAdjustmentsAmt", l("10"));
     let r11 = em.amt(out, 3, "AdjustedGrossIncomeAmt", l("11"));
@@ -1097,14 +1104,14 @@ fn emit_irs1040(
 
 fn emit_schedule_1(computed: &ComputedReturn, em: &mut Emitter, out: &mut String) {
     let lines = &computed.lines;
-    em.amt(out, 3, "BusinessIncomeLossAmt", fact(lines, "schc_net_profit"));
-    em.amt(out, 3, "TotalAdditionalIncomeAmt", fact(lines, "8"));
-    em.amt_nz(
+    em.amt(
         out,
         3,
-        "DeductibleSelfEmploymentTaxAmt",
-        fact(lines, "10"),
+        "BusinessIncomeLossAmt",
+        fact(lines, "schc_net_profit"),
     );
+    em.amt(out, 3, "TotalAdditionalIncomeAmt", fact(lines, "8"));
+    em.amt_nz(out, 3, "DeductibleSelfEmploymentTaxAmt", fact(lines, "10"));
     em.amt_nz(out, 3, "TotalAdjustmentsAmt", fact(lines, "10"));
 }
 
@@ -1181,8 +1188,7 @@ fn emit_schedule_se(
     input: &Form1040Input,
     computed: &ComputedReturn,
     params: &TaxParams,
-    primary_name: &str,
-    primary_ssn: &str,
+    identity: &TaxpayerIdentity,
     em: &mut Emitter,
     out: &mut String,
     notes: &mut Vec<String>,
@@ -1195,9 +1201,17 @@ fn emit_schedule_se(
     let ss_room = Money::from_cents((wage_base - wages).cents().max(0));
     let allowable = Money::from_cents(se.net_earnings.cents().min(ss_room.cents()));
     let deductible = deductible_part_of_se_tax(se.tax);
+    // Presence gated in build_mef; re-derive for the form header.
+    let primary_name = full_name(&identity.person).unwrap_or_default();
+    let primary_ssn = identity
+        .person
+        .ssn
+        .as_deref()
+        .and_then(normalize_ssn)
+        .unwrap_or_default();
 
-    em.text(out, 3, "PersonNm", primary_name);
-    em.text(out, 3, "SSN", primary_ssn);
+    em.text(out, 3, "PersonNm", &primary_name);
+    em.text(out, 3, "SSN", &primary_ssn);
     em.amt(out, 3, "NetNonFarmProfitLossAmt", schc_net);
     em.amt(out, 3, "SETotalNetEarningsOrLossAmt", schc_net);
     em.amt(out, 3, "MinimumProfitForSETaxAmt", se.net_earnings);
@@ -1253,7 +1267,12 @@ fn emit_schedule_d(
         em.open(out, 3, "TotalSTCGL1099ShowsBasisGrp");
         em.amt(out, 4, "TotalProceedsSalesPriceAmt", st_totals.proceeds);
         em.amt(out, 4, "TotalCostOrOtherBasisAmt", st_totals.basis);
-        em.amt_nz(out, 4, "TotAdjustmentsToGainOrLossAmt", st_totals.adjustments);
+        em.amt_nz(
+            out,
+            4,
+            "TotAdjustmentsToGainOrLossAmt",
+            st_totals.adjustments,
+        );
         em.amt(out, 4, "TotalGainOrLossAmt", st_totals.gain);
         em.close(out, 3, "TotalSTCGL1099ShowsBasisGrp");
     }
@@ -1262,7 +1281,12 @@ fn emit_schedule_d(
         em.open(out, 3, "TotalLTCGL1099ShowsBasisGrp");
         em.amt(out, 4, "TotalProceedsSalesPriceAmt", lt_totals.proceeds);
         em.amt(out, 4, "TotalCostOrOtherBasisAmt", lt_totals.basis);
-        em.amt_nz(out, 4, "TotAdjustmentsToGainOrLossAmt", lt_totals.adjustments);
+        em.amt_nz(
+            out,
+            4,
+            "TotAdjustmentsToGainOrLossAmt",
+            lt_totals.adjustments,
+        );
         em.amt(out, 4, "TotalGainOrLossAmt", lt_totals.gain);
         em.close(out, 3, "TotalLTCGL1099ShowsBasisGrp");
     }
@@ -1420,7 +1444,14 @@ fn emit_schedule_8812(
     let agi = fact(lines, "11");
     let income_tax = fact(lines, "16");
     let earned_income = fact(lines, "sched8812_earned_income");
-    let s = schedule_8812(&input.dependents, input.status, agi, income_tax, earned_income, params);
+    let s = schedule_8812(
+        &input.dependents,
+        input.status,
+        agi,
+        income_tax,
+        earned_income,
+        params,
+    );
     let threshold = params.ctc_phaseout_threshold(input.status);
     // Line 10: the MAGI excess over the threshold, rounded UP to the
     // next multiple of $1,000 (the worksheet's own step).
@@ -1434,7 +1465,12 @@ fn emit_schedule_8812(
     em.amt(out, 3, "AdjustedGrossIncomeAmt", agi);
     em.amt(out, 3, "ModifiedAGIAmt", agi);
     if s.ctc_children > 0 {
-        em.text(out, 3, "QlfyChildUnderAgeSSNCnt", &s.ctc_children.to_string());
+        em.text(
+            out,
+            3,
+            "QlfyChildUnderAgeSSNCnt",
+            &s.ctc_children.to_string(),
+        );
         em.amt(
             out,
             3,
@@ -1443,12 +1479,7 @@ fn emit_schedule_8812(
         );
     }
     if s.odc_dependents > 0 {
-        em.text(
-            out,
-            3,
-            "OtherDependentCnt",
-            &s.odc_dependents.to_string(),
-        );
+        em.text(out, 3, "OtherDependentCnt", &s.odc_dependents.to_string());
         em.amt(
             out,
             3,
@@ -1470,7 +1501,12 @@ fn emit_schedule_8812(
         }
     }
     // Required by the schema whenever Schedule 8812 is filed.
-    em.boolean(out, 3, "CTCODCOverAGILimitInd", s.phaseout_reduction.cents() > 0);
+    em.boolean(
+        out,
+        3,
+        "CTCODCOverAGILimitInd",
+        s.phaseout_reduction.cents() > 0,
+    );
     if s.tentative_credit.cents() > 0 {
         em.amt(out, 3, "CTCODCAfterAGILimitAmt", s.credit_after_phaseout);
         em.amt(out, 3, "ACTCTaxLiabiltyLimitAmt", s.credit_limit);
@@ -1535,8 +1571,7 @@ fn emit_schedule_1a(
     let (primary_eligible, spouse_eligible) = match &input.identity {
         Some(id) => (
             eligible(&id.person),
-            input.status == FilingStatus::Mfj
-                && id.spouse.as_ref().map(eligible).unwrap_or(false),
+            input.status == FilingStatus::Mfj && id.spouse.as_ref().map(eligible).unwrap_or(false),
         ),
         None => (false, false),
     };
@@ -1639,7 +1674,10 @@ mod tests {
 
     #[test]
     fn text_is_escaped() {
-        assert_eq!(esc("Smith & Wesson <LLC>"), "Smith &amp; Wesson &lt;LLC&gt;");
+        assert_eq!(
+            esc("Smith & Wesson <LLC>"),
+            "Smith &amp; Wesson &lt;LLC&gt;"
+        );
         assert_eq!(esc("plain"), "plain");
     }
 
@@ -1659,7 +1697,9 @@ mod tests {
         assert_eq!(export.documents, vec!["IRS1040".to_string()]);
         let xml = &export.xml;
         assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
-        assert!(xml.contains("<Return xmlns=\"http://www.irs.gov/efile\" returnVersion=\"2025v5.2\">"));
+        assert!(
+            xml.contains("<Return xmlns=\"http://www.irs.gov/efile\" returnVersion=\"2025v5.2\">")
+        );
         assert!(xml.contains("<ReturnHeader binaryAttachmentCnt=\"0\">"));
         assert!(xml.contains("<PrimarySSN>123456789</PrimarySSN>"));
         assert!(xml.contains("<NameLine1Txt>Spike Tester</NameLine1Txt>"));
@@ -1725,7 +1765,9 @@ mod tests {
         // SE tax rounds half away from zero: 2543.32 -> 2543; the
         // deductible half, 1271.66, rounds to 1272.
         assert!(xml.contains("<SelfEmploymentTaxAmt>2543</SelfEmploymentTaxAmt>"));
-        assert!(xml.contains("<DeductibleSelfEmploymentTaxAmt>1272</DeductibleSelfEmploymentTaxAmt>"));
+        assert!(
+            xml.contains("<DeductibleSelfEmploymentTaxAmt>1272</DeductibleSelfEmploymentTaxAmt>")
+        );
         assert!(xml.contains("<NetProfitOrLossAmt>18000</NetProfitOrLossAmt>"));
         assert!(xml.contains("<TotalTaxAmt>8672</TotalTaxAmt>"));
         assert!(xml.contains("<OwedAmt>4672</OwedAmt>"));
