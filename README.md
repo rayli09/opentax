@@ -12,14 +12,17 @@ with its source recorded.
 > **Status: scaffold.** A working vertical slice (TY2025 Form 1040 with
 > W-2 income, bank/broker 1099s, 1099-NEC side income with Schedule
 > C / Schedule SE, dependents with the child tax credits via a
-> simplified Schedule 8812, and the earned income credit via the EIC
-> Worksheets and the official EIC Table), not a finished tax product. See
+> simplified Schedule 8812, the earned income credit via the EIC
+> Worksheets and the official EIC Table, and the OBBBA enhanced
+> deduction for seniors via Schedule 1-A Part V → line 13b), not a
+> finished tax product. See
 > `docs/KNOWN_LIMITS.md` for exactly what is missing. JSON export and
 > filled-PDF export (amounts, filing status, and the Dependents table
 > onto a user-supplied TY2025 1040 template) work; MeF e-file does not
 > (it reports `not_implemented` honestly). Taxpayer identity can be
 > stored per return (`tax return set-identity`): it drives the
-> age-65/blind standard-deduction additions and fills the form's
+> age-65/blind standard-deduction additions, the Schedule 1-A senior
+> deduction, and fills the form's
 > identity fields and standard-deduction checkboxes on PDF export.
 > SSNs are stored locally only and masked in every CLI output;
 > `tax return list` gives a PII-free overview of the store.
