@@ -15,9 +15,9 @@ use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::{
     additional_standard_deduction, build_fill_values_with_dependents, compute_1040,
     deductible_part_of_se_tax, eic_childless_age_outcome, eic_qualifying_children, mask_ssn,
-    normalize_ssn, schedule_c_net_profit, schedule_se_tax, validate_1099_div, validate_dependent,
-    DependentInput, Form1040Input, I1099BInput, I1099DivInput, I1099IntInput, I1099NecInput,
-    PersonIdentity, TaxpayerIdentity, W2Input,
+    normalize_ssn, schedule_c_net_profit, schedule_se_tax, senior_bonus_eligible_persons,
+    validate_1099_div, validate_dependent, DependentInput, Form1040Input, I1099BInput,
+    I1099DivInput, I1099IntInput, I1099NecInput, PersonIdentity, TaxpayerIdentity, W2Input,
 };
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
@@ -557,6 +557,9 @@ const ALL_LINES: &[&str] = &[
     "schedse_net_earnings",
     "11",
     "12",
+    "senior_bonus",
+    "13b",
+    "14",
     "15",
     "16",
     "sched8812_tentative",
@@ -652,6 +655,18 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
             lines.insert("1a".into(), FactResult::Complete(wages));
             lines.insert("1z".into(), FactResult::Complete(wages));
             lines.insert("12".into(), FactResult::Complete(deduction));
+            // Schedule 1-A, Part V (line 13b): eligibility depends
+            // only on the stored identity, so with no eligible person
+            // the deduction is a stated zero and line 14 = line 12.
+            // With an eligible person, the phaseout needs AGI, which
+            // the partial view does not determine — 13b/14 stay
+            // Incomplete (filled in by the ALL_LINES pass below),
+            // exactly as the full engine treats them.
+            if senior_bonus_eligible_persons(ret.taxpayer.as_ref(), status, params) == 0 {
+                lines.insert("senior_bonus".into(), FactResult::Complete(Money::ZERO));
+                lines.insert("13b".into(), FactResult::Complete(Money::ZERO));
+                lines.insert("14".into(), FactResult::Complete(deduction));
+            }
             lines.insert("25a".into(), FactResult::Complete(w2_withholding));
             // The Schedule 8812 earned-income key depends only on
             // stored W-2 / 1099-NEC entries, so it is computable here
@@ -956,6 +971,10 @@ const CASE009_INPUT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/009-eic-two-kids/input.json");
 const CASE009_CORRECT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/009-eic-two-kids/correct.json");
+const CASE010_INPUT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/010-senior-phaseout/input.json");
+const CASE010_CORRECT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/010-senior-phaseout/correct.json");
 
 /// (case directory name, embedded input.json, embedded correct.json).
 const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
@@ -968,6 +987,7 @@ const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
     ("007-actc-hoh", CASE007_INPUT, CASE007_CORRECT),
     ("008-identity-65plus", CASE008_INPUT, CASE008_CORRECT),
     ("009-eic-two-kids", CASE009_INPUT, CASE009_CORRECT),
+    ("010-senior-phaseout", CASE010_INPUT, CASE010_CORRECT),
 ];
 
 fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String>)> {
@@ -1101,7 +1121,7 @@ fn schema_json() -> Value {
                 "f1099_bs": {"type": "array", "items": "I1099BInput"},
                 "f1099_necs": {"type": "array", "items": "I1099NecInput"},
                 "dependents": {"type": "array", "items": "DependentInput"},
-                "identity": {"type": "object", "items": "TaxpayerIdentity", "optional": true, "note": "the same block `return set-identity` stores; drives the age-65/blind standard-deduction additions and the PDF identity fields"}
+                "identity": {"type": "object", "items": "TaxpayerIdentity", "optional": true, "note": "the same block `return set-identity` stores; drives the age-65/blind standard-deduction additions, the Schedule 1-A Part V enhanced deduction for seniors (line 13b), and the PDF identity fields"}
             },
             "TaxpayerIdentity": {
                 "note": "Set with `tax return set-identity --return <id> --file identity.json`. SSNs accept \"123-45-6789\" or 9 digits and are stored normalized digits-only, locally only, and shown masked (***-**-6789) in every output; the full SSN appears only inside the filled PDF.",
@@ -1388,6 +1408,29 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             {
                 findings.push(json!({"code": "eic_childless_age_unknown", "severity": "info",
                     "message": "no dependents are stored and no taxpayer date of birth is set: the no-children earned income credit (age 25-64 test) cannot be determined, so line 27 is 0 — set the taxpayer date of birth with `tax return set-identity` if the childless credit may apply",
+                    "field": null, "entry": null}));
+            }
+            // Schedule 1-A, Part V findings (enhanced deduction for
+            // seniors, Form 1040 line 13b). Same judgment-call pattern
+            // as the childless EIC: the deduction is a stated zero
+            // when no date of birth is on file.
+            let taxpayer_dob = ret
+                .taxpayer
+                .as_ref()
+                .and_then(|t| t.person.date_of_birth.as_deref());
+            if ret.status == "mfs" {
+                let someone_65 = ret.taxpayer.as_ref().is_some_and(|t| {
+                    t.person.is_age_65(&params)
+                        || t.spouse.as_ref().is_some_and(|s| s.is_age_65(&params))
+                });
+                if someone_65 {
+                    findings.push(json!({"code": "senior_bonus_mfs", "severity": "warning",
+                        "message": "filing status is married filing separately: the Schedule 1-A Part V enhanced deduction for seniors requires married taxpayers to file jointly (Part V caution) — line 13b takes no senior deduction",
+                        "field": null, "entry": null}));
+                }
+            } else if taxpayer_dob.is_none() {
+                findings.push(json!({"code": "senior_bonus_age_unknown", "severity": "info",
+                    "message": "no taxpayer date of birth is set: the Schedule 1-A Part V enhanced deduction for seniors (born before January 2, 1961, with a valid SSN) cannot be determined, so line 13b takes no senior deduction — set the identity with `tax return set-identity` if it may apply",
                     "field": null, "entry": null}));
             }
             if let Some(other) = &ret.other_income {
@@ -1896,6 +1939,10 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
         ("adjustments", "10"),
         ("agi", "11"),
         ("standard_deduction", "12"),
+        ("senior_bonus", "13b"),
+        ("senior_deduction", "senior_bonus"),
+        ("additional_deductions", "13b"),
+        ("total_deductions", "14"),
         ("taxable_income", "15"),
         ("tax", "16"),
         ("child_tax_credit", "19"),
@@ -1974,7 +2021,10 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
             }
             None => format!("standard deduction for filing status '{}' from params/2025.json", ret.status),
         }, params.source.clone()),
-        "15" => ("line 11 minus line 12, floored at zero".to_string(), "Form 1040, line 15".to_string()),
+        "13b" => ("additional deductions from Schedule 1-A, line 38 — in v1 the Schedule 1-A total is its Part V enhanced deduction for seniors alone (internal key senior_bonus): $6,000 per eligible person (valid SSN stored, born before January 2, 1961; the spouse counts only on a joint return), reduced per person by 6% of modified AGI (AGI in v1) over $75,000 ($150,000 if married filing jointly) on Schedule 1-A lines 31-37. Married filing separately takes none (Part V caution: married taxpayers must file jointly). Parts II (tips), III (overtime), and IV (car loan interest) of Schedule 1-A are not implemented in v1".to_string(), "Form 1040, line 13b; Schedule 1-A (Form 1040) TY2025, Part V and line 38".to_string()),
+        "senior_bonus" => ("the Schedule 1-A line 37 enhanced deduction for seniors: the per-person amount of Schedule 1-A line 35 ($6,000 minus 6% of the modified AGI over the filing-status threshold, floored at zero) times the number of eligible people (lines 36a/36b — valid SSN stored and born before January 2, 1961; spouse only on a joint return); equal to line 13b in v1 (internal key)".to_string(), "Schedule 1-A (Form 1040) TY2025, Part V, lines 31-37 (internal key)".to_string()),
+        "14" => ("total deductions: line 12 plus line 13b (printed form: lines 12e + 13a + 13b; line 13a, the qualified business income deduction from Form 8995/8995-A, is not computed in v1)".to_string(), "Form 1040, line 14".to_string()),
+        "15" => ("line 11 minus line 14 (total deductions: the line 12 standard deduction plus line 13b additional deductions), floored at zero".to_string(), "Form 1040, line 15".to_string()),
         "16" => (line16_derivation(view.line16_method.as_deref()), params.source.clone()),
         "23" => ("self-employment tax from Schedule SE, via Schedule 2 line 4: 12.4% Social Security on net SE earnings (internal key schedse_net_earnings) up to the wage-base room left after W-2 wages, plus 2.9% Medicare on all net SE earnings; rates and wage base from params/2025.json".to_string(), "Form 1040, line 23; Schedule SE; IRC 1401".to_string()),
         "schedse_net_earnings" => ("Schedule SE line 4a: Schedule C net profit times 92.35%; zero when the net is a loss".to_string(), "Schedule SE, line 4a; IRC 1402(a) (internal key)".to_string()),

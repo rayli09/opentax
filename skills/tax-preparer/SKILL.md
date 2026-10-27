@@ -46,7 +46,14 @@ not from your own calculation, not from a prior draft.
 
 v1 computes a TY2025 Form 1040 slice from W-2, 1099-INT, 1099-DIV,
 1099-B, and 1099-NEC entries, plus stored dependents with the child
-credits and the earned income credit (see `docs/KNOWN_LIMITS.md`).
+credits, the earned income credit, and — from the stored identity —
+the Schedule 1-A Part V enhanced deduction for seniors on line 13b
+(see `docs/KNOWN_LIMITS.md`). When a senior deduction applies,
+present it explicitly: the eligible-person count and per-person
+amount (Schedule 1-A line 35, after the 6% MAGI phaseout) on
+line 13b, and total deductions on line 14 (= line 12 + line 13b);
+line 13a (QBI) is never computed in v1, and Schedule 1-A Parts II–IV
+(tips / overtime / car loan interest) are out of scope.
 Line 16 is
 figured by the prescribed method — the QDCG worksheet, the Tax Table,
 or the Tax Computation Worksheet — and the engine reports which one as

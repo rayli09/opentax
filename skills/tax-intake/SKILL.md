@@ -44,7 +44,13 @@ of (a) facts to provide and (b) documents to gather. No computation here.
    computed in v1). The dates of birth and blindness drive the
    age-65/blind standard-deduction additions, so ask them explicitly
    — "were you (or your spouse) born before January 2, 1961, or
-   blind?" is the fact behind them. The taxpayer's (and spouse's)
+   blind?" is the fact behind them. The same dates of birth (with a
+   stored SSN) also drive the **Schedule 1-A Part V enhanced
+   deduction for seniors** (line 13b: $6,000 per person born before
+   January 2, 1961, phased out over $75,000 / $150,000 MFJ of MAGI;
+   married filing separately takes none) — with no date of birth
+   stored, the engine takes no senior deduction (validate reports
+   `senior_bonus_age_unknown`). The taxpayer's (and spouse's)
    dates of birth also decide the **no-children earned income
    credit** (age 25–64 at year-end): with no dependents and no date
    of birth stored, the engine cannot determine it and takes no

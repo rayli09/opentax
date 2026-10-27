@@ -5,7 +5,8 @@ This list is the contract: anything not listed as working is not claimed.
 ## Compute (tax-forms)
 
 - Only Form 1040, only these lines: 1a, 1z, 2a, 2b, 3a, 3b, 7, 8, 9, 10,
-  11, 12, 15, 16, 19, 21, 22, 23, 24, 25a, 25d, 28, 32, 33, 34, 37 —
+  11, 12, 13b, 14, 15, 16, 19, 21, 22, 23, 24, 25a, 25d, 27, 28, 32, 33,
+  34, 37 —
   plus internal keys in the computed lines map, which are not Form
   1040 line numbers:
   `schd_net_short` / `schd_net_long` (net short-/long-term gain or loss
@@ -18,7 +19,8 @@ This list is the contract: anything not listed as working is not claimed.
   equal to line 23), and `sched8812_tentative` /
   `sched8812_credit_after_phaseout` / `sched8812_earned_income`
   (Schedule 8812 line 8, line 12, and line 18a measures behind the
-  child credits on lines 19/28).
+  child credits on lines 19/28), and `senior_bonus` (the Schedule 1-A
+  line 37 enhanced deduction for seniors behind line 13b).
 - Income sources: W-2 wages; 1099-INT (Box 1 → line 2b, Box 8
   tax-exempt interest → line 2a, Box 4 withholding → line 25d);
   1099-DIV (Box 1a → line 3b, Box 1b qualified → line 3a, Box 4 →
@@ -81,9 +83,32 @@ This list is the contract: anything not listed as working is not claimed.
   $450, capped at the regular amount) — the identity flag
   `can_be_claimed_as_dependent` fills the form's line 12a checkbox
   and validation warns that the limitation itself is not computed.
-  Also NOT implemented: the OBBBA temporary $6,000 senior bonus
-  deduction (2025–2028, Schedule 1-A → line 13b) — a separate
-  deduction from the age/blind additions above.
+- Line 13b is the Schedule 1-A total as computed in v1: ONLY Part V
+  (enhanced deduction for seniors — the OBBBA temporary deduction,
+  TY2025–2028) is implemented, so line 13b equals Schedule 1-A
+  line 37. Per person: $6,000 for a person with a valid SSN who was
+  born before January 2, 1961 (v1 proxy for a valid SSN: a normalized
+  SSN is stored — validity and issuance timing are not modeled, the
+  same standing proxy as the EIC), reduced by 6% of modified AGI
+  over $75,000 ($150,000 if married filing jointly); the phaseout is
+  per person (Schedule 1-A lines 31–37: lines 36a/36b each take the
+  full line 35 amount). The spouse counts only on a joint return;
+  married filing separately takes NO senior deduction (Part V
+  caution: married taxpayers must file jointly). Schedule 1-A
+  Parts II (tips), III (overtime pay), and IV (car loan interest)
+  are NOT implemented — their inputs do not exist in v1, so a filer
+  with those deductions is out of scope. Modified AGI is taken to
+  be AGI (the Part I add-backs for excluded foreign income,
+  §§911/931/933, do not exist among v1 inputs). Line 13a (the QBI
+  deduction, Form 8995/8995-A) is not computed and its field is not
+  in the export map. Line 14 = line 12 + line 13b (printed form:
+  12e + 13a + 13b), and line 15 = line 11 − line 14. The senior
+  deduction is separate from, and in addition to, the age-65
+  standard-deduction additions on line 12, and is allowed whether
+  or not the taxpayer itemizes. With no eligible person stored,
+  line 13b is a stated zero (`return validate` notes when no date
+  of birth is on file, info finding `senior_bonus_age_unknown`;
+  warning `senior_bonus_mfs` when an MFS filer is 65+).
 - Line 10 is the deductible part of self-employment tax only (Schedule 1
   line 15); no other adjustments (student loan interest, HSA, IRA…).
 - No education or foreign credits, no AMT, no NIIT. The only
@@ -341,8 +366,10 @@ This list is the contract: anything not listed as working is not claimed.
   written as exact dollars-and-cents (e.g. `4231.50`); whole-dollar
   rounding is NOT applied in v1. TY2025 layout notes: AGI is written
   to both 11a and 11b (the form repeats it on page 2), the standard
-  deduction to 12e and to line 14 (= 12e + 13a + 13b, and the engine
-  computes no 13a/13b), and line 24 is written from engine line 24
+  deduction to 12e, line 13b (the Schedule 1-A senior deduction; the
+  engine computes no 13a QBI amount and that field is not in the
+  map), line 14 from engine line 14 (= 12e + 13a + 13b as the engine
+  computes it), and line 24 is written from engine line 24
   (= line 22 + line 23; line 22 = line 16 − line 21, the child
   credits).
   Lines 8, 10, and 23 are exported too (geometrically verified like the
