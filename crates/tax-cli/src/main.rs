@@ -12,7 +12,10 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use tax_core::{FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
-use tax_forms::{compute_1040, Form1040Input, W2Input};
+use tax_forms::{
+    compute_1040, validate_1099_div, Form1040Input, I1099BInput, I1099DivInput, I1099IntInput,
+    W2Input,
+};
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
 // ---------------------------------------------------------------------------
@@ -306,6 +309,74 @@ fn stored_w2s(ret: &StoredReturn) -> CResult<Vec<W2Input>> {
         .collect()
 }
 
+fn stored_ints(ret: &StoredReturn) -> CResult<Vec<I1099IntInput>> {
+    ret.entries
+        .iter()
+        .filter(|e| e.node_type == "1099-int")
+        .map(|e| serde_json::from_value::<I1099IntInput>(e.data.clone()).map_err(json_err))
+        .collect()
+}
+
+fn stored_divs(ret: &StoredReturn) -> CResult<Vec<I1099DivInput>> {
+    ret.entries
+        .iter()
+        .filter(|e| e.node_type == "1099-div")
+        .map(|e| serde_json::from_value::<I1099DivInput>(e.data.clone()).map_err(json_err))
+        .collect()
+}
+
+fn stored_bs(ret: &StoredReturn) -> CResult<Vec<I1099BInput>> {
+    ret.entries
+        .iter()
+        .filter(|e| e.node_type == "1099-b")
+        .map(|e| serde_json::from_value::<I1099BInput>(e.data.clone()).map_err(json_err))
+        .collect()
+}
+
+/// Aggregate the 1099-B entries of a partial return the same way the
+/// engine does: (net_short, net_long, capital_gain) facts — Incomplete
+/// when any transaction is missing proceeds or basis — plus the total
+/// 1099-B withholding.
+fn partial_b_nets(
+    bs: &[I1099BInput],
+) -> (
+    FactResult<Money>,
+    FactResult<Money>,
+    FactResult<Money>,
+    Money,
+) {
+    let mut net_short = Money::ZERO;
+    let mut net_long = Money::ZERO;
+    let mut incomplete = false;
+    for form in bs {
+        for txn in &form.transactions {
+            match txn.gain() {
+                Some(g) => match txn.term {
+                    tax_forms::TxnTerm::Short => net_short = net_short + g,
+                    tax_forms::TxnTerm::Long => net_long = net_long + g,
+                },
+                None => incomplete = true,
+            }
+        }
+    }
+    let withholding: Money = bs.iter().map(|f| f.federal_withholding).sum();
+    if incomplete {
+        (
+            FactResult::Incomplete,
+            FactResult::Incomplete,
+            FactResult::Incomplete,
+            withholding,
+        )
+    } else {
+        (
+            FactResult::Complete(net_short),
+            FactResult::Complete(net_long),
+            FactResult::Complete(net_short + net_long),
+            withholding,
+        )
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Computed view of a stored return
 // ---------------------------------------------------------------------------
@@ -329,21 +400,52 @@ struct ComputedView {
     warnings: Vec<String>,
 }
 
+/// All line keys the current engine/view knows, in display order.
+const ALL_LINES: &[&str] = &[
+    "1a",
+    "1z",
+    "2a",
+    "2b",
+    "3a",
+    "3b",
+    "7",
+    "schd_net_short",
+    "schd_net_long",
+    "9",
+    "11",
+    "12",
+    "15",
+    "16",
+    "25a",
+    "25d",
+    "33",
+    "34",
+    "37",
+];
+
+fn incomplete_lines(lines: &BTreeMap<String, FactResult<Money>>) -> Vec<String> {
+    lines
+        .iter()
+        .filter(|(_, f)| matches!(f, FactResult::Incomplete))
+        .map(|(k, _)| k.clone())
+        .collect()
+}
+
 fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView> {
     let w2s = stored_w2s(ret)?;
+    let ints = stored_ints(ret)?;
+    let divs = stored_divs(ret)?;
+    let bs = stored_bs(ret)?;
     let status = FilingStatus::parse(&ret.status).map_err(|e| CliErr::new("invalid_status", e))?;
     let mut warnings = Vec::new();
 
-    if w2s.is_empty() && ret.other_income.is_none() {
-        let all = [
-            "1a", "1z", "2b", "3b", "9", "11", "12", "15", "16", "25a", "25d", "33", "34", "37",
-        ];
-        let lines: BTreeMap<String, FactResult<Money>> = all
+    if ret.entries.is_empty() && ret.other_income.is_none() {
+        let lines: BTreeMap<String, FactResult<Money>> = ALL_LINES
             .iter()
             .map(|l| (l.to_string(), FactResult::Incomplete))
             .collect();
         return Ok(ComputedView {
-            incomplete: all.iter().map(|s| s.to_string()).collect(),
+            incomplete: incomplete_lines(&lines),
             lines,
             complete: false,
             warnings: vec!["no documents have been added to this return".to_string()],
@@ -357,30 +459,59 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 w2s,
                 interest_income: other.interest,
                 ordinary_dividends: other.dividends,
+                f1099_ints: ints,
+                f1099_divs: divs,
+                f1099_bs: bs,
             };
             let computed = compute_1040(&input, params);
             warnings.extend(computed.notes.iter().cloned());
             Ok(ComputedView {
+                incomplete: incomplete_lines(&computed.lines),
                 complete: computed.complete,
-                incomplete: Vec::new(),
                 lines: computed.lines,
                 warnings,
             })
         }
         None => {
-            // W-2s are known; interest/dividends are NOT recorded, so every
-            // line that depends on them is Incomplete — never zero-filled.
+            // Documents are known; the *direct* interest/dividend amounts
+            // are NOT recorded, so every line that depends on them is
+            // Incomplete — never zero-filled. Lines that depend only on
+            // stored documents are computed from them.
             let wages: Money = w2s.iter().map(|w| w.wages).sum();
-            let withholding: Money = w2s.iter().map(|w| w.federal_withholding).sum();
+            let w2_withholding: Money = w2s.iter().map(|w| w.federal_withholding).sum();
             let deduction = params.standard_deduction(status);
             let mut lines: BTreeMap<String, FactResult<Money>> = BTreeMap::new();
             lines.insert("1a".into(), FactResult::Complete(wages));
             lines.insert("1z".into(), FactResult::Complete(wages));
             lines.insert("12".into(), FactResult::Complete(deduction));
-            lines.insert("25a".into(), FactResult::Complete(withholding));
-            let incomplete = ["2b", "3b", "9", "11", "15", "16", "25d", "33", "34", "37"];
-            for l in incomplete {
-                lines.insert(l.to_string(), FactResult::Incomplete);
+            lines.insert("25a".into(), FactResult::Complete(w2_withholding));
+            if !ints.is_empty() {
+                let exempt: Money = ints.iter().map(|f| f.tax_exempt_interest).sum();
+                lines.insert("2a".into(), FactResult::Complete(exempt));
+            }
+            if !divs.is_empty() {
+                let qualified: Money = divs.iter().map(|f| f.qualified_dividends).sum();
+                lines.insert("3a".into(), FactResult::Complete(qualified));
+            }
+            let mut b_withholding = Money::ZERO;
+            if !bs.is_empty() {
+                let (ns, nl, cap, wh) = partial_b_nets(&bs);
+                lines.insert("schd_net_short".into(), ns);
+                lines.insert("schd_net_long".into(), nl);
+                lines.insert("7".into(), cap);
+                b_withholding = wh;
+            }
+            if !ints.is_empty() || !divs.is_empty() || !bs.is_empty() {
+                // Withholding on every stored document is recorded, so
+                // the withholding totals are computable from the stored set.
+                let int_wh: Money = ints.iter().map(|f| f.federal_withholding).sum();
+                let div_wh: Money = divs.iter().map(|f| f.federal_withholding).sum();
+                let total_wh = w2_withholding + int_wh + div_wh + b_withholding;
+                lines.insert("25d".into(), FactResult::Complete(total_wh));
+                lines.insert("33".into(), FactResult::Complete(total_wh));
+            }
+            for l in ALL_LINES {
+                lines.entry(l.to_string()).or_insert(FactResult::Incomplete);
             }
             warnings.push(
                 "interest_income and ordinary_dividends have not been recorded for this \
@@ -389,7 +520,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                     .to_string(),
             );
             Ok(ComputedView {
-                incomplete: incomplete.iter().map(|s| s.to_string()).collect(),
+                incomplete: incomplete_lines(&lines),
                 lines,
                 complete: false,
                 warnings,
@@ -522,6 +653,16 @@ const GOLDEN_INPUT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/001-single-w2-minimal/input.json");
 const GOLDEN_CORRECT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/001-single-w2-minimal/correct.json");
+const CASE002_INPUT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/002-w2-1099s/input.json");
+const CASE002_CORRECT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/002-w2-1099s/correct.json");
+
+/// (case directory name, embedded input.json, embedded correct.json).
+const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
+    ("001-single-w2-minimal", GOLDEN_INPUT, GOLDEN_CORRECT),
+    ("002-w2-1099s", CASE002_INPUT, CASE002_CORRECT),
+];
 
 fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String>)> {
     let input: Form1040Input = serde_json::from_str(input_text).map_err(json_err)?;
@@ -555,36 +696,78 @@ fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String
 }
 
 fn cmd_selftest() -> CResult<Out> {
-    // Prefer the on-disk benchmark (so edited cases are what run); fall back
-    // to the copies embedded at build time (same files).
-    let case_dir = Path::new("benchmark/cases/f1040/2025/001-single-w2-minimal");
-    let (input_text, correct_text, origin) = if case_dir.join("input.json").exists() {
-        (
-            std::fs::read_to_string(case_dir.join("input.json")).map_err(io_err)?,
-            std::fs::read_to_string(case_dir.join("correct.json")).map_err(io_err)?,
-            case_dir.display().to_string(),
+    // Prefer the on-disk benchmark tree (so edited cases are what run):
+    // every directory under benchmark/cases/f1040/2025/ containing an
+    // input.json + correct.json pair is a case. Fall back to the copies
+    // embedded at build time when the tree is absent.
+    let base = Path::new("benchmark/cases/f1040/2025");
+    let mut cases: Vec<(String, String, String, String)> = Vec::new(); // (name, input, correct, origin)
+    if base.is_dir() {
+        let mut names: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(base).map_err(io_err)? {
+            let entry = entry.map_err(io_err)?;
+            let dir = entry.path();
+            if dir.is_dir() && dir.join("input.json").exists() && dir.join("correct.json").exists()
+            {
+                names.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+        names.sort();
+        for name in names {
+            let dir = base.join(&name);
+            cases.push((
+                name,
+                std::fs::read_to_string(dir.join("input.json")).map_err(io_err)?,
+                std::fs::read_to_string(dir.join("correct.json")).map_err(io_err)?,
+                dir.display().to_string(),
+            ));
+        }
+    }
+    if cases.is_empty() {
+        for (name, input, correct) in EMBEDDED_CASES {
+            cases.push((
+                name.to_string(),
+                input.to_string(),
+                correct.to_string(),
+                format!("embedded benchmark/cases/f1040/2025/{name}"),
+            ));
+        }
+    }
+
+    let mut results: Vec<Value> = Vec::new();
+    let mut all_pass = true;
+    let mut all_mismatches: Vec<String> = Vec::new();
+    for (name, input, correct, origin) in &cases {
+        let (pass, mismatches) = run_golden(input, correct)?;
+        if !pass {
+            all_pass = false;
+            all_mismatches.extend(
+                mismatches
+                    .iter()
+                    .map(|m| format!("{name}: {m}"))
+                    .collect::<Vec<_>>(),
+            );
+        }
+        results.push(json!({
+            "case": format!("f1040/2025/{name}"),
+            "origin": origin,
+            "pass": pass,
+            "mismatches": mismatches,
+        }));
+    }
+    let human = if all_pass {
+        format!(
+            "selftest: {}/{} golden cases pass",
+            results.len(),
+            cases.len()
         )
     } else {
-        (
-            GOLDEN_INPUT.to_string(),
-            GOLDEN_CORRECT.to_string(),
-            "embedded benchmark/cases/f1040/2025/001-single-w2-minimal".to_string(),
-        )
-    };
-    let (pass, mismatches) = run_golden(&input_text, &correct_text)?;
-    let value = json!({
-        "cases": [{"case": "f1040/2025/001-single-w2-minimal", "origin": origin, "pass": pass, "mismatches": mismatches}],
-        "pass": pass,
-    });
-    let human = if pass {
-        "selftest: 1/1 golden cases pass".to_string()
-    } else {
-        format!("selftest: FAIL\n{}", mismatches.join("\n"))
+        format!("selftest: FAIL\n{}", all_mismatches.join("\n"))
     };
     Ok(Out {
-        value,
+        value: json!({"cases": results, "pass": all_pass}),
         human,
-        exit_code: if pass { 0 } else { 1 },
+        exit_code: if all_pass { 0 } else { 1 },
     })
 }
 
@@ -597,7 +780,10 @@ fn schema_json() -> Value {
                 "status": {"type": "enum", "values": ["single", "mfj", "hoh", "mfs"]},
                 "w2s": {"type": "array", "items": "W2Input"},
                 "interest_income": {"type": "money_cents_string"},
-                "ordinary_dividends": {"type": "money_cents_string"}
+                "ordinary_dividends": {"type": "money_cents_string"},
+                "f1099_ints": {"type": "array", "items": "I1099IntInput"},
+                "f1099_divs": {"type": "array", "items": "I1099DivInput"},
+                "f1099_bs": {"type": "array", "items": "I1099BInput"}
             },
             "W2Input": {
                 "employer_ein": {"type": "string", "example": "12-3456789"},
@@ -610,20 +796,30 @@ fn schema_json() -> Value {
             },
             "I1099IntInput": {
                 "payer_name": {"type": "string"},
+                "payer_ein": {"type": "string", "optional": true},
                 "interest_income": {"type": "money_cents_string", "form": "1099-INT Box 1"},
-                "federal_withholding": {"type": "money_cents_string", "form": "1099-INT Box 4"}
+                "tax_exempt_interest": {"type": "money_cents_string", "form": "1099-INT Box 8", "default": "0"},
+                "federal_withholding": {"type": "money_cents_string", "form": "1099-INT Box 4", "default": "0"}
             },
             "I1099DivInput": {
                 "payer_name": {"type": "string"},
+                "payer_ein": {"type": "string", "optional": true},
                 "total_ordinary_dividends": {"type": "money_cents_string", "form": "1099-DIV Box 1a"},
-                "qualified_dividends": {"type": "money_cents_string", "form": "1099-DIV Box 1b"},
-                "federal_withholding": {"type": "money_cents_string", "form": "1099-DIV Box 4"}
+                "qualified_dividends": {"type": "money_cents_string", "form": "1099-DIV Box 1b", "default": "0"},
+                "federal_withholding": {"type": "money_cents_string", "form": "1099-DIV Box 4", "default": "0"}
             },
             "I1099BInput": {
                 "payer_name": {"type": "string"},
-                "total_proceeds": {"type": "money_cents_string", "form": "1099-B Box 1d total"},
-                "total_basis": {"type": "money_cents_string", "form": "1099-B Box 1e total"},
-                "federal_withholding": {"type": "money_cents_string", "form": "1099-B Box 4"}
+                "payer_ein": {"type": "string", "optional": true},
+                "transactions": {"type": "array", "items": "BrokerTxn"},
+                "federal_withholding": {"type": "money_cents_string", "form": "1099-B Box 4", "default": "0"}
+            },
+            "BrokerTxn": {
+                "description": {"type": "string", "form": "1099-B Box 1a"},
+                "proceeds": {"type": "money_cents_string", "form": "1099-B Box 1d", "note": "omit only when unreported — the return's capital-gain lines become incomplete"},
+                "cost_basis": {"type": "money_cents_string", "form": "1099-B Box 1e", "note": "omit only when unreported — the return's capital-gain lines become incomplete"},
+                "adjustment": {"type": "money_cents_string", "form": "1099-B Box 1g", "default": "0"},
+                "term": {"type": "enum", "values": ["short", "long"]}
             }
         }
     })
@@ -640,18 +836,18 @@ fn node_templates() -> Vec<(String, bool, Value)> {
         ),
         (
             "1099-int".to_string(),
-            false,
-            json!({"payer_name": "", "interest_income": "0", "federal_withholding": "0"}),
+            true,
+            json!({"payer_name": "", "interest_income": "0", "tax_exempt_interest": "0", "federal_withholding": "0"}),
         ),
         (
             "1099-div".to_string(),
-            false,
+            true,
             json!({"payer_name": "", "total_ordinary_dividends": "0", "qualified_dividends": "0", "federal_withholding": "0"}),
         ),
         (
             "1099-b".to_string(),
-            false,
-            json!({"payer_name": "", "total_proceeds": "0", "total_basis": "0", "federal_withholding": "0"}),
+            true,
+            json!({"payer_name": "", "transactions": [{"description": "", "proceeds": "0", "cost_basis": "0", "adjustment": "0", "term": "short"}], "federal_withholding": "0"}),
         ),
     ]
 }
@@ -780,6 +976,21 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                         "message": f.message, "field": f.field, "entry": format!("w2_{:02}", i + 1)}));
                 }
             }
+            for (i, div) in stored_divs(&ret)?.iter().enumerate() {
+                for f in validate_1099_div(div) {
+                    findings.push(json!({"code": f.code, "severity": f.severity,
+                        "message": f.message, "field": null, "entry": format!("1099div_{:02}", i + 1)}));
+                }
+            }
+            for form in stored_bs(&ret)? {
+                for txn in &form.transactions {
+                    if txn.gain().is_none() {
+                        findings.push(json!({"code": "1099b_txn_incomplete", "severity": "warning",
+                            "message": format!("1099-B from {}: transaction '{}' is missing proceeds or cost basis; capital-gain lines are incomplete", form.payer_name, txn.description),
+                            "field": null, "entry": null}));
+                    }
+                }
+            }
             let valid = !findings.iter().any(|f| f["severity"] == "error");
             let human = findings
                 .iter()
@@ -855,13 +1066,21 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
             file,
             data,
         } => {
-            if node_type != "w2" {
-                return Ok(Out::ok(
-                    json!({"status": "not_implemented", "node_type": node_type,
-                            "detail": "in v1 only w2 entries can be added and computed; 1099 templates exist for the ingest contract (see `tax node list`)"}),
-                    format!("adding {node_type}: not implemented in v1"),
-                ));
-            }
+            // Entry-id prefix per node type; unknown types stay an honest
+            // not_implemented, exactly as before.
+            let prefix = match node_type.as_str() {
+                "w2" => "w2",
+                "1099-int" => "1099int",
+                "1099-div" => "1099div",
+                "1099-b" => "1099b",
+                _ => {
+                    return Ok(Out::ok(
+                        json!({"status": "not_implemented", "node_type": node_type,
+                                "detail": "v1 stores and computes w2, 1099-int, 1099-div, and 1099-b entries (see `tax node list`)"}),
+                        format!("adding {node_type}: not implemented in v1"),
+                    ));
+                }
+            };
             let text = if let Some(f) = &file {
                 std::fs::read_to_string(f).map_err(io_err)?
             } else if let Some(d) = &data {
@@ -873,18 +1092,39 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
             };
             let value: Value = serde_json::from_str(&text).map_err(json_err)?;
             // Validate against the typed struct before storing anything.
-            let _w2: W2Input = serde_json::from_value(value.clone()).map_err(json_err)?;
+            match node_type.as_str() {
+                "w2" => {
+                    let _: W2Input = serde_json::from_value(value.clone()).map_err(json_err)?;
+                }
+                "1099-int" => {
+                    let _: I1099IntInput =
+                        serde_json::from_value(value.clone()).map_err(json_err)?;
+                }
+                "1099-div" => {
+                    let _: I1099DivInput =
+                        serde_json::from_value(value.clone()).map_err(json_err)?;
+                }
+                "1099-b" => {
+                    let _: I1099BInput = serde_json::from_value(value.clone()).map_err(json_err)?;
+                }
+                _ => unreachable!(),
+            }
             let mut ret = load_return(&cli.store, &r#return)?;
-            let n = ret.entries.iter().filter(|e| e.node_type == "w2").count() + 1;
-            let entry_id = format!("w2_{n:02}");
+            let n = ret
+                .entries
+                .iter()
+                .filter(|e| e.node_type == node_type)
+                .count()
+                + 1;
+            let entry_id = format!("{prefix}_{n:02}");
             ret.entries.push(StoredEntry {
                 entry_id: entry_id.clone(),
-                node_type: "w2".to_string(),
+                node_type: node_type.clone(),
                 data: value,
             });
             save_return(&cli.store, &ret)?;
             Ok(Out::ok(
-                json!({"returnId": ret.id, "entryId": entry_id, "node_type": "w2"}),
+                json!({"returnId": ret.id, "entryId": entry_id, "node_type": node_type}),
                 format!("added {entry_id} to return {}", ret.id),
             ))
         }
@@ -1013,6 +1253,11 @@ fn cmd_pdf(action: PdfAction) -> CResult<Out> {
 fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) -> CResult<Out> {
     let fact_map: &[(&str, &str)] = &[
         ("wages", "1a"),
+        ("tax_exempt_interest", "2a"),
+        ("taxable_interest", "2b"),
+        ("qualified_dividends", "3a"),
+        ("ordinary_dividends", "3b"),
+        ("capital_gain", "7"),
         ("total_income", "9"),
         ("agi", "11"),
         ("standard_deduction", "12"),
@@ -1046,7 +1291,14 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
 
     let (derivation, citation) = match line_no.as_str() {
         "1a" | "1z" => ("sum of wages (Box 1) over all stored W-2 entries".to_string(), "Form 1040 instructions, line 1".to_string()),
-        "9" => ("line 1z + line 2b + line 3b".to_string(), "Form 1040, line 9".to_string()),
+        "2a" => ("sum of tax-exempt interest (Box 8) over all stored 1099-INT entries".to_string(), "Form 1040, line 2a".to_string()),
+        "2b" => ("taxable interest recorded directly plus sum of interest income (Box 1) over all stored 1099-INT entries".to_string(), "Form 1040, line 2b".to_string()),
+        "3a" => ("sum of qualified dividends (Box 1b) over all stored 1099-DIV entries".to_string(), "Form 1040, line 3a".to_string()),
+        "3b" => ("ordinary dividends recorded directly plus sum of total ordinary dividends (Box 1a) over all stored 1099-DIV entries".to_string(), "Form 1040, line 3b".to_string()),
+        "7" => ("net short-term gain/loss plus net long-term gain/loss from stored 1099-B transactions (internal keys schd_net_short / schd_net_long)".to_string(), "Form 1040, line 7 (capital gain or loss, via Schedule D)".to_string()),
+        "schd_net_short" => ("sum of (proceeds - basis + adjustment) over short-term 1099-B transactions".to_string(), "Form 8949 / Schedule D aggregation (internal key)".to_string()),
+        "schd_net_long" => ("sum of (proceeds - basis + adjustment) over long-term 1099-B transactions".to_string(), "Form 8949 / Schedule D aggregation (internal key)".to_string()),
+        "9" => ("line 1z + line 2b + line 3b + line 7".to_string(), "Form 1040, line 9".to_string()),
         "11" => ("line 9 minus adjustments — v1 has no adjustments, so AGI = line 9".to_string(), "Form 1040, line 11".to_string()),
         "12" => (format!("standard deduction for filing status '{}' from params/2025.json", ret.status), params.source.clone()),
         "15" => ("line 11 minus line 12, floored at zero".to_string(), "Form 1040, line 15".to_string()),

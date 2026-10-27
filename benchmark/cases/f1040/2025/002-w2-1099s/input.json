@@ -1,0 +1,47 @@
+{
+  "status": "single",
+  "w2s": [
+    {
+      "employer_ein": "12-3456789",
+      "wages": "5000000",
+      "federal_withholding": "400000"
+    }
+  ],
+  "interest_income": "0",
+  "ordinary_dividends": "0",
+  "f1099_ints": [
+    {
+      "payer_name": "Example Bank",
+      "interest_income": "50000",
+      "federal_withholding": "0"
+    }
+  ],
+  "f1099_divs": [
+    {
+      "payer_name": "Example Fund",
+      "total_ordinary_dividends": "100000",
+      "qualified_dividends": "60000",
+      "federal_withholding": "0"
+    }
+  ],
+  "f1099_bs": [
+    {
+      "payer_name": "Example Broker",
+      "transactions": [
+        {
+          "description": "100 sh EXAMPLE",
+          "proceeds": "800000",
+          "cost_basis": "600000",
+          "term": "short"
+        },
+        {
+          "description": "50 sh EXAMPLE",
+          "proceeds": "300000",
+          "cost_basis": "350000",
+          "term": "long"
+        }
+      ],
+      "federal_withholding": "0"
+    }
+  ]
+}
