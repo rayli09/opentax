@@ -5,10 +5,14 @@
 //!   low-level [`fill_fields`] sets `/V` only and regenerates NO appearance
 //!   streams; the PDF fill spike (docs/PDF_SPIKE.md) proved that path cannot
 //!   fill real IRS forms (no `/AP`, wrong-typed checkbox values).
-//! - [`PdferBackend`] (pdfer_forms) — the default FILL backend since the
-//!   spike: regenerates widget `/AP`, writes checkbox `/V` as a proper name
-//!   and sets widget `/AS`. Every fill is audited (see [`FillReport`]):
-//!   fields that changed but were not requested fail the fill.
+//! - [`PdferBackend`] (pdfer_forms + lopdf button pass) — the default FILL
+//!   backend since the spike: pdfer_forms regenerates widget `/AP` for
+//!   non-button fields, while button fields (`/Btn` checkboxes and radios)
+//!   are filled by a direct lopdf pass that resolves the exact qualified
+//!   name and sets `/V` + per-widget `/AS` as proper names (pdfer_forms
+//!   matches buttons by leaf name and over-sets same-leaf siblings). Every
+//!   fill is audited (see [`FillReport`]): fields that changed but were
+//!   not requested fail the fill.
 //!
 //! Verify filled output independently — never trust the filling library to
 //! grade its own work.
@@ -60,7 +64,9 @@ pub const LOPDF_FILL_WARNING: &str = "lopdf backend sets /V only and regenerates
 /// The audited result of a fill.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct FillReport {
-    /// Backend that produced the fill ("lopdf" / "pdfer_forms").
+    /// Backend that produced the fill ("lopdf" / "pdfer_forms" /
+    /// "pdfer_forms+lopdf-buttons" when button fields went through the
+    /// direct lopdf button pass).
     pub backend: String,
     /// Fields whose `/V` actually changed, per the post-fill audit.
     pub changed_fields: Vec<String>,
@@ -401,9 +407,71 @@ fn widget_has_appearance(doc: &Document, dict: &Dictionary) -> bool {
     }
 }
 
+/// Widget annot object ids for a terminal field: its `/Kids` when the kids
+/// are bare widget annotations, otherwise the field itself (merged
+/// field+widget).
+fn button_widgets(doc: &Document, field: &FieldAcc) -> Vec<ObjectId> {
+    let Ok(dict) = doc.get_dictionary(field.id) else {
+        return vec![field.id];
+    };
+    let kids: Vec<Object> = dict
+        .get(b"Kids")
+        .ok()
+        .and_then(|o| o.as_array().ok())
+        .cloned()
+        .unwrap_or_default();
+    let widget_kids: Vec<ObjectId> = kids
+        .iter()
+        .filter_map(|k| k.as_reference().ok())
+        .filter(|kid_id| {
+            doc.get_dictionary(*kid_id)
+                .map(|d| d.get(b"T").is_err())
+                .unwrap_or(false)
+        })
+        .collect();
+    if widget_kids.is_empty() {
+        vec![field.id]
+    } else {
+        widget_kids
+    }
+}
+
+/// State names in a widget's `/AP` → `/N` dictionary (e.g. `["1", "Off"]`
+/// for a checkbox widget). Empty when `/N` is a bare stream (single
+/// appearance, no named states) or absent.
+fn widget_ap_n_states(doc: &Document, dict: &Dictionary) -> Vec<String> {
+    let Ok(ap) = dict.get(b"AP") else {
+        return Vec::new();
+    };
+    let ap_owned: Option<Dictionary> = match ap {
+        Object::Reference(id) => doc.get_dictionary(*id).ok().cloned(),
+        Object::Dictionary(d) => Some(d.clone()),
+        _ => None,
+    };
+    let Some(ap_dict) = ap_owned else {
+        return Vec::new();
+    };
+    let n_owned: Option<Dictionary> = match ap_dict.get(b"N") {
+        Ok(Object::Reference(id)) => doc.get_dictionary(*id).ok().cloned(),
+        Ok(Object::Dictionary(d)) => Some(d.clone()),
+        _ => None,
+    };
+    let Some(n_dict) = n_owned else {
+        return Vec::new();
+    };
+    let mut states: Vec<String> = n_dict.iter().map(|(k, _)| decode_pdf_name(k)).collect();
+    states.sort();
+    states
+}
+
 /// Count, among `names`, the fields that have at least one widget with a
 /// non-empty `/AP` in this document (the field itself if merged
-/// field+widget, else any of its widget kids).
+/// field+widget, else any of its widget kids). Button fields are counted
+/// only when the widget selected by `/AS` (matching the field's `/V`
+/// state) carries that state in its `/AP` → `/N` dictionary — Designer
+/// widgets ship their on-state appearance templates in the original form,
+/// and the direct button pass selects among them rather than generating
+/// new streams.
 fn count_fields_with_appearance(
     doc: &Document,
     fields: &[FieldAcc],
@@ -414,6 +482,27 @@ fn count_fields_with_appearance(
         let Ok(dict) = doc.get_dictionary(field.id) else {
             continue;
         };
+        if field.field_type.as_deref() == Some("Btn") {
+            let Some(state) = field.value.as_deref() else {
+                continue;
+            };
+            let selected = button_widgets(doc, field).into_iter().any(|wid| {
+                let Ok(wdict) = doc.get_dictionary(wid) else {
+                    return false;
+                };
+                let as_state = wdict
+                    .get(b"AS")
+                    .ok()
+                    .and_then(|o| o.as_name().ok())
+                    .map(decode_pdf_name);
+                as_state.as_deref() == Some(state)
+                    && widget_ap_n_states(doc, wdict).iter().any(|s| s == state)
+            });
+            if selected {
+                count += 1;
+            }
+            continue;
+        }
         if widget_has_appearance(doc, dict) {
             count += 1;
             continue;
@@ -492,24 +581,141 @@ fn value_matches(requested: &str, actual: Option<&String>) -> bool {
     }
 }
 
-/// Fill via pdfer_forms with pre-flight guards and a post-fill audit.
+/// Apply button-field (`/Btn`) values directly with lopdf, resolving each
+/// field by its EXACT qualified name (never by leaf — the whole point of
+/// this path: `pdfer_forms` leaf-matching over-sets same-leaf siblings).
+///
+/// For each requested field, with `on_state` = the value minus any leading
+/// `/` (`"Off"` or empty = uncheck):
+/// - the field's `/V` becomes `Object::Name(on_state)`;
+/// - each widget's `/AS` becomes the on-state when that widget's
+///   `/AP` → `/N` dictionary carries the state (the selected widget of a
+///   checkbox or radio group), and `Name("Off")` on every other widget.
+///
+/// Appearance streams are NOT generated: Designer widgets already carry
+/// their on-state `/AP` templates (spike evidence), and this pass selects
+/// among them. A requested state that is not among the field's available
+/// on-states (union of widget `/AP` → `/N` keys, excluding `Off`) is an
+/// error naming the field and the available states — never a guess.
+fn set_button_fields(doc: &mut Document, values: &HashMap<String, String>) -> PdfResult<()> {
+    let fields = collect_fields(doc)?;
+    for (name, raw_value) in values {
+        let field = fields
+            .iter()
+            .find(|f| &f.name == name)
+            .ok_or_else(|| PdfError(format!("button field not found: {name}")))?;
+        let target = raw_value.trim_start_matches('/');
+        let widgets = button_widgets(doc, field);
+        // Available on-states across this field's widgets.
+        let mut available: Vec<String> = Vec::new();
+        let mut per_widget_states: Vec<(ObjectId, Vec<String>)> = Vec::new();
+        for wid in &widgets {
+            let states = doc
+                .get_dictionary(*wid)
+                .map(|d| widget_ap_n_states(doc, d))
+                .unwrap_or_default();
+            for s in &states {
+                if s != "Off" && !available.contains(s) {
+                    available.push(s.clone());
+                }
+            }
+            per_widget_states.push((*wid, states));
+        }
+        available.sort();
+        let uncheck = target.is_empty() || target == "Off";
+        if !uncheck && !available.contains(&target.to_string()) {
+            return Err(PdfError(format!(
+                "button field {name}: requested on-state '{target}' is not available; \
+                 available on-states: {}",
+                if available.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    available.join(", ")
+                }
+            )));
+        }
+        let effective = if uncheck { "Off" } else { target };
+        // /V on the field object.
+        {
+            let obj = doc.get_object_mut(field.id).map_err(err)?;
+            let dict = obj.as_dict_mut().map_err(err)?;
+            dict.set("V", Object::Name(effective.as_bytes().to_vec()));
+        }
+        // /AS per widget: selected widget gets the state, others Off.
+        for (wid, states) in &per_widget_states {
+            let as_state = if !uncheck && states.iter().any(|s| s == target) {
+                target
+            } else {
+                "Off"
+            };
+            let obj = doc.get_object_mut(*wid).map_err(err)?;
+            let dict = obj.as_dict_mut().map_err(err)?;
+            dict.set("AS", Object::Name(as_state.as_bytes().to_vec()));
+        }
+    }
+    Ok(())
+}
+
+/// Run the direct button pass from `input` to `output` (lopdf load/save).
+fn button_fill_file(
+    input: &Path,
+    values: &HashMap<String, String>,
+    output: &Path,
+) -> PdfResult<()> {
+    let mut doc = Document::load(input).map_err(err)?;
+    set_button_fields(&mut doc, values)?;
+    doc.save(output).map_err(err)?;
+    Ok(())
+}
+
+/// Raw pdfer_forms fill (no audit): `input` → `output`.
+fn pdfer_fill_raw(input: &Path, values: &HashMap<String, String>, output: &Path) -> PdfResult<()> {
+    let reader = pdfer_forms::PdfReaderCompat::load(input).map_err(err)?;
+    let mut writer = pdfer_forms::PdfWriterCompat::from_reader(&reader);
+    writer.set_need_appearances_writer(false).map_err(err)?;
+    let updates: BTreeMap<String, pdfer_forms::FieldInput> = values
+        .iter()
+        .map(|(k, v)| (k.clone(), pdfer_forms::FieldInput::from(v.clone())))
+        .collect();
+    writer
+        .update_page_form_field_values(
+            pdfer_forms::PageSelection::All,
+            &updates,
+            0,
+            Some(false),
+            false,
+        )
+        .map_err(err)?;
+    writer.save(output).map_err(err)?;
+    Ok(())
+}
+
+/// Fill with pre-flight guards and a post-fill audit, partitioning the
+/// requested values by field type:
 ///
 /// 1. Pre-flight (lopdf inspect, fixed decoder): every requested name must
-///    resolve; leaf names shared by several fields produce warnings (the
-///    audit in step 3 is what actually protects against pdfer_forms'
-///    leaf-name matching fallback — spike: two 1040 fields share leaf
-///    `c1_8[0]`, and filling one also set the other).
-/// 2. Fill to a temp file via pdfer_forms (appearances regenerated,
-///    `NeedAppearances` explicitly false — appearances are IN the file).
-///    Button values are passed through as given: pdfer resolves `"1"`,
-///    `"/1"`, `"true"` etc. against the field's real appearance states.
-/// 3. Audit (lopdf inspect of the temp file): diff every field's `/V`
-///    before vs after. Any changed field that was not requested fails the
-///    fill — the temp file is deleted and `output` is never written.
-///    Requested fields whose value did not land also fail the fill.
-/// 4. Appearance check: changed fields should have a widget `/AP`; misses
-///    become warnings (e.g. comb fields under pdfer are data-correct but
-///    their appearances are not cell-spread — known defect, KNOWN_LIMITS).
+///    resolve. Non-button leaf names shared by several fields produce
+///    warnings (the audit in step 4 is what actually protects against
+///    pdfer_forms' leaf-name matching fallback — spike: two 1040 fields
+///    share leaf `c1_8[0]`, and filling one also set the other). Button
+///    fields are exempt from that hazard by construction (step 3).
+/// 2. Non-button fields fill via pdfer_forms to a temp file (appearances
+///    regenerated, `NeedAppearances` explicitly false — appearances are
+///    IN the file).
+/// 3. Button fields (`/Btn`) fill via the direct lopdf pass
+///    ([`set_button_fields`]) on top of step 2's output (or on the input
+///    when there are no non-button fields): exact qualified-name
+///    resolution, `/V` as a name, per-widget `/AS` selection among the
+///    widgets' existing `/AP` state templates.
+/// 4. Audit (lopdf inspect of the final temp file): diff every field's
+///    `/V` before vs after. Any changed field that was not requested
+///    fails the fill — the temp file is deleted and `output` is never
+///    written. Requested fields whose value did not land also fail.
+/// 5. Appearance check: changed fields should have a widget `/AP` (for
+///    buttons: the selected widget's `/AP` → `/N` must carry the state);
+///    misses become warnings (e.g. comb fields under pdfer are
+///    data-correct but their appearances are not cell-spread — known
+///    defect, KNOWN_LIMITS).
 fn pdfer_fill(
     input: &Path,
     values: &HashMap<String, String>,
@@ -538,7 +744,25 @@ fn pdfer_fill(
         )));
     }
 
+    // Partition by field type: /Btn fields go to the direct lopdf button
+    // pass; everything else goes through pdfer_forms.
+    let type_map: BTreeMap<String, Option<String>> = before
+        .iter()
+        .map(|f| (f.name.clone(), f.field_type.clone()))
+        .collect();
+    let mut btn_values: HashMap<String, String> = HashMap::new();
+    let mut other_values: HashMap<String, String> = HashMap::new();
+    for (k, v) in values {
+        if type_map.get(k).cloned().flatten().as_deref() == Some("Btn") {
+            btn_values.insert(k.clone(), v.clone());
+        } else {
+            other_values.insert(k.clone(), v.clone());
+        }
+    }
+
     // Duplicate-leaf guard: leaf segment -> all qualified names using it.
+    // Only the pdfer (non-button) set is exposed to leaf over-matching;
+    // button fields resolve by exact qualified name in the direct pass.
     let mut leaf_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for f in &before {
         leaf_map
@@ -547,7 +771,7 @@ fn pdfer_fill(
             .push(f.name.clone());
     }
     let mut warnings: Vec<String> = vec![XFA_WARNING.to_string()];
-    for name in values.keys() {
+    for name in other_values.keys() {
         let leaf = leaf_name(name);
         if let Some(sharing) = leaf_map.get(leaf) {
             if sharing.len() > 1 {
@@ -574,6 +798,9 @@ fn pdfer_fill(
         .collect();
 
     // ---- fill to temp -----------------------------------------------------
+    // Stage 1 (pdfer, non-button fields only) → stage 2 (direct lopdf
+    // button pass). The final staged file is `tmp`; stage 1's is
+    // `tmp_pdfer`. The audit below runs on `tmp` exactly as before.
     let tmp: PathBuf = {
         let fname = output
             .file_name()
@@ -581,28 +808,25 @@ fn pdfer_fill(
             .unwrap_or_else(|| "filled.pdf".to_string());
         output.with_file_name(format!(".{fname}.tmp-{}", std::process::id()))
     };
+    let tmp_pdfer = tmp.with_extension("pdfer.pdf");
     let fill_result = (|| -> PdfResult<()> {
-        let reader = pdfer_forms::PdfReaderCompat::load(input).map_err(err)?;
-        let mut writer = pdfer_forms::PdfWriterCompat::from_reader(&reader);
-        writer.set_need_appearances_writer(false).map_err(err)?;
-        let updates: BTreeMap<String, pdfer_forms::FieldInput> = values
-            .iter()
-            .map(|(k, v)| (k.clone(), pdfer_forms::FieldInput::from(v.clone())))
-            .collect();
-        writer
-            .update_page_form_field_values(
-                pdfer_forms::PageSelection::All,
-                &updates,
-                0,
-                Some(false),
-                false,
-            )
-            .map_err(err)?;
-        writer.save(&tmp).map_err(err)?;
+        let mut current: PathBuf = input.to_path_buf();
+        if !other_values.is_empty() {
+            pdfer_fill_raw(input, &other_values, &tmp_pdfer)?;
+            current = tmp_pdfer.clone();
+        }
+        if !btn_values.is_empty() {
+            button_fill_file(&current, &btn_values, &tmp)?;
+        } else if current != input {
+            std::fs::copy(&current, &tmp).map_err(err)?;
+        } else {
+            std::fs::copy(input, &tmp).map_err(err)?;
+        }
         Ok(())
     })();
     if let Err(e) = fill_result {
         let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::remove_file(&tmp_pdfer);
         return Err(PdfError(format!(
             "{} — output not written ({})",
             e.0,
@@ -665,9 +889,11 @@ fn pdfer_fill(
         Ok(v) => v,
         Err(e) => {
             let _ = std::fs::remove_file(&tmp);
+            let _ = std::fs::remove_file(&tmp_pdfer);
             return Err(e);
         }
     };
+    let _ = std::fs::remove_file(&tmp_pdfer);
 
     // ---- appearance warnings ----------------------------------------------
     if appearance_verified < changed.len() {
@@ -704,7 +930,11 @@ fn pdfer_fill(
         .map_err(err)?;
 
     Ok(FillReport {
-        backend: "pdfer_forms".to_string(),
+        backend: if btn_values.is_empty() {
+            "pdfer_forms".to_string()
+        } else {
+            "pdfer_forms+lopdf-buttons".to_string()
+        },
         changed_fields: changed,
         unintended_changes: Vec::new(),
         appearance_verified,
@@ -803,9 +1033,11 @@ fn utf16be_pdf_string(s: &str) -> Object {
 /// ├── name_field             (Tx, /T stored as UTF-16BE bytes)
 /// ├── agree                  (Btn checkbox, /AP states /Off and /1)
 /// ├── a
-/// │   └── dup                (Tx)  ┐ same leaf name "dup"
-/// └── b                      (Tx)  ┘ under different parents
-///     └── dup
+/// │   ├── dup                (Tx)  ┐ same leaf name "dup"
+/// │   └── c[0]               (Btn, separate field + widget kid) ┐ same
+/// └── b                      (Tx)  ┘ under different parents    │ leaf
+///     ├── dup                                                   │ "c[0]"
+///     └── c[0]               (Btn, separate field + widget kid) ┘
 /// ```
 pub fn make_test_form(path: &Path) -> PdfResult<()> {
     let mut doc = Document::with_version("1.5");
@@ -822,6 +1054,10 @@ pub fn make_test_form(path: &Path) -> PdfResult<()> {
     let dupa_id = doc.new_object_id();
     let dupb_parent_id = doc.new_object_id();
     let dupb_id = doc.new_object_id();
+    let ca_field_id = doc.new_object_id();
+    let ca_widget_id = doc.new_object_id();
+    let cb_field_id = doc.new_object_id();
+    let cb_widget_id = doc.new_object_id();
 
     // Base-14 font (for AcroForm /DR and page resources).
     let mut font = Dictionary::new();
@@ -903,14 +1139,37 @@ pub fn make_test_form(path: &Path) -> PdfResult<()> {
     check.set("AP", Object::Dictionary(ap));
     check.set("AS", Object::Name(b"Off".to_vec()));
     doc.set_object(check_id, check);
-    // Duplicate-leaf text fields under parents "a" and "b".
-    for (parent_id, widget_id, tname, y) in [
-        (dupa_parent_id, dupa_id, "a", 620_i64),
-        (dupb_parent_id, dupb_id, "b", 580_i64),
+    // Duplicate-leaf text fields under parents "a" and "b", plus a
+    // duplicate-leaf CHECKBOX field under each parent (leaf "c[0]",
+    // separate field object with a bare widget kid carrying the /AP state
+    // templates — the shape of the real 1040 filing-status collision).
+    for (parent_id, widget_id, c_field_id, c_widget_id, tname, y) in [
+        (
+            dupa_parent_id,
+            dupa_id,
+            ca_field_id,
+            ca_widget_id,
+            "a",
+            620_i64,
+        ),
+        (
+            dupb_parent_id,
+            dupb_id,
+            cb_field_id,
+            cb_widget_id,
+            "b",
+            540_i64,
+        ),
     ] {
         let mut parent = Dictionary::new();
         parent.set("T", Object::string_literal(tname));
-        parent.set("Kids", Object::Array(vec![Object::Reference(widget_id)]));
+        parent.set(
+            "Kids",
+            Object::Array(vec![
+                Object::Reference(widget_id),
+                Object::Reference(c_field_id),
+            ]),
+        );
         parent.set("Parent", Object::Reference(root_id));
         doc.set_object(parent_id, parent);
         widget(
@@ -921,6 +1180,36 @@ pub fn make_test_form(path: &Path) -> PdfResult<()> {
             "Tx",
             y,
         );
+        // Checkbox field (FT lives here) with one widget kid.
+        let mut cfield = Dictionary::new();
+        cfield.set("FT", Object::Name(b"Btn".to_vec()));
+        cfield.set("T", Object::string_literal("c[0]"));
+        cfield.set("Parent", Object::Reference(parent_id));
+        cfield.set("Kids", Object::Array(vec![Object::Reference(c_widget_id)]));
+        doc.set_object(c_field_id, cfield);
+        let mut cwidget = Dictionary::new();
+        cwidget.set("Type", Object::Name(b"Annot".to_vec()));
+        cwidget.set("Subtype", Object::Name(b"Widget".to_vec()));
+        cwidget.set(
+            "Rect",
+            Object::Array(vec![
+                Object::Integer(320),
+                Object::Integer(y),
+                Object::Integer(340),
+                Object::Integer(y + 20),
+            ]),
+        );
+        cwidget.set("P", Object::Reference(page_id));
+        cwidget.set("Parent", Object::Reference(c_field_id));
+        cwidget.set("F", Object::Integer(4));
+        let mut cap_n = Dictionary::new();
+        cap_n.set("Off", Object::Reference(off_stream_id));
+        cap_n.set("1", Object::Reference(on_stream_id));
+        let mut cap = Dictionary::new();
+        cap.set("N", Object::Dictionary(cap_n));
+        cwidget.set("AP", Object::Dictionary(cap));
+        cwidget.set("AS", Object::Name(b"Off".to_vec()));
+        doc.set_object(c_widget_id, cwidget);
     }
     // Root container field.
     let mut root = Dictionary::new();
@@ -955,6 +1244,8 @@ pub fn make_test_form(path: &Path) -> PdfResult<()> {
             Object::Reference(check_id),
             Object::Reference(dupa_id),
             Object::Reference(dupb_id),
+            Object::Reference(ca_widget_id),
+            Object::Reference(cb_widget_id),
         ]),
     );
     let mut font_dict = Dictionary::new();
@@ -1111,6 +1402,107 @@ mod tests {
             "audit error must name the unintended sibling: {err}"
         );
         assert!(!out.exists(), "no output may be kept on audit failure");
+    }
+
+    #[test]
+    fn button_duplicate_leaf_checkbox_fills_only_the_requested_field() {
+        // The case pdfer cannot do: two /Btn fields share leaf "c[0]"
+        // (form.a.c[0] and form.b.c[0]). The direct button pass resolves
+        // the exact qualified name, so filling one must succeed, leave
+        // the sibling untouched, and pass the audit with exactly one
+        // changed field.
+        let src = tmp("form-btn-dup-src.pdf");
+        let out = tmp("form-btn-dup-filled.pdf");
+        let _ = std::fs::remove_file(&out);
+        make_test_form(&src).unwrap();
+        let values = HashMap::from([("form.a.c[0]".to_string(), "1".to_string())]);
+        let report = PdferBackend
+            .fill_fields(&src, &values, &out)
+            .expect("button fill must not be blocked by the sibling's leaf");
+        assert_eq!(report.backend, "pdfer_forms+lopdf-buttons");
+        assert_eq!(report.changed_fields, vec!["form.a.c[0]".to_string()]);
+        assert!(report.unintended_changes.is_empty());
+        assert_eq!(
+            report.appearance_verified, 1,
+            "selected widget's /AP /N carries the on-state: {report:?}"
+        );
+        assert!(out.exists());
+        let after = inspect_fields(&out).unwrap();
+        let a = after.iter().find(|f| f.name == "form.a.c[0]").unwrap();
+        // /V must read back as the NAME "1".
+        assert_eq!(a.value.as_deref(), Some("1"), "field: {a:?}");
+        let b = after.iter().find(|f| f.name == "form.b.c[0]").unwrap();
+        assert_eq!(b.value, None, "sibling must be untouched: {b:?}");
+        // The selected widget's /AS is "1"; the sibling's stays "Off".
+        let doc = Document::load(&out).unwrap();
+        let fields = collect_fields(&doc).unwrap();
+        for (fname, want_as) in [("form.a.c[0]", "1"), ("form.b.c[0]", "Off")] {
+            let f = fields.iter().find(|f| f.name == fname).unwrap();
+            let widgets = button_widgets(&doc, f);
+            assert_eq!(widgets.len(), 1);
+            let wdict = doc.get_dictionary(widgets[0]).unwrap();
+            let as_state = wdict
+                .get(b"AS")
+                .ok()
+                .and_then(|o| o.as_name().ok())
+                .map(decode_pdf_name);
+            assert_eq!(as_state.as_deref(), Some(want_as), "field {fname}");
+        }
+    }
+
+    #[test]
+    fn button_uncheck_sets_value_and_as_to_off() {
+        let src = tmp("form-btn-uncheck-src.pdf");
+        let on = tmp("form-btn-uncheck-on.pdf");
+        let out = tmp("form-btn-uncheck-off.pdf");
+        make_test_form(&src).unwrap();
+        // Pre-set the (merged field+widget) checkbox on.
+        let values = HashMap::from([("form.agree".to_string(), "1".to_string())]);
+        PdferBackend.fill_fields(&src, &values, &on).unwrap();
+        let mid = inspect_fields(&on).unwrap();
+        assert_eq!(
+            mid.iter()
+                .find(|f| f.name == "form.agree")
+                .unwrap()
+                .value
+                .as_deref(),
+            Some("1")
+        );
+        // Uncheck it.
+        let values = HashMap::from([("form.agree".to_string(), "Off".to_string())]);
+        let report = PdferBackend.fill_fields(&on, &values, &out).unwrap();
+        assert_eq!(report.changed_fields, vec!["form.agree".to_string()]);
+        let after = inspect_fields(&out).unwrap();
+        let f = after.iter().find(|f| f.name == "form.agree").unwrap();
+        assert_eq!(f.value.as_deref(), Some("Off"), "field: {f:?}");
+        let doc = Document::load(&out).unwrap();
+        let fields = collect_fields(&doc).unwrap();
+        let facc = fields.iter().find(|f| f.name == "form.agree").unwrap();
+        let dict = doc.get_dictionary(facc.id).unwrap();
+        let as_state = dict
+            .get(b"AS")
+            .ok()
+            .and_then(|o| o.as_name().ok())
+            .map(decode_pdf_name);
+        assert_eq!(as_state.as_deref(), Some("Off"));
+    }
+
+    #[test]
+    fn button_bad_on_state_errors_and_writes_nothing() {
+        let src = tmp("form-btn-bad-src.pdf");
+        let out = tmp("form-btn-bad-filled.pdf");
+        let _ = std::fs::remove_file(&out);
+        make_test_form(&src).unwrap();
+        let values = HashMap::from([("form.a.c[0]".to_string(), "9".to_string())]);
+        let err = PdferBackend
+            .fill_fields(&src, &values, &out)
+            .expect_err("unknown on-state must be an error, never a guess");
+        assert!(err.0.contains("form.a.c[0]"), "{err}");
+        assert!(
+            err.0.contains("available on-states: 1"),
+            "error must name the available states: {err}"
+        );
+        assert!(!out.exists(), "no output may be kept on failure");
     }
 
     #[test]
