@@ -1646,6 +1646,8 @@ mod tests {
                 social_security_tax: None,
                 medicare_wages: None,
                 medicare_tax: None,
+                state_wages: None,
+                state_withholding: None,
             }],
             interest_income: Money::ZERO,
             ordinary_dividends: Money::ZERO,
@@ -1655,6 +1657,7 @@ mod tests {
             f1099_necs: vec![],
             dependents: vec![],
             identity: Some(identity()),
+            state: None,
         }
     }
 
@@ -1745,6 +1748,7 @@ mod tests {
             nonemployee_compensation: cents(20_000),
             federal_withholding: Money::ZERO,
             expenses: cents(2_000),
+            state_withholding: None,
         }];
         let computed = compute_1040(&input, &params());
         let export = build_mef(&input, &computed, &params(), 2025, TS).unwrap();

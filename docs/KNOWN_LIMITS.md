@@ -277,9 +277,131 @@ This list is the contract: anything not listed as working is not claimed.
     filing can differ by a dollar.
 - Line 33 = line 25d + line 32 (withholding plus the refundable
   credits above); no other payment lines (26, 31, …) exist in v1.
-- No state returns.
 - Filing statuses: single, mfj, hoh, mfs parameters are included; mfs
   special rules are not modeled.
+
+## California — Form 540 (tax-forms `ca540`, TY2025)
+
+Computed only when the return has a state block stored
+(`tax return set-state`, `{"state": "CA", "residency": "full_year"}`).
+Lines are keyed by the printed Form 540 line numbers in a separate
+map (7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 31, 32, 33, 34, 35,
+48, 62, 64, 71, 75, 76, 78, 97, 100), plus two internal keys:
+`caleitc_earned_income` (FTB 3514 line 19) and
+`caleitc_qualifying_children` (a count, carried as count × $1.00 like
+the federal `eic_qualifying_children`). All figures come from the
+official FTB 2025 Form 540 booklet and FTB 3514 booklet;
+`crates/tax-core/params/2025-ca.json` carries parameters with
+sources, and the CA Tax Table and CA EITC Table are extracted data
+files (`2025-ca-tax-table.json`, `2025-ca-eitc-table.json`) validated
+cell-for-cell against the booklet's Tax Rate Schedules at range
+midpoints (Tax Table) and by tiling/unimodality/maxima/spot reads
+(EITC Table — FTB publishes no formula for it).
+
+- **Full-year residents only.** Form 540NR (nonresidents and
+  part-year residents) and any other residency value are explicit
+  errors, not fallbacks. No other state is implemented.
+- **Schedule CA adjustments are scoped to the facts the federal
+  engine produces**, and for the v1 persona those facts are all
+  California-conforming, so lines 14/16 are stated zeros: wages,
+  taxable interest, dividends, capital gains (California taxes them
+  at ordinary rates; the amount carries over unchanged), and
+  Schedule C net all carry from the federal return as-is.
+  In particular the federal deductible part of self-employment tax
+  (1040 line 10) is **not** added back: the 2025 Instructions for
+  Schedule CA (540), Part I, Section C, state California conforms to
+  federal law for the Section C adjustments except as listed, and the
+  only listed line 15 difference is a classification case
+  (independent contractor federally, employee for California → the
+  column A amount goes in column B, a subtraction). A filer whose
+  facts include that classification difference is out of scope (the
+  engine flags every return with 1099-NEC entries with an info
+  finding saying it is not modeled). Adjustments the engine cannot
+  see — HSA contributions/deductions (a genuine nonconformity),
+  state income tax refunds, Social Security benefit differences,
+  US-obligation interest, California lottery, and everything else on
+  Schedule CA Parts I/III — are out of scope: a filer with those
+  facts is outside CA v1.
+- **Line 12 (California state wages) is not computed** — it is
+  informational on the printed form; W-2 Box 16 is stored per entry
+  and used for the CalEITC earned income.
+- **Standard deduction only** ($5,706 single/MFS, $11,412 MFJ/HoH).
+  California itemized deductions (Schedule CA Part II, Form 540
+  line 18 alternative) are not computed even when the federal return
+  itemizes (the federal engine takes the standard deduction too).
+  Age 65 and blindness earn **exemption credits** ($153 each, lines
+  8/9), not a deduction addition — the two mechanisms are distinct.
+  The senior exemption uses the same born-before-January-2-1961
+  cutoff as the federal standard-deduction addition.
+- **Exemption credits**: $153 per personal/blind/senior exemption,
+  $475 per dependent. Every stored dependent entry counts toward the
+  dependent credit (the form's dependent list); the federal
+  eligible-child rules do not gate it. Credits are reduced by the
+  AGI Limitation Worksheet when federal AGI exceeds $252,203
+  (single/MFS), $504,411 (MFJ), or $378,310 (HoH): whole-dollar
+  steps of $2,500 ($1,250 MFS) × $6 per exemption, applied to the
+  personal/blind/senior group and the dependent group separately,
+  each floored at zero. The worksheet's rounding to whole dollars is
+  preserved.
+- **Tax**: the extracted CA Tax Table at taxable income ≤ $100,000;
+  the Tax Rate Schedules (params) above. Line 34 (lump-sum tax) is a
+  stated zero. The Behavioral Health Services Tax (line 62, 1% of
+  taxable income over $1,000,000) **is** computed; the engine keeps
+  cents where the printed worksheet rounds to whole dollars.
+- **No other nonrefundable credits**: lines 40–47 — including the
+  Nonrefundable Renter's Credit (line 46), the child and dependent
+  care credit, and the college access credit — are not computed, so
+  line 48 equals line 35. No AMT (line 61) or other taxes (line 63).
+- **Payments**: line 71 is W-2 Box 17 plus 1099-NEC Box 5 state
+  withholding. Estimated payments (72), other-state withholding forms
+  592-B/593 (73), the film credit (74), and the Foster Youth Tax
+  Credit (77 — also $1,189; foster-youth eligibility is not modeled)
+  are not computed. Use tax (91) and Individual Shared Responsibility
+  (95) are treated as zero, so lines 97/100 are the exact difference
+  when those do not apply.
+- **CalEITC (line 75)** inlines form FTB 3514: federal AGI must be
+  under $32,901 and investment income (the federal EIC investment
+  aggregate) at most $4,814. Earned income is W-2 **Box 16**
+  California wages — not Box 1 — plus business income per Worksheet 3
+  (Schedule C net minus the deductible part of SE tax); other federal
+  earned-income components (statutory-employee wages, clergy,
+  disability) are not modeled. Qualifying children are the federal
+  EIC child tests with one California difference honored and one
+  assumed: California accepts an ITIN for the child (the stored
+  9-digit identifier is accepted without distinguishing SSN from
+  ITIN, and ITIN filers can claim the credit — the Step 1b/2b
+  SSN-or-ITIN gate is checked for presence only, with a
+  `caleitc_ssn_unverified` validate warning when the credit is
+  allowed but no identifier is stored), and the child is taken to
+  have lived in California more than half the year from the
+  full-year-resident selection (a child who lived elsewhere is out
+  of scope). Married filing separately is barred; the separated-
+  spouse exception California conforms to federally is not modeled
+  (0 + a validate warning). With no qualifying children the filer
+  must be at least 18 (born on or before January 1, 2008); with
+  qualifying children there is no filer age test (FTB 3514 Step 3),
+  so none is applied. When any W-2's Box 16 was not transcribed the
+  credit is Incomplete rather than zero (unless a wage-independent
+  gate already decided it), mirroring the withholding doctrine.
+- **Young Child Tax Credit (line 76)** requires an allowed CalEITC
+  and a CalEITC qualifying child younger than six as of the last day
+  of the taxable year; it is $1,189 **per return, not per child**,
+  reduced by $21.71 per $100 (two decimal places, unrounded) of
+  earned income over $27,425, with the form's $0–$1 → $1 rule.
+  The zero-or-negative-earned-income expansion (TY2022+, FTB 3514
+  lines 23a/23b: wage and net-loss caps of $35,640 and a federal AGI
+  cap of $32,900) is **not computed**: when it may apply, line 76 is
+  Incomplete with a validate warning, never a guessed amount.
+- **Completeness doctrine**: a stored CA block conjoins with the
+  federal completeness — `return get` reports the return incomplete
+  if either side is. Any W-2 without Box 17 or 1099-NEC without Box 5
+  makes line 71 (and with it 78 and the refund/due) Incomplete with a
+  per-entry `ca_state_withholding_missing` validate finding; filers
+  record `"0"` explicitly to state that no state tax was withheld.
+- **No PDF filling and no e-file for California in this lane**: the
+  packet and MeF exports are federal artifacts; Form 540 / Schedule
+  CA PDF fill is a separate lane, and California's e-file XML is out
+  of scope entirely.
 
 ## Documents (tax-doc)
 

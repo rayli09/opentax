@@ -10,16 +10,17 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
-use tax_core::{FactResult, FilingStatus, Money, TaxParams};
+use tax_core::{CaParams, FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::mef::build_mef;
 use tax_forms::packet::{build_packet, schedules_view};
 use tax_forms::{
-    additional_standard_deduction, build_fill_values_with_dependents, compute_1040,
+    additional_standard_deduction, build_fill_values_with_dependents, compute_1040, compute_ca540,
     deductible_part_of_se_tax, eic_childless_age_outcome, eic_qualifying_children, mask_ssn,
     normalize_ssn, schedule_c_net_profit, schedule_se_tax, senior_bonus_eligible_persons,
-    validate_1099_div, validate_dependent, DependentInput, Form1040Input, I1099BInput,
-    I1099DivInput, I1099IntInput, I1099NecInput, PersonIdentity, TaxpayerIdentity, W2Input,
+    validate_1099_div, validate_dependent, CaFinding, ComputedReturn, DependentInput,
+    Form1040Input, I1099BInput, I1099DivInput, I1099IntInput, I1099NecInput, PersonIdentity,
+    StateBlock, TaxpayerIdentity, W2Input,
 };
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
@@ -94,6 +95,12 @@ enum Commands {
         line: Option<String>,
         #[arg(long)]
         fact: Option<String>,
+        /// Explain a STATE line instead of a federal one (e.g.
+        /// `--state CA --line 31`). The return must have that state
+        /// selected with `tax return set-state`; line numbers are the
+        /// state form's printed lines (Form 540 for CA).
+        #[arg(long)]
+        state: Option<String>,
     },
     /// Bundled skills.
     Skills {
@@ -145,6 +152,23 @@ enum ReturnAction {
     SetIdentity {
         #[arg(long)]
         r#return: String,
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Select the state return to compute alongside the federal
+    /// return, from a JSON file: {"state": "CA", "residency":
+    /// "full_year"}. v1 computes only California for full-year
+    /// residents (Form 540); any other state or residency is an
+    /// explicit error. When a state is selected, `return get` gains a
+    /// "state" section and `return validate` reports the state
+    /// findings. Re-running replaces the selection.
+    SetState {
+        #[arg(long)]
+        r#return: String,
+        /// State code; when given it must match the file's "state".
+        #[arg(long)]
+        state: Option<String>,
+        /// JSON file with the state block.
         #[arg(long)]
         file: PathBuf,
     },
@@ -349,6 +373,11 @@ struct StoredReturn {
     /// returns stored before identity existed load unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     taxpayer: Option<TaxpayerIdentity>,
+    /// State return selection (`return set-state`). Optional:
+    /// returns stored before state support existed load unchanged,
+    /// and a return with no selection computes federally only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state: Option<StateBlock>,
 }
 
 fn return_path(store: &Path, id: &str) -> PathBuf {
@@ -463,6 +492,7 @@ fn list_returns(store: &Path, params: &TaxParams) -> Vec<Value> {
                     "status": ret.status,
                     "complete": complete,
                     "identity_set": ret.taxpayer.is_some(),
+                    "state": ret.state.as_ref().map(|b| b.state.clone()),
                 })
             }
             Err(_) => json!({
@@ -604,6 +634,22 @@ struct ComputedView {
     /// cents). Only the full-engine path can build it; the partial
     /// views leave it `None` (serialized as null).
     schedules: Option<Value>,
+    /// The computed state section (California Form 540 in v1),
+    /// present only when the return has a state block stored.
+    state: Option<StateView>,
+}
+
+/// The computed state section of a stored return: the state form's
+/// lines in the same FactResult representation as the federal lines,
+/// plus the engine's findings for `return validate`.
+struct StateView {
+    block: StateBlock,
+    lines: BTreeMap<String, FactResult<Money>>,
+    complete: bool,
+    incomplete: Vec<String>,
+    notes: Vec<String>,
+    findings: Vec<CaFinding>,
+    line31_method: Option<String>,
 }
 
 /// All line keys the current engine/view knows, in display order.
@@ -662,7 +708,61 @@ fn incomplete_lines(lines: &BTreeMap<String, FactResult<Money>>) -> Vec<String> 
         .collect()
 }
 
+/// The full computed view of a stored return: the federal view from
+/// [`compute_view_inner`], plus — when the return has a state block
+/// stored — the computed state section. The overall `complete` is
+/// the conjunction: a return whose federal side is complete but
+/// whose California section is not is not complete.
 fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView> {
+    let mut view = compute_view_inner(ret, params)?;
+    if let Some(block) = &ret.state {
+        block
+            .validated()
+            .map_err(|e| CliErr::new("unsupported_state", e))?;
+        let ca_params = CaParams::load_2025().map_err(json_err)?;
+        let status =
+            FilingStatus::parse(&ret.status).map_err(|e| CliErr::new("invalid_status", e))?;
+        // The California engine reads the direct interest/dividend
+        // amounts only through the federal facts (line 11 AGI, the
+        // EIC investment-income aggregate), never directly, so the
+        // assembled input may carry zeros for them: on the partial
+        // path those federal facts are Incomplete in the view's line
+        // map and every dependent California line follows.
+        let input = Form1040Input {
+            status,
+            w2s: stored_w2s(ret)?,
+            interest_income: Money::ZERO,
+            ordinary_dividends: Money::ZERO,
+            f1099_ints: stored_ints(ret)?,
+            f1099_divs: stored_divs(ret)?,
+            f1099_bs: stored_bs(ret)?,
+            f1099_necs: stored_necs(ret)?,
+            dependents: stored_dependents(ret)?,
+            identity: ret.taxpayer.clone(),
+            state: Some(block.clone()),
+        };
+        let fed = ComputedReturn {
+            lines: view.lines.clone(),
+            complete: view.complete,
+            notes: Vec::new(),
+            line16_method: view.line16_method.clone(),
+        };
+        let ca = compute_ca540(&input, &fed, params, &ca_params);
+        view.complete = view.complete && ca.complete;
+        view.state = Some(StateView {
+            block: block.clone(),
+            lines: ca.lines,
+            complete: ca.complete,
+            incomplete: ca.incomplete,
+            notes: ca.notes,
+            findings: ca.findings,
+            line31_method: ca.line31_method,
+        });
+    }
+    Ok(view)
+}
+
+fn compute_view_inner(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView> {
     let w2s = stored_w2s(ret)?;
     let ints = stored_ints(ret)?;
     let divs = stored_divs(ret)?;
@@ -684,6 +784,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
             warnings: vec!["no documents have been added to this return".to_string()],
             line16_method: None,
             schedules: None,
+            state: None,
         });
     }
 
@@ -700,6 +801,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 f1099_necs: necs,
                 dependents: deps,
                 identity: ret.taxpayer.clone(),
+                state: ret.state.clone(),
             };
             let computed = compute_1040(&input, params);
             warnings.extend(computed.notes.iter().cloned());
@@ -711,6 +813,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 warnings,
                 line16_method: computed.line16_method.clone(),
                 schedules: Some(schedules),
+                state: None,
             })
         }
         None => {
@@ -884,6 +987,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 warnings,
                 line16_method: None,
                 schedules: None,
+                state: None,
             })
         }
     }
@@ -895,14 +999,31 @@ fn view_json(view: &ComputedView) -> Value {
         .iter()
         .map(|(k, v)| (k.clone(), line_json(v)))
         .collect();
-    json!({
+    let mut value = json!({
         "lines": lines,
         "complete": view.complete,
         "incomplete": view.incomplete,
         "warnings": view.warnings,
         "line16_method": view.line16_method,
         "schedules": view.schedules,
-    })
+    });
+    if let Some(sv) = &view.state {
+        let state_lines: serde_json::Map<String, Value> = sv
+            .lines
+            .iter()
+            .map(|(k, v)| (k.clone(), line_json(v)))
+            .collect();
+        value["state"] = json!({
+            "state": sv.block.state,
+            "residency": sv.block.residency,
+            "complete": sv.complete,
+            "lines": state_lines,
+            "incomplete": sv.incomplete,
+            "line31_method": sv.line31_method,
+            "notes": sv.notes,
+        });
+    }
+    value
 }
 
 // ---------------------------------------------------------------------------
@@ -938,6 +1059,27 @@ fn cmd_doctor(cli: &Cli) -> CResult<Out> {
             true,
             e.to_string(),
             "reinstall opentax; params/2025.json is embedded at build time",
+        ),
+    }
+    match CaParams::load_2025() {
+        Ok(p) => push(
+            "ca_params_2025",
+            true,
+            true,
+            format!(
+                "TY{} California parameters loaded ({} CA tax-table rows, {} CA EITC-table rows)",
+                p.year,
+                tax_core::CaTaxTable::load_2025().rows.len(),
+                tax_core::CaEitcTable::load_2025().rows.len()
+            ),
+            "",
+        ),
+        Err(_) => push(
+            "ca_params_2025",
+            false,
+            true,
+            "California params or the extracted CA Tax / EITC tables failed to load".to_string(),
+            "reinstall opentax; params/2025-ca*.json are embedded at build time",
         ),
     }
     // Store writable probe.
@@ -1103,6 +1245,49 @@ fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String
             )),
         }
     }
+    // California cases: correct.json carries a "state_lines" object
+    // of Form 540 line -> expected cents, derived from FTB sources.
+    // The federal assertions above still run (the state section is
+    // computed FROM the federal return).
+    if let Some(state_lines) = correct.get("state_lines").and_then(|l| l.as_object()) {
+        if input.state.is_none() {
+            mismatches.push(
+                "correct.json asserts state_lines but input.json has no \"state\" block"
+                    .to_string(),
+            );
+        } else {
+            let ca_params = CaParams::load_2025().map_err(json_err)?;
+            let ca = compute_ca540(&input, &computed, &params, &ca_params);
+            for (line, expected) in state_lines {
+                let Some(expected_cents) = expected.as_i64() else {
+                    continue;
+                };
+                match ca.lines.get(line) {
+                    Some(fr) => match fr.value() {
+                        Some(v) if v.cents() == expected_cents => {}
+                        Some(v) => mismatches.push(format!(
+                            "ca line {line}: expected {expected_cents} cents, got {} cents",
+                            v.cents()
+                        )),
+                        None => mismatches.push(format!(
+                            "ca line {line}: expected {expected_cents} cents, got incomplete"
+                        )),
+                    },
+                    None => mismatches.push(format!("ca line {line}: not computed")),
+                }
+            }
+            if let Some(expected_method) = correct.get("ca_line31_method").and_then(|m| m.as_str())
+            {
+                match ca.line31_method.as_deref() {
+                    Some(actual) if actual == expected_method => {}
+                    other => mismatches.push(format!(
+                        "ca_line31_method: expected {expected_method}, got {}",
+                        other.unwrap_or("<none>")
+                    )),
+                }
+            }
+        }
+    }
     Ok((mismatches.is_empty(), mismatches))
 }
 
@@ -1145,22 +1330,53 @@ fn cmd_selftest() -> CResult<Out> {
         }
     }
 
+    // California cases live in their own tree (benchmark/cases/
+    // ca540/2025/<case>/) with the same input.json + correct.json
+    // shape; the input carries a "state" block and correct.json
+    // asserts "state_lines". On-disk only (no embedded fallback).
+    let ca_base = Path::new("benchmark/cases/ca540/2025");
+    if ca_base.is_dir() {
+        let mut names: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(ca_base).map_err(io_err)? {
+            let entry = entry.map_err(io_err)?;
+            let dir = entry.path();
+            if dir.is_dir() && dir.join("input.json").exists() && dir.join("correct.json").exists()
+            {
+                names.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+        names.sort();
+        for name in names {
+            let dir = ca_base.join(&name);
+            cases.push((
+                format!("ca540:{name}"),
+                std::fs::read_to_string(dir.join("input.json")).map_err(io_err)?,
+                std::fs::read_to_string(dir.join("correct.json")).map_err(io_err)?,
+                dir.display().to_string(),
+            ));
+        }
+    }
+
     let mut results: Vec<Value> = Vec::new();
     let mut all_pass = true;
     let mut all_mismatches: Vec<String> = Vec::new();
     for (name, input, correct, origin) in &cases {
         let (pass, mismatches) = run_golden(input, correct)?;
+        let label = name.strip_prefix("ca540:").map_or_else(
+            || format!("f1040/2025/{name}"),
+            |n| format!("ca540/2025/{n}"),
+        );
         if !pass {
             all_pass = false;
             all_mismatches.extend(
                 mismatches
                     .iter()
-                    .map(|m| format!("{name}: {m}"))
+                    .map(|m| format!("{label}: {m}"))
                     .collect::<Vec<_>>(),
             );
         }
         results.push(json!({
-            "case": format!("f1040/2025/{name}"),
+            "case": label,
             "origin": origin,
             "pass": pass,
             "mismatches": mismatches,
@@ -1170,7 +1386,7 @@ fn cmd_selftest() -> CResult<Out> {
         format!(
             "selftest: {}/{} golden cases pass",
             results.len(),
-            cases.len()
+            results.len()
         )
     } else {
         format!("selftest: FAIL\n{}", all_mismatches.join("\n"))
@@ -1197,7 +1413,13 @@ fn schema_json() -> Value {
                 "f1099_bs": {"type": "array", "items": "I1099BInput"},
                 "f1099_necs": {"type": "array", "items": "I1099NecInput"},
                 "dependents": {"type": "array", "items": "DependentInput"},
-                "identity": {"type": "object", "items": "TaxpayerIdentity", "optional": true, "note": "the same block `return set-identity` stores; drives the age-65/blind standard-deduction additions, the Schedule 1-A Part V enhanced deduction for seniors (line 13b), and the PDF identity fields"}
+                "identity": {"type": "object", "items": "TaxpayerIdentity", "optional": true, "note": "the same block `return set-identity` stores; drives the age-65/blind standard-deduction additions, the Schedule 1-A Part V enhanced deduction for seniors (line 13b), and the PDF identity fields"},
+                "state": {"type": "object", "items": "StateBlock", "optional": true, "note": "the same block `return set-state` stores; when set, the state section is computed alongside the federal return and `return get` gains a \"state\" object. Absent = federal only, computed exactly as before"}
+            },
+            "StateBlock": {
+                "note": "Set with `tax return set-state --return <id> --state CA --file state.json`. v1 supports exactly one combination; anything else is an explicit error (other states, Form 540NR, and part-year residency are not implemented).",
+                "state": {"type": "string", "values": ["CA"]},
+                "residency": {"type": "string", "values": ["full_year"]}
             },
             "TaxpayerIdentity": {
                 "note": "Set with `tax return set-identity --return <id> --file identity.json`. SSNs accept \"123-45-6789\" or 9 digits and are stored normalized digits-only, locally only, and shown masked (***-**-6789) in every output; the full SSN appears only inside the filled PDF.",
@@ -1242,7 +1464,9 @@ fn schema_json() -> Value {
                 "social_security_wages": {"type": "money_cents_string", "optional": true, "form": "W-2 Box 3"},
                 "social_security_tax": {"type": "money_cents_string", "optional": true, "form": "W-2 Box 4"},
                 "medicare_wages": {"type": "money_cents_string", "optional": true, "form": "W-2 Box 5"},
-                "medicare_tax": {"type": "money_cents_string", "optional": true, "form": "W-2 Box 6"}
+                "medicare_tax": {"type": "money_cents_string", "optional": true, "form": "W-2 Box 6"},
+                "state_wages": {"type": "money_cents_string", "optional": true, "form": "W-2 Box 16", "note": "needed by the California section: FTB 3514 line 13 reads California earned income from box 16, not box 1. Omit only when untranscribed — with a CA state block set, a missing box 16 makes the CalEITC incomplete, never zero"},
+                "state_withholding": {"type": "money_cents_string", "optional": true, "form": "W-2 Box 17", "note": "summed into Form 540 line 71 when a CA state block is set. Omit only when untranscribed; record \"0\" explicitly when the W-2 reports no state withholding — a missing box makes line 71 incomplete, never zero"}
             },
             "I1099IntInput": {
                 "payer_name": {"type": "string"},
@@ -1276,7 +1500,8 @@ fn schema_json() -> Value {
                 "payer_ein": {"type": "string", "optional": true},
                 "nonemployee_compensation": {"type": "money_cents_string", "form": "1099-NEC Box 1"},
                 "federal_withholding": {"type": "money_cents_string", "form": "1099-NEC Box 4", "default": "0"},
-                "expenses": {"type": "money_cents_string", "default": "0", "note": "total Schedule C expenses for this engagement, from the filer's records — not a 1099-NEC box; v1 takes one total per engagement (docs/KNOWN_LIMITS.md)"}
+                "expenses": {"type": "money_cents_string", "default": "0", "note": "total Schedule C expenses for this engagement, from the filer's records — not a 1099-NEC box; v1 takes one total per engagement (docs/KNOWN_LIMITS.md)"},
+                "state_withholding": {"type": "money_cents_string", "optional": true, "form": "1099-NEC Box 5", "note": "summed into Form 540 line 71 when a CA state block is set. Omit only when untranscribed; record \"0\" explicitly when the 1099-NEC reports no state tax withheld — a missing box makes line 71 incomplete, never zero"}
             }
         }
     })
@@ -1289,7 +1514,8 @@ fn node_templates() -> Vec<(String, bool, Value)> {
             true,
             json!({"employer_ein": "12-3456789", "wages": "0", "federal_withholding": "0",
                    "social_security_wages": "0", "social_security_tax": "0",
-                   "medicare_wages": "0", "medicare_tax": "0"}),
+                   "medicare_wages": "0", "medicare_tax": "0",
+                   "state_wages": "0", "state_withholding": "0"}),
         ),
         (
             "1099-int".to_string(),
@@ -1309,7 +1535,7 @@ fn node_templates() -> Vec<(String, bool, Value)> {
         (
             "1099-nec".to_string(),
             true,
-            json!({"payer_name": "", "nonemployee_compensation": "0", "federal_withholding": "0", "expenses": "0"}),
+            json!({"payer_name": "", "nonemployee_compensation": "0", "federal_withholding": "0", "expenses": "0", "state_withholding": "0"}),
         ),
         (
             "dependent".to_string(),
@@ -1408,6 +1634,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 entries: Vec::new(),
                 other_income,
                 taxpayer: None,
+                state: None,
             };
             save_return(&cli.store, &ret)?;
             let value = json!({"returnId": ret.id, "year": ret.year, "status": ret.status});
@@ -1433,6 +1660,15 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 }
                 for (line, fr) in &view.lines {
                     s.push_str(&format!("  line {:>3}: {}\n", line, line_json(fr)));
+                }
+                if let Some(sv) = &view.state {
+                    s.push_str(&format!(
+                        "  state {} ({}) — complete: {}\n",
+                        sv.block.state, sv.block.residency, sv.complete
+                    ));
+                    for (line, fr) in &sv.lines {
+                        s.push_str(&format!("  CA line {:>3}: {}\n", line, line_json(fr)));
+                    }
                 }
                 for w in &view.warnings {
                     s.push_str(&format!("  warning: {w}\n"));
@@ -1573,6 +1809,26 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     "message": "return has both W-2 and 1099-NEC entries: the Schedule SE Social Security wage-base room is figured from total W-2 Box 1 wages as a proxy for Box 3 Social Security wages (Schedule SE line 8a). The two differ when Box 1 is reduced by pre-tax amounts that remain Social Security wages (e.g. 401(k) deferrals), in which case the SE tax's Social Security part can be overstated; Box 3, even when transcribed, is not used for this in v1 (docs/KNOWN_LIMITS.md)",
                     "field": null, "entry": null}));
             }
+            // State findings (California in v1): the engine's
+            // findings over the computed state section, plus the
+            // selection check itself.
+            if let Some(block) = &ret.state {
+                match block.validated() {
+                    Err(e) => {
+                        findings.push(json!({"code": "ca_state_unsupported", "severity": "error",
+                            "message": e, "field": null, "entry": null}));
+                    }
+                    Ok(()) => {
+                        let view = compute_view(&ret, &params)?;
+                        if let Some(sv) = &view.state {
+                            for f in &sv.findings {
+                                findings.push(json!({"code": f.code, "severity": f.severity,
+                                    "message": f.message, "field": null, "entry": f.entry}));
+                            }
+                        }
+                    }
+                }
+            }
             let valid = !findings.iter().any(|f| f["severity"] == "error");
             let human = findings
                 .iter()
@@ -1625,6 +1881,52 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 json!({"returnId": ret.id, "taxpayer": masked}),
                 human,
             ))
+        }
+        ReturnAction::SetState {
+            r#return,
+            state,
+            file,
+        } => {
+            let text = std::fs::read_to_string(&file).map_err(io_err)?;
+            let block: StateBlock = serde_json::from_str(&text).map_err(json_err)?;
+            if let Some(s) = &state {
+                if s != &block.state {
+                    return Err(CliErr::new(
+                        "invalid_input",
+                        format!(
+                            "--state {s} does not match the state \"{}\" in {}",
+                            block.state,
+                            file.display()
+                        ),
+                    ));
+                }
+            }
+            block
+                .validated()
+                .map_err(|e| CliErr::new("unsupported_state", e))?;
+            let mut ret = load_return(&cli.store, &r#return)?;
+            let replaced = ret.state.is_some();
+            ret.state = Some(block.clone());
+            save_return(&cli.store, &ret)?;
+            let mut value = json!({
+                "returnId": ret.id,
+                "state": {"state": block.state, "residency": block.residency},
+            });
+            if replaced {
+                value["replaced"] = json!(true);
+            }
+            let human = format!(
+                "state selection stored on return {}: {} ({}){}",
+                ret.id,
+                block.state,
+                block.residency,
+                if replaced {
+                    " (replaced previous selection)"
+                } else {
+                    ""
+                },
+            );
+            Ok(Out::ok(value, human))
         }
         ReturnAction::SetOtherIncome {
             r#return,
@@ -1819,6 +2121,7 @@ fn form_input(ret: &StoredReturn) -> CResult<Form1040Input> {
         f1099_necs: stored_necs(ret)?,
         dependents: stored_dependents(ret)?,
         identity: ret.taxpayer.clone(),
+        state: ret.state.clone(),
     })
 }
 
@@ -2385,7 +2688,159 @@ fn line16_derivation(method: Option<&str>) -> String {
     }
 }
 
-fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) -> CResult<Out> {
+/// `tax explain --state CA --line <n>`: explain a line of the
+/// computed state section (Form 540 printed line numbers, plus the
+/// internal `caleitc_*` keys). The state counterpart of
+/// [`cmd_explain`]; the return must have the state selected.
+fn cmd_explain_state(
+    cli: &Cli,
+    id: &str,
+    line: Option<String>,
+    fact: Option<String>,
+    state: &str,
+) -> CResult<Out> {
+    let fact_map: &[(&str, &str)] = &[
+        ("ca_personal_exemptions", "7"),
+        ("ca_dependent_exemptions", "10"),
+        ("ca_total_exemptions", "11"),
+        ("federal_agi", "13"),
+        ("ca_subtractions", "14"),
+        ("ca_additions", "16"),
+        ("ca_agi", "17"),
+        ("ca_standard_deduction", "18"),
+        ("ca_taxable_income", "19"),
+        ("ca_tax", "31"),
+        ("exemption_credits", "32"),
+        ("ca_tax_after_credits", "33"),
+        ("ca_total_tax", "64"),
+        ("ca_withholding", "71"),
+        ("caleitc", "75"),
+        ("ca_eitc", "75"),
+        ("caleitc_earned_income", "caleitc_earned_income"),
+        ("caleitc_qualifying_children", "caleitc_qualifying_children"),
+        ("young_child_tax_credit", "76"),
+        ("yctc", "76"),
+        ("ca_total_payments", "78"),
+        ("ca_refund", "97"),
+        ("ca_overpaid", "97"),
+        ("ca_amount_owed", "100"),
+        ("ca_tax_due", "100"),
+    ];
+    let line_no = if let Some(l) = &line {
+        l.clone()
+    } else if let Some(f) = &fact {
+        fact_map
+            .iter()
+            .find(|(name, _)| *name == f.as_str())
+            .map(|(_, l)| l.to_string())
+            .ok_or_else(|| CliErr::new("unknown_fact", format!("unknown state fact '{f}'")))?
+    } else {
+        return Err(CliErr::new("invalid_input", "provide --line or --fact"));
+    };
+
+    let params = TaxParams::load_2025().map_err(json_err)?;
+    let ret = load_return(&cli.store, id)?;
+    let block = ret.state.as_ref().ok_or_else(|| {
+        CliErr::new(
+            "state_not_selected",
+            format!(
+                "return {} has no state selection; select one with \
+                 `tax return set-state --return {} --state {state} --file state.json`",
+                ret.id, ret.id
+            ),
+        )
+    })?;
+    if !block.state.eq_ignore_ascii_case(state) {
+        return Err(CliErr::new(
+            "state_not_selected",
+            format!(
+                "return {} has state {} selected, not {state}",
+                ret.id, block.state
+            ),
+        ));
+    }
+    block
+        .validated()
+        .map_err(|e| CliErr::new("unsupported_state", e))?;
+    let view = compute_view(&ret, &params)?;
+    let sv = view.state.as_ref().ok_or_else(|| {
+        CliErr::new(
+            "state_not_selected",
+            "the return has no computed state section",
+        )
+    })?;
+    let fr = sv.lines.get(&line_no).cloned().ok_or_else(|| {
+        CliErr::new(
+            "unsupported_line",
+            format!("California line {line_no} is not computed in v1"),
+        )
+    })?;
+
+    let (derivation, citation) = match line_no.as_str() {
+        "7" => ("personal exemption credits: the exemption count for the filing status (1, or 2 if married filing jointly — reduced by the line 6 rule when the taxpayer can be claimed as a dependent) times $153".to_string(), "Form 540 (2025), line 7; 2025 Form 540 booklet, line 7 instructions".to_string()),
+        "8" => ("blind exemption credits: the number of blind filers (taxpayer, plus spouse for MFJ/MFS) in the stored identity times $153; zero without an identity".to_string(), "Form 540 (2025), line 8".to_string()),
+        "9" => ("senior exemption credits: the number of filers (taxpayer, plus spouse for MFJ/MFS) who are 65 or older (born before January 2, 1961) in the stored identity times $153; zero without an identity".to_string(), "Form 540 (2025), line 9".to_string()),
+        "10" => ("dependent exemption credits: the number of stored dependent entries times $475".to_string(), "Form 540 (2025), line 10".to_string()),
+        "11" => ("total exemption credits before the AGI limitation: lines 7 + 8 + 9 + 10".to_string(), "Form 540 (2025), line 11".to_string()),
+        "13" => ("federal adjusted gross income: the computed federal Form 1040 line 11, carried over as the California starting point".to_string(), "Form 540 (2025), line 13".to_string()),
+        "14" => ("California subtractions: the total of Schedule CA (540), Part I, line 27, column B. In v1 the adjustments are scoped to the facts the federal engine produces, which are all California-conforming for the v1 persona, so this is a stated zero (docs/KNOWN_LIMITS.md)".to_string(), "Form 540 (2025), line 14; Schedule CA (540), Part I".to_string()),
+        "15" => ("line 13 minus line 14".to_string(), "Form 540 (2025), line 15".to_string()),
+        "16" => ("California additions: the total of Schedule CA (540), Part I, line 27, column C. A stated zero in v1 for the same scoping as line 14 — in particular the federal deductible part of self-employment tax is NOT added back, because California conforms to it for a taxpayer who is self-employed for both federal and California purposes (the Schedule CA Section C line 15 adjustment applies only to a federal-contractor / California-employee classification difference, which v1 does not model)".to_string(), "Form 540 (2025), line 16; 2025 Instructions for Schedule CA (540), Part I, Section C, line 15".to_string()),
+        "17" => ("California adjusted gross income: line 15 plus line 16".to_string(), "Form 540 (2025), line 17".to_string()),
+        "18" => ("the California standard deduction for the filing status from params/2025-ca.json (v1 always takes the standard deduction; California itemized deductions via Schedule CA Part II are not computed). California gives no addition for age 65 or blindness here — those facts earn exemption credits on lines 8/9 instead".to_string(), "Form 540 (2025), line 18; 2025 Form 540 booklet, California Standard Deduction Chart for Most People".to_string()),
+        "19" => ("line 17 minus line 18, floored at zero".to_string(), "Form 540 (2025), line 19".to_string()),
+        "31" => (match sv.line31_method.as_deref() {
+            Some("ca_rate_schedule") => "tax from the 2025 California Tax Rate Schedules (params/2025-ca.json): line 19 is over $100,000, so the schedules apply — Schedule X (single / married filing separately), Y (married filing jointly), or Z (head of household)".to_string(),
+            _ => "tax from the 2025 California Tax Table (params/2025-ca-tax-table.json, extracted from the official booklet): line 19 is $100,000 or less, so the table applies".to_string(),
+        }, "Form 540 (2025), line 31; 2025 Form 540 booklet, 2025 California Tax Table / Tax Rate Schedules".to_string()),
+        "32" => ("exemption credits after the AGI Limitation Worksheet: line 11, reduced when federal AGI (line 13) exceeds the status threshold ($252,203 single/MFS, $504,411 MFJ, $378,310 HoH) — the excess divided by $2,500 ($1,250 MFS), rounded up, times $6 per exemption, applied to the lines 7-9 group and the line 10 dependents separately, each floored at zero".to_string(), "Form 540 (2025), line 32; 2025 Form 540 booklet, AGI Limitation Worksheet".to_string()),
+        "33" => ("line 31 minus line 32, floored at zero (exemption credits are nonrefundable)".to_string(), "Form 540 (2025), line 33".to_string()),
+        "34" => ("tax from Schedule G-1 / form FTB 5870A (lump-sum distributions): not computed in v1, a stated zero".to_string(), "Form 540 (2025), line 34".to_string()),
+        "35" => ("line 33 plus line 34".to_string(), "Form 540 (2025), line 35".to_string()),
+        "48" => ("line 35 minus the total nonrefundable credits of lines 40-47 (child/dependent care, other named credits, the Nonrefundable Renter's Credit) — none are computed in v1, so line 48 equals line 35".to_string(), "Form 540 (2025), line 48".to_string()),
+        "62" => ("Behavioral Health Services Tax: 1% of line 19 over $1,000,000 (figured in whole dollars on the printed worksheet; the engine keeps cents)".to_string(), "Form 540 (2025), line 62; 2025 Form 540 booklet, line 62 instructions".to_string()),
+        "64" => ("total tax: line 48 plus line 62 (lines 61 AMT and 63 other taxes are not computed in v1)".to_string(), "Form 540 (2025), line 64".to_string()),
+        "71" => ("California income tax withheld: the sum of W-2 box 17 over all stored W-2 entries plus 1099-NEC box 5 over all stored 1099-NEC entries. Incomplete — never zero-filled — when any entry's state withholding box was not transcribed".to_string(), "Form 540 (2025), line 71".to_string()),
+        "75" => ("the California earned income tax credit (form FTB 3514): gates in booklet order — no credit for married filing separately in v1, federal AGI under $32,901, investment income at most $4,814, and with no qualifying children the filer must be at least 18 (born on or before January 1, 2008). Earned income (internal key caleitc_earned_income) is W-2 box 16 California wages plus business income (Schedule C net minus the deductible part of SE tax, FTB 3514 Worksheet 3); the credit is the California EITC Table amount for earned income, or the smaller of the earned-income and AGI table amounts when AGI differs and is at or above the Part II threshold ($4,661 / $6,998 / $9,823 by child count)".to_string(), "Form 540 (2025), line 75; 2025 FTB 3514 booklet, Steps 1-6 and the California EITC Worksheet".to_string()),
+        "caleitc_earned_income" => ("California earned income for the California EITC (FTB 3514 line 19): W-2 box 16 California wages (line 13) plus business income (line 18, from Worksheet 3: federal Schedule 1 line 3 business income minus the deductible part of self-employment tax). Incomplete when any W-2's box 16 was not transcribed (internal key)".to_string(), "FTB 3514 (2025), Step 5, lines 13-19 and Worksheet 3 (internal key)".to_string()),
+        "caleitc_qualifying_children" => ("the number of stored dependents who are qualifying children for the California EITC: the federal EIC child tests (relationship, age, residency — lived with the taxpayer more than half the year, which the full-year-resident selection stands in for as lived in California — and an SSN or ITIN stored); expressed in the lines map as count x $1.00, not an amount of money (internal key)".to_string(), "FTB 3514 (2025), Step 3 (internal key)".to_string()),
+        "76" => ("the Young Child Tax Credit (form FTB 3514 Part VII): requires having been allowed the California EITC and a qualifying child younger than six years old as of the last day of the taxable year. $1,189 per return (not per child), reduced by $21.71 for every $100 (two decimal places, not rounded) of California earned income over $27,425; a result between $0 and $1 is entered as $1, over $1 rounded to the nearest dollar. The earned-income-of-zero-or-less expansion (Step 8) is not computed in v1 — line 76 is Incomplete when it may apply".to_string(), "Form 540 (2025), line 76; 2025 FTB 3514 booklet, Step 8 and Part VII, lines 23-28".to_string()),
+        "78" => ("total payments: line 71 (withholding) + line 75 (California EITC) + line 76 (Young Child Tax Credit) in v1; lines 72-74 (estimated payments, real-estate withholding, film credit) and 77 (Foster Youth Tax Credit) are not computed".to_string(), "Form 540 (2025), line 78".to_string()),
+        "97" => ("overpaid tax: line 78 minus line 64 when payments exceed total tax, else 0. Lines 91-95 (use tax, Individual Shared Responsibility) are not modeled in v1 and are treated as zero".to_string(), "Form 540 (2025), line 97".to_string()),
+        "100" => ("tax due: line 64 minus line 78 when total tax exceeds payments, else 0. Lines 91-95 (use tax, Individual Shared Responsibility) are not modeled in v1 and are treated as zero".to_string(), "Form 540 (2025), line 100".to_string()),
+        _ => ("computed directly from stored inputs".to_string(), "Form 540 (2025) and its instructions".to_string()),
+    };
+
+    let mut value = json!({
+        "returnId": ret.id,
+        "state": block.state,
+        "residency": block.residency,
+        "line": line_no,
+        "result": line_json(&fr),
+        "derivation": derivation,
+        "citation": citation,
+    });
+    if line_no == "31" {
+        value["line31_method"] = json!(sv.line31_method);
+    }
+    let human = format!(
+        "{} line {line_no}: {} — {derivation} [{citation}]",
+        block.state,
+        line_json(&fr)
+    );
+    Ok(Out::ok(value, human))
+}
+
+fn cmd_explain(
+    cli: &Cli,
+    id: &str,
+    line: Option<String>,
+    fact: Option<String>,
+    state: Option<String>,
+) -> CResult<Out> {
+    if let Some(state) = &state {
+        return cmd_explain_state(cli, id, line, fact, state);
+    }
     let fact_map: &[(&str, &str)] = &[
         ("wages", "1a"),
         ("tax_exempt_interest", "2a"),
@@ -2592,6 +3047,7 @@ fn run(cli: &Cli) -> CResult<Out> {
             | ReturnAction::Get { .. }
             | ReturnAction::Validate { .. }
             | ReturnAction::SetIdentity { .. }
+            | ReturnAction::SetState { .. }
             | ReturnAction::SetOtherIncome { .. }
             | ReturnAction::List
             | ReturnAction::Export { .. } => {
@@ -2626,7 +3082,8 @@ fn run(cli: &Cli) -> CResult<Out> {
             r#return,
             line,
             fact,
-        } => cmd_explain(cli, r#return, line.clone(), fact.clone()),
+            state,
+        } => cmd_explain(cli, r#return, line.clone(), fact.clone(), state.clone()),
         Commands::Skills { action } => match action {
             SkillsAction::List => cmd_skills(cli, SkillsAction::List),
         },
@@ -2667,6 +3124,18 @@ fn cmd_return_ref(cli: &Cli, action: &ReturnAction) -> CResult<Out> {
             cli,
             ReturnAction::SetIdentity {
                 r#return: r#return.clone(),
+                file: file.clone(),
+            },
+        ),
+        ReturnAction::SetState {
+            r#return,
+            state,
+            file,
+        } => cmd_return(
+            cli,
+            ReturnAction::SetState {
+                r#return: r#return.clone(),
+                state: state.clone(),
                 file: file.clone(),
             },
         ),
@@ -2837,6 +3306,7 @@ mod tests {
                 dividends: Money::ZERO,
             }),
             taxpayer: Some(spike_identity()),
+            state: None,
         };
         let partial = StoredReturn {
             id: "r2025-200-2".to_string(),
@@ -2845,6 +3315,7 @@ mod tests {
             entries: Vec::new(),
             other_income: None,
             taxpayer: None,
+            state: None,
         };
         assert!(save_return(&store, &complete).is_ok());
         assert!(save_return(&store, &partial).is_ok());
@@ -2877,6 +3348,7 @@ mod tests {
             entries: Vec::new(),
             other_income: None,
             taxpayer: None,
+            state: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         // Before: the direct amounts are unrecorded, so the view stays
@@ -2925,6 +3397,7 @@ mod tests {
             entries: Vec::new(),
             other_income: None,
             taxpayer: None,
+            state: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         let (_, replaced) = set_other_income(&store, &ret.id, 10_000, 20_000)
@@ -2953,6 +3426,7 @@ mod tests {
             entries: Vec::new(),
             other_income: None,
             taxpayer: None,
+            state: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         let err = set_other_income(&store, &ret.id, -1, 0).unwrap_err();

@@ -944,6 +944,347 @@ impl EicTable {
     }
 }
 
+// ---------------------------------------------------------------------------
+// California TY2025 parameters and tables (Form 540 / FTB 3514). DATA,
+// extracted and transcribed from the official FTB booklets with a
+// `source` per group -- never from memory. The California engine lives
+// in tax-forms (`ca540`); this crate only carries the data.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaStandardDeduction {
+    pub source: String,
+    pub amounts_cents: HashMap<String, i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaExemptionCredits {
+    pub source: String,
+    /// Form 540 lines 7/8/9 amount (personal, blind, senior): $153.
+    pub personal_cents: i64,
+    /// Form 540 line 10 amount per dependent: $475.
+    pub dependent_cents: i64,
+    /// AGI Limitation Worksheet: federal AGI above which the credits
+    /// phase out, per filing status.
+    pub phaseout_threshold_cents: HashMap<String, i64>,
+    /// Worksheet line d divisor: $2,500 ($1,250 if MFS).
+    pub phaseout_step_cents: i64,
+    pub phaseout_step_mfs_cents: i64,
+    /// Worksheet line e: $6 of reduction per step, per exemption.
+    pub phaseout_per_step_cents: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaBrackets {
+    pub source: String,
+    /// Tax Rate Schedules per filing status (MFS uses Schedule X,
+    /// like single): marginal brackets for taxable income over
+    /// $100,000 (at or below it, the Tax Table applies).
+    pub schedules: HashMap<String, Vec<Bracket>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaBehavioralHealthTax {
+    pub source: String,
+    /// Form 540 line 62: 1% of taxable income over $1,000,000.
+    pub threshold_cents: i64,
+    pub rate_bp: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaEitcParams {
+    pub source: String,
+    /// FTB 3514 Step 1, question a: federal AGI must be LESS than
+    /// this amount ($32,901).
+    pub agi_limit_cents: i64,
+    /// FTB 3514 Step 2, Worksheet 1, line 13: investment income must
+    /// not exceed this amount ($4,814).
+    pub investment_income_limit_cents: i64,
+    /// FTB 3514 Step 6 worksheet, Part II: the AGI lookup is skipped
+    /// when AGI is less than this amount, keyed by number of
+    /// qualifying children ("2" = two or more).
+    pub agi_lookup_threshold_cents: HashMap<String, i64>,
+    /// FTB 3514 Step 4, question b: a filer without a qualifying
+    /// child must be at least 18 at the end of 2025, i.e. born on or
+    /// before this ISO date (the form's own wording).
+    pub childless_born_on_or_before: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaYctcParams {
+    pub source: String,
+    /// FTB 3514 line 24: the maximum credit, $1,189 (per return).
+    pub max_cents: i64,
+    /// Line 25: earned income over this threshold ($27,425) reduces
+    /// the credit.
+    pub phaseout_threshold_cents: i64,
+    /// Lines 26-27: the reduction is $21.71 per $100 (or fraction, to
+    /// two decimal places) of the excess.
+    pub reduction_per_100_dollars_cents: i64,
+    /// Step 8 / line 23a: on the earned-income-of-zero-or-less path,
+    /// total wages must not exceed $35,640.
+    pub zero_earned_income_wage_cap_cents: i64,
+    /// Step 8 / line 23b: on that path, total net losses must not
+    /// exceed $35,640.
+    pub zero_earned_income_net_loss_cap_cents: i64,
+    /// Line 23b: on that path, federal AGI must not exceed $32,900.
+    pub federal_agi_cap_cents: i64,
+}
+
+/// California TY2025 parameters, embedded from `params/2025-ca.json`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CaParams {
+    pub year: u32,
+    pub standard_deduction: CaStandardDeduction,
+    pub exemption_credits: CaExemptionCredits,
+    pub brackets: CaBrackets,
+    pub behavioral_health_services_tax: CaBehavioralHealthTax,
+    pub caleitc: CaEitcParams,
+    pub yctc: CaYctcParams,
+}
+
+impl CaParams {
+    /// TY2025 California parameters, embedded from
+    /// `params/2025-ca.json`.
+    pub fn load_2025() -> Result<CaParams, serde_json::Error> {
+        serde_json::from_str(include_str!("../params/2025-ca.json"))
+    }
+
+    /// Form 540 line 18 standard deduction for most people.
+    pub fn standard_deduction(&self, status: FilingStatus) -> Money {
+        Money::from_cents(
+            *self
+                .standard_deduction
+                .amounts_cents
+                .get(status.as_str())
+                .unwrap_or(&0),
+        )
+    }
+
+    /// AGI Limitation Worksheet line b threshold for the status.
+    pub fn exemption_phaseout_threshold(&self, status: FilingStatus) -> Money {
+        Money::from_cents(
+            *self
+                .exemption_credits
+                .phaseout_threshold_cents
+                .get(status.as_str())
+                .unwrap_or(&i64::MAX),
+        )
+    }
+
+    /// AGI Limitation Worksheet line d divisor ($1,250 if MFS).
+    pub fn exemption_phaseout_step(&self, status: FilingStatus) -> Money {
+        Money::from_cents(if status == FilingStatus::Mfs {
+            self.exemption_credits.phaseout_step_mfs_cents
+        } else {
+            self.exemption_credits.phaseout_step_cents
+        })
+    }
+
+    /// Bracket table in [`bracket_tax`] form (Tax Rate Schedules;
+    /// applies above $100,000 of taxable income).
+    pub fn bracket_table(&self, status: FilingStatus) -> Vec<(Money, u32)> {
+        let Some(brackets) = self.brackets.schedules.get(status.as_str()) else {
+            return Vec::new();
+        };
+        brackets
+            .iter()
+            .map(|b| {
+                (
+                    Money::from_cents(b.up_to_cents.unwrap_or(i64::MAX)),
+                    b.rate_bp,
+                )
+            })
+            .collect()
+    }
+
+    /// FTB 3514 Step 6, Part II AGI-lookup threshold for a number of
+    /// qualifying children (two or more share the "2" bucket).
+    pub fn caleitc_agi_lookup_threshold(&self, children: u32) -> Money {
+        let key = children.min(2).to_string();
+        Money::from_cents(
+            *self
+                .caleitc
+                .agi_lookup_threshold_cents
+                .get(&key)
+                .unwrap_or(&0),
+        )
+    }
+}
+
+/// One row of the California Tax Table: for taxable income in
+/// `[from_dollars, to_dollars)` the tax is the whole-dollar amount.
+/// The printed table's filing-status columns are "1 or 3" (single /
+/// married filing separately), "2 or 5" (married filing jointly), and
+/// "4" (head of household), so MFS shares the single column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaTaxTableRow {
+    pub from_dollars: i64,
+    pub to_dollars: i64,
+    pub single_or_mfs: i64,
+    pub mfj: i64,
+    pub hoh: i64,
+}
+
+impl CaTaxTableRow {
+    pub fn tax(&self, status: FilingStatus) -> i64 {
+        match status {
+            FilingStatus::Single | FilingStatus::Mfs => self.single_or_mfs,
+            FilingStatus::Mfj => self.mfj,
+            FilingStatus::Hoh => self.hoh,
+        }
+    }
+}
+
+/// The TY2025 California Tax Table, embedded from
+/// `params/2025-ca-tax-table.json`.
+#[derive(Debug, Clone)]
+pub struct CaTaxTable {
+    pub year: u32,
+    pub source: String,
+    pub rows: Vec<CaTaxTableRow>,
+}
+
+#[derive(Deserialize)]
+struct CaTaxTableFile {
+    year: u32,
+    source: String,
+    #[allow(dead_code)]
+    unit: String,
+    #[allow(dead_code)]
+    columns: Vec<String>,
+    rows: Vec<[i64; 6]>,
+}
+
+impl CaTaxTable {
+    pub fn load_2025() -> &'static CaTaxTable {
+        static TABLE: std::sync::OnceLock<CaTaxTable> = std::sync::OnceLock::new();
+        TABLE.get_or_init(|| {
+            let file: CaTaxTableFile =
+                serde_json::from_str(include_str!("../params/2025-ca-tax-table.json"))
+                    .expect("bundled 2025-ca-tax-table.json must parse");
+            CaTaxTable {
+                year: file.year,
+                source: file.source,
+                rows: file
+                    .rows
+                    .iter()
+                    .map(|r| CaTaxTableRow {
+                        from_dollars: r[0],
+                        to_dollars: r[1],
+                        single_or_mfs: r[2],
+                        mfj: r[3],
+                        hoh: r[5],
+                    })
+                    .collect(),
+            }
+        })
+    }
+
+    /// Tax Table lookup for a taxable-income amount. The California
+    /// table applies at or below $100,000 of taxable income (the
+    /// booklet directs higher incomes to the Tax Rate Schedules);
+    /// returns `None` above $100,000 or for a negative amount. The
+    /// row is selected by the whole dollars of the amount; taxable
+    /// income of $0 has a printed tax of $0 (the first row starts at
+    /// $1). The returned tax is a whole-dollar amount, as printed.
+    pub fn tax(&self, status: FilingStatus, taxable: Money) -> Option<Money> {
+        if taxable.cents() < 0 {
+            return None;
+        }
+        let dollars = taxable.cents().div_euclid(100);
+        if dollars > 100_000 {
+            return None;
+        }
+        if dollars == 0 {
+            return Some(Money::ZERO);
+        }
+        let idx = self.rows.partition_point(|r| r.to_dollars <= dollars);
+        let row = self.rows.get(idx)?;
+        if row.from_dollars <= dollars && dollars < row.to_dollars {
+            Some(Money::from_cents(row.tax(status) * 100))
+        } else {
+            None
+        }
+    }
+}
+
+/// One row of the California Earned Income Tax Credit Table: for a
+/// lookup amount in `[from_dollars, to_dollars)` the credit is the
+/// whole-dollar amount in the column for the number of qualifying
+/// children (index 0..=3, where 3 means three or more). Unlike the
+/// federal table there is one set of columns for every filing
+/// status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaEitcTableRow {
+    pub from_dollars: i64,
+    pub to_dollars: i64,
+    pub credits: [i64; 4],
+}
+
+/// The TY2025 California EITC Table, embedded from
+/// `params/2025-ca-eitc-table.json`.
+#[derive(Debug, Clone)]
+pub struct CaEitcTable {
+    pub year: u32,
+    pub source: String,
+    pub rows: Vec<CaEitcTableRow>,
+}
+
+#[derive(Deserialize)]
+struct CaEitcTableFile {
+    year: u32,
+    source: String,
+    #[allow(dead_code)]
+    unit: String,
+    #[allow(dead_code)]
+    columns: Vec<String>,
+    rows: Vec<[i64; 6]>,
+}
+
+impl CaEitcTable {
+    pub fn load_2025() -> &'static CaEitcTable {
+        static TABLE: std::sync::OnceLock<CaEitcTable> = std::sync::OnceLock::new();
+        TABLE.get_or_init(|| {
+            let file: CaEitcTableFile =
+                serde_json::from_str(include_str!("../params/2025-ca-eitc-table.json"))
+                    .expect("bundled 2025-ca-eitc-table.json must parse");
+            CaEitcTable {
+                year: file.year,
+                source: file.source,
+                rows: file
+                    .rows
+                    .iter()
+                    .map(|r| CaEitcTableRow {
+                        from_dollars: r[0],
+                        to_dollars: r[1],
+                        credits: [r[2], r[3], r[4], r[5]],
+                    })
+                    .collect(),
+            }
+        })
+    }
+
+    /// EITC Table lookup for an amount (California earned income or
+    /// federal AGI, per the FTB 3514 Step 6 worksheet). The row is
+    /// selected by the whole dollars of the amount (floored). Amounts
+    /// below $1 and at or above the table's last row ($32,901) find
+    /// no row: the credit is zero.
+    pub fn credit(&self, children: u32, amount: Money) -> Money {
+        if amount.cents() < 100 {
+            return Money::ZERO;
+        }
+        let dollars = amount.cents().div_euclid(100);
+        let idx = self.rows.partition_point(|r| r.to_dollars <= dollars);
+        match self.rows.get(idx) {
+            Some(row) if row.from_dollars <= dollars && dollars < row.to_dollars => {
+                Money::from_cents(row.credits[children.min(3) as usize] * 100)
+            }
+            _ => Money::ZERO,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1377,5 +1718,199 @@ mod tests {
         assert_eq!(tax(FilingStatus::Single, 10_000_000), None); // $100,000: table no longer applies
         assert_eq!(tax(FilingStatus::Single, 10_000_100), None);
         assert_eq!(tax(FilingStatus::Single, -100), None);
+    }
+
+    #[test]
+    fn ca_params_2025() {
+        let p = CaParams::load_2025().unwrap();
+        assert_eq!(p.year, 2025);
+        // 2025 Form 540 booklet, Standard Deduction Chart.
+        assert_eq!(p.standard_deduction(FilingStatus::Single).cents(), 570_600);
+        assert_eq!(p.standard_deduction(FilingStatus::Mfs).cents(), 570_600);
+        assert_eq!(p.standard_deduction(FilingStatus::Mfj).cents(), 1_141_200);
+        assert_eq!(p.standard_deduction(FilingStatus::Hoh).cents(), 1_141_200);
+        // Form 540 lines 7-10, printed on the form.
+        assert_eq!(p.exemption_credits.personal_cents, 15_300);
+        assert_eq!(p.exemption_credits.dependent_cents, 47_500);
+        // AGI Limitation Worksheet thresholds.
+        assert_eq!(
+            p.exemption_phaseout_threshold(FilingStatus::Single).cents(),
+            25_220_300
+        );
+        assert_eq!(
+            p.exemption_phaseout_threshold(FilingStatus::Mfj).cents(),
+            50_441_100
+        );
+        assert_eq!(
+            p.exemption_phaseout_threshold(FilingStatus::Hoh).cents(),
+            37_831_000
+        );
+        assert_eq!(
+            p.exemption_phaseout_step(FilingStatus::Single).cents(),
+            250_000
+        );
+        assert_eq!(
+            p.exemption_phaseout_step(FilingStatus::Mfs).cents(),
+            125_000
+        );
+        // FTB 3514 (2025): AGI limit $32,901; investment income $4,814;
+        // Part II AGI-lookup thresholds $4,661 / $6,998 / $9,823.
+        assert_eq!(p.caleitc.agi_limit_cents, 3_290_100);
+        assert_eq!(p.caleitc.investment_income_limit_cents, 481_400);
+        assert_eq!(p.caleitc_agi_lookup_threshold(0).cents(), 466_100);
+        assert_eq!(p.caleitc_agi_lookup_threshold(1).cents(), 699_800);
+        assert_eq!(p.caleitc_agi_lookup_threshold(2).cents(), 982_300);
+        assert_eq!(p.caleitc_agi_lookup_threshold(5).cents(), 982_300);
+        assert_eq!(p.caleitc.childless_born_on_or_before, "2008-01-01");
+        // FTB 3514 Part VII: YCTC $1,189 max, $27,425 threshold,
+        // $21.71 per $100 of excess.
+        assert_eq!(p.yctc.max_cents, 118_900);
+        assert_eq!(p.yctc.phaseout_threshold_cents, 2_742_500);
+        assert_eq!(p.yctc.reduction_per_100_dollars_cents, 2_171);
+        // Form 540 line 62: 1% over $1,000,000.
+        assert_eq!(
+            p.behavioral_health_services_tax.threshold_cents,
+            100_000_000
+        );
+        assert_eq!(p.behavioral_health_services_tax.rate_bp, 100);
+    }
+
+    #[test]
+    fn ca_bracket_tax_matches_printed_schedule_bases() {
+        let p = CaParams::load_2025().unwrap();
+        // Schedule X printed base amounts at each threshold (booklet
+        // p. 75): the cumulative marginal tax.
+        let x = p.bracket_table(FilingStatus::Single);
+        for (income, base_cents) in [
+            (1_107_900, 11_079),
+            (2_626_400, 41_449),
+            (4_145_200, 102_201),
+            (5_754_200, 198_741),
+            (7_272_400, 320_197),
+            (37_147_900, 3_098_619),
+            (44_577_100, 3_863_827),
+            (74_295_300, 7_221_984),
+        ] {
+            assert_eq!(
+                bracket_tax(Money::from_cents(income), &x),
+                Money::from_cents(base_cents),
+                "Schedule X base at {income}"
+            );
+        }
+        // Schedule Y / Z spot bases.
+        let y = p.bracket_table(FilingStatus::Mfj);
+        assert_eq!(
+            bracket_tax(Money::from_cents(14_544_800), &y),
+            Money::from_cents(640_394)
+        );
+        let z = p.bracket_table(FilingStatus::Hoh);
+        assert_eq!(
+            bracket_tax(Money::from_cents(9_899_000), &z),
+            Money::from_cents(361_645)
+        );
+        // MFS files on Schedule X in California.
+        assert_eq!(p.bracket_table(FilingStatus::Mfs), x);
+    }
+
+    #[test]
+    fn ca_tax_table_structure_and_spot_cells() {
+        let table = CaTaxTable::load_2025();
+        assert_eq!(table.year, 2025);
+        // 1,001 rows tile [1, 100001): the first printed row is
+        // "at least $1 but not over $50", rows are $100 wide after
+        // the second, and the last row ends at $100,000 inclusive.
+        assert_eq!(table.rows.len(), 1001);
+        let mut expect = 1;
+        for row in &table.rows {
+            assert_eq!(row.from_dollars, expect, "rows must tile [1, 100001)");
+            expect = row.to_dollars;
+        }
+        assert_eq!(expect, 100_001);
+        for (i, row) in table.rows.iter().enumerate().skip(1) {
+            let prev = &table.rows[i - 1];
+            for s in [
+                FilingStatus::Single,
+                FilingStatus::Mfj,
+                FilingStatus::Mfs,
+                FilingStatus::Hoh,
+            ] {
+                assert!(row.tax(s) >= prev.tax(s), "column {s:?} must not decrease");
+            }
+        }
+        let tax = |s: FilingStatus, dollars: i64| table.tax(s, Money::from_cents(dollars * 100));
+        // Spot cells read off the booklet pages.
+        assert_eq!(tax(FilingStatus::Single, 25), Some(Money::from_cents(0)));
+        assert_eq!(
+            tax(FilingStatus::Single, 6_500),
+            Some(Money::from_cents(6_500))
+        );
+        assert_eq!(
+            tax(FilingStatus::Single, 19_500),
+            Some(Money::from_cents(27_900))
+        );
+        assert_eq!(
+            tax(FilingStatus::Mfj, 19_500),
+            Some(Money::from_cents(19_500))
+        );
+        assert_eq!(
+            tax(FilingStatus::Mfs, 19_500),
+            Some(Money::from_cents(27_900))
+        );
+        assert_eq!(
+            tax(FilingStatus::Single, 33_500),
+            Some(Money::from_cents(70_400))
+        );
+        assert_eq!(
+            tax(FilingStatus::Hoh, 33_500),
+            Some(Money::from_cents(44_800))
+        );
+        // The cell that discriminates the table's midpoint convention
+        // (head of household, row 99,651-99,750): $3,682 as printed.
+        assert_eq!(
+            tax(FilingStatus::Hoh, 99_700),
+            Some(Money::from_cents(368_200))
+        );
+        // The table applies AT $100,000 in California (unlike the
+        // federal table), and not above.
+        assert!(tax(FilingStatus::Single, 100_000).is_some());
+        assert_eq!(tax(FilingStatus::Single, 100_001), None);
+        assert_eq!(tax(FilingStatus::Single, 0), Some(Money::ZERO));
+        assert_eq!(tax(FilingStatus::Single, -5), None);
+    }
+
+    #[test]
+    fn ca_eitc_table_structure_and_spot_cells() {
+        let table = CaEitcTable::load_2025();
+        assert_eq!(table.year, 2025);
+        // 658 rows tile [1, 32901) in $50 steps.
+        assert_eq!(table.rows.len(), 658);
+        let mut expect = 1;
+        for row in &table.rows {
+            assert_eq!(row.from_dollars, expect, "rows must tile [1, 32901)");
+            expect = row.to_dollars;
+        }
+        assert_eq!(expect, 32_901);
+        // Column maxima observed in the printed table.
+        for (kids, max) in [(0, 302), (1, 2_016), (2, 3_339), (3, 3_756)] {
+            assert_eq!(
+                table.rows.iter().map(|r| r.credits[kids]).max(),
+                Some(max),
+                "column maximum, {kids} children"
+            );
+        }
+        let credit = |kids: u32, dollars: i64| table.credit(kids, Money::from_cents(dollars * 100));
+        // Spot cells read off the FTB 3514 booklet pages.
+        assert_eq!(credit(0, 2_025), Money::from_cents(13_200));
+        assert_eq!(credit(1, 2_025), Money::from_cents(58_500));
+        assert_eq!(credit(2, 2_025), Money::from_cents(68_900));
+        assert_eq!(credit(3, 2_025), Money::from_cents(77_500));
+        assert_eq!(credit(0, 4_025), Money::from_cents(26_200));
+        assert_eq!(credit(1, 6_025), Money::from_cents(174_100));
+        assert_eq!(credit(2, 32_875), Money::from_cents(100));
+        // Below $1 and at/above the table top: no row, zero credit.
+        assert_eq!(credit(1, 0), Money::ZERO);
+        assert_eq!(credit(1, 32_901), Money::ZERO);
+        // Children above 3 clamp to the three-or-more column.
+        assert_eq!(credit(6, 2_025), credit(3, 2_025));
     }
 }

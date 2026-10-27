@@ -259,6 +259,8 @@ mod tests {
             medicare_wages: Some(Money::from_cents(5_000_000)),
             // 1.45% of $50,000 = $725.00
             medicare_tax: Some(Money::from_cents(72_500)),
+            state_wages: None,
+            state_withholding: None,
         }
     }
 

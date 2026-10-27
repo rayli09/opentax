@@ -14,7 +14,13 @@ with its source recorded.
 > C / Schedule SE, dependents with the child tax credits via a
 > simplified Schedule 8812, the earned income credit via the EIC
 > Worksheets and the official EIC Table, and the OBBBA enhanced
-> deduction for seniors via Schedule 1-A Part V → line 13b), not a
+> deduction for seniors via Schedule 1-A Part V → line 13b), plus —
+> when a state block is selected with `tax return set-state` — a
+> TY2025 California Form 540 for full-year residents (Schedule CA
+> adjustments scoped to the engine's facts, exemption credits with
+> the AGI limitation, the official CA Tax Table / Rate Schedules,
+> CalEITC and the Young Child Tax Credit; compute only, no CA PDF
+> yet), not a
 > finished tax product. See
 > `docs/KNOWN_LIMITS.md` for exactly what is missing. JSON export,
 > filled-PDF export (amounts, filing status, and the Dependents table

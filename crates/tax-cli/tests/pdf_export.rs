@@ -202,6 +202,8 @@ fn case002_input() -> Form1040Input {
             social_security_tax: None,
             medicare_wages: None,
             medicare_tax: None,
+            state_wages: None,
+            state_withholding: None,
         }],
         interest_income: Money::ZERO,
         ordinary_dividends: Money::ZERO,
@@ -249,6 +251,7 @@ fn case002_input() -> Form1040Input {
         f1099_necs: vec![],
         dependents: vec![],
         identity: None,
+        state: None,
     }
 }
 
@@ -264,6 +267,8 @@ fn case005_input() -> Form1040Input {
             social_security_tax: None,
             medicare_wages: None,
             medicare_tax: None,
+            state_wages: None,
+            state_withholding: None,
         }],
         interest_income: Money::ZERO,
         ordinary_dividends: Money::ZERO,
@@ -276,9 +281,11 @@ fn case005_input() -> Form1040Input {
             nonemployee_compensation: Money::from_cents(2_000_000),
             federal_withholding: Money::ZERO,
             expenses: Money::from_cents(200_000),
+            state_withholding: None,
         }],
         dependents: vec![],
         identity: None,
+        state: None,
     }
 }
 

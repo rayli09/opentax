@@ -13,11 +13,36 @@ description: Preparation skill for opentax. Use when facts/documents are entered
      `"state": "incomplete"` are **missing facts, not zeros** — list them
      for the user and go back to tax-intake/tax-ingest for what's missing;
      never present a total as final while the return is incomplete.
+   - **State section**: when the return has a state block (intake step
+     7), the output gains a top-level `"state"` object (California
+     Form 540 in v1) with its own `lines`, `complete`, `incomplete`,
+     and `notes`. Present it after the federal lines, keyed by the
+     **540's printed line numbers** (they are a different form — never
+     blend them into the federal list): CA AGI (17), taxable income
+     (19), tax (31 — the output names the method as `line31_method`,
+     `ca_tax_table` or `ca_rate_schedule`), exemption credits after
+     the AGI limitation (32), total tax (64), withholding (71),
+     CalEITC (75), Young Child Tax Credit (76), and the refund (97) /
+     amount owed (100). The return's overall `complete` is false when
+     either side is incomplete — say which side, and why, using the
+     state section's own `incomplete` list.
 3. Explain any line the user questions with
    `tax explain --return <id> --line <n>` and quote its derivation and
-   citation. Do not improvise an explanation the CLI did not produce.
+   citation. For a California line add `--state CA`
+   (`tax explain --return <id> --state CA --line 31`) — the return
+   must have the CA block stored, and the line numbers are the 540's.
+   Do not improvise an explanation the CLI did not produce.
 4. Validate: `tax return validate --return <id>`. Surface **all**
-   findings, grouped by severity. Errors block export-as-final.
+   findings, grouped by severity. Errors block export-as-final. With a
+   state block set, validate also reports the California findings —
+   surface them with the federal ones: `ca_state_withholding_missing`
+   (a W-2 Box 17 or 1099-NEC Box 5 was never transcribed; names the
+   entry — go back to intake and record the box, or `"0"` when the
+   form reports none), `ca_wages_box16_missing` (CalEITC needs W-2
+   Box 16), `caleitc_mfs`, `caleitc_ssn_unverified`,
+   `yctc_zero_earned_income_path` (the YCTC zero-earned-income
+   expansion is not computed in v1 — line 76 is honestly incomplete),
+   and the info finding `ca_nec_classification_not_modeled`.
 5. Export the artifact: `tax return export --return <id> --type json`,
    a filled Form 1040 PDF:
    `tax return export --return <id> --type pdf --template <blank TY2025 f1040.pdf> --out <file>`,
@@ -55,7 +80,11 @@ description: Preparation skill for opentax. Use when facts/documents are entered
    docs/KNOWN_LIMITS.md (Filing) for the exact scope and caveats.
 6. Present a closing summary: refund/owed line values (34/37) quoted from
    engine output, completeness status, open findings, and the exported
-   file path. Then offer tax-reviewer (independent check) and
+   file path. With a state block, add the California refund/owed
+   (state lines 97/100) quoted from the state section. Note the PDF
+   and packet exports are **federal artifacts only** — no Form 540
+   PDF exists yet; the California figures are presented from `get`,
+   not exported. Then offer tax-reviewer (independent check) and
    tax-filing-guide (how filing works) as separate next steps.
 
 ## Iron rules
@@ -70,7 +99,22 @@ v1 computes a TY2025 Form 1040 slice from W-2, 1099-INT, 1099-DIV,
 1099-B, and 1099-NEC entries, plus stored dependents with the child
 credits, the earned income credit, and — from the stored identity —
 the Schedule 1-A Part V enhanced deduction for seniors on line 13b
-(see `docs/KNOWN_LIMITS.md`). When a senior deduction applies,
+(see `docs/KNOWN_LIMITS.md`). When a state block is stored it also
+computes the TY2025 California Form 540 for a full-year resident:
+federal AGI carried through scoped Schedule CA adjustments, the CA
+standard deduction, exemption credits (with the high-AGI limitation),
+the CA Tax Table / Rate Schedules, withholding from W-2 Box 17 and
+1099-NEC Box 5, the CalEITC (form FTB 3514 logic, earned income from
+W-2 Box 16), and the Young Child Tax Credit — scope and exclusions
+(no 540NR, no renter's credit, no other credits) in the California
+section of `docs/KNOWN_LIMITS.md`. When the California section
+computes a CalEITC, present its chain like the federal EIC's: the
+qualifying-child count (internal key `caleitc_qualifying_children`),
+the earned income (internal key `caleitc_earned_income`), and line 75;
+when it is zero, the state section's notes name the gate that decided
+it (MFS, the $32,901 AGI limit, the $4,814 investment-income limit,
+the childless age test) — quote them rather than letting a zero pass
+silently. When a senior deduction applies,
 present it explicitly: the eligible-person count and per-person
 amount (Schedule 1-A line 35, after the 6% MAGI phaseout) on
 line 13b, and total deductions on line 14 (= line 12 + line 13b);

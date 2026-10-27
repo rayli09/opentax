@@ -9,9 +9,11 @@ use std::collections::BTreeMap;
 pub use tax_core::FilingStatus;
 use tax_core::{FactResult, Money, TaxParams};
 
+pub mod ca540;
 pub mod mef;
 pub mod packet;
 pub mod worksheets;
+pub use ca540::{compute_ca540, CaComputed, CaEitc, CaFinding};
 pub use worksheets::{
     capital_loss_carryover, classify_dependent, classify_eic_child, combine_schedule_d,
     deductible_part_of_se_tax, earned_income_credit, eic_age_test, eic_childless_age_outcome,
@@ -41,6 +43,21 @@ pub struct W2Input {
     /// Box 6: Medicare tax withheld.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub medicare_tax: Option<Money>,
+    /// Box 16: state wages, tips, etc. Optional federally; the
+    /// California engine needs it (FTB 3514 line 13 reads California
+    /// earned income from W-2 box 16, not box 1). Absent = not
+    /// transcribed, NOT zero: a California section that needs it
+    /// reports the CalEITC `Incomplete` (docs/KNOWN_LIMITS.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_wages: Option<Money>,
+    /// Box 17: state income tax withheld. Optional federally; the
+    /// California engine sums it into Form 540 line 71. Absent = not
+    /// transcribed, NOT zero — record `"0"` explicitly when the W-2
+    /// reports no state withholding. A missing box 17 makes the
+    /// California withholding line `Incomplete` when a state block is
+    /// set (the missing ≠ 0 doctrine).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_withholding: Option<Money>,
 }
 
 /// One 1099-INT (Interest Income). Money = cents.
@@ -175,6 +192,13 @@ pub struct I1099NecInput {
     /// Total Schedule C expenses for this engagement (not a 1099-NEC box).
     #[serde(default)]
     pub expenses: Money,
+    /// Box 5: state tax withheld. The California engine sums it into
+    /// Form 540 line 71. Absent = not transcribed, NOT zero — record
+    /// `"0"` explicitly when the payer withheld no state tax. A
+    /// missing box 5 makes the California withholding line
+    /// `Incomplete` when a state block is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_withholding: Option<Money>,
 }
 
 impl I1099NecInput {
@@ -543,6 +567,48 @@ pub struct Form1040Input {
     /// reported skipped on export.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<TaxpayerIdentity>,
+    /// State return selection (optional): when set, the California
+    /// engine ([`ca540::compute_ca540`]) computes the state section
+    /// alongside the federal return. The federal computation ignores
+    /// it entirely, so a federal-only return computes exactly as
+    /// before. Set with `tax return set-state`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<StateBlock>,
+}
+
+/// A state return selection: which state's return to compute, and the
+/// filer's residency in it. Stored on the return (`tax return
+/// set-state`) and carried in golden-case inputs. v1 supports exactly
+/// one combination — California, full-year resident; anything else is
+/// an explicit error at set/compute time, never a silent fallback
+/// (Form 540NR and part-year returns are not implemented).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateBlock {
+    /// State code, e.g. `"CA"`.
+    pub state: String,
+    /// Residency: `"full_year"` in v1.
+    pub residency: String,
+}
+
+impl StateBlock {
+    /// The only state v1 computes.
+    pub const SUPPORTED_STATE: &'static str = "CA";
+    /// The only residency v1 computes.
+    pub const SUPPORTED_RESIDENCY: &'static str = "full_year";
+
+    /// Validate the selection against what v1 implements.
+    pub fn validated(&self) -> Result<(), String> {
+        if self.state == Self::SUPPORTED_STATE && self.residency == Self::SUPPORTED_RESIDENCY {
+            Ok(())
+        } else {
+            Err(format!(
+                "unsupported state selection: state={:?}, residency={:?}; v1 computes only \
+                 state \"CA\" with residency \"full_year\" (Form 540, full-year resident) — \
+                 other states, Form 540NR, and part-year residency are not implemented",
+                self.state, self.residency
+            ))
+        }
+    }
 }
 
 /// A computed return: line number (Form 1040 numbering) → fact result.
@@ -1677,6 +1743,8 @@ mod tests {
                 social_security_tax: None,
                 medicare_wages: None,
                 medicare_tax: None,
+                state_wages: None,
+                state_withholding: None,
             }],
             interest_income: Money::ZERO,
             ordinary_dividends: Money::ZERO,
@@ -1686,6 +1754,7 @@ mod tests {
             f1099_necs: vec![],
             dependents: vec![],
             identity: None,
+            state: None,
         }
     }
 
@@ -1941,6 +2010,7 @@ mod tests {
             nonemployee_compensation: Money::from_cents(2_000_000),
             federal_withholding: Money::ZERO,
             expenses: Money::from_cents(200_000),
+            state_withholding: None,
         }];
         input
     }
@@ -2009,6 +2079,7 @@ mod tests {
             nonemployee_compensation: Money::from_cents(500_000),
             federal_withholding: Money::ZERO,
             expenses: Money::from_cents(800_000),
+            state_withholding: None,
         }];
         let r = compute_1040(&input, &params);
         assert!(r.complete);
@@ -2033,6 +2104,7 @@ mod tests {
                 nonemployee_compensation: Money::from_cents(1_000_000),
                 federal_withholding: Money::from_cents(10_000),
                 expenses: Money::from_cents(100_000),
+                state_withholding: None,
             },
             I1099NecInput {
                 payer_name: "Client B".into(),
@@ -2040,6 +2112,7 @@ mod tests {
                 nonemployee_compensation: Money::from_cents(500_000),
                 federal_withholding: Money::ZERO,
                 expenses: Money::from_cents(50_000),
+                state_withholding: None,
             },
         ];
         let r = compute_1040(&input, &params);
