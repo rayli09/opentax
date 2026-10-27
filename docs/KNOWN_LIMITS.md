@@ -374,13 +374,83 @@ This list is the contract: anything not listed as working is not claimed.
   credits).
   Lines 8, 10, and 23 are exported too (geometrically verified like the
   rest: line 8 = f1_72, line 10 = f1_74 — on page 1, between lines 9
-  and 11a — and line 23 = f2_15). Schedules are not exported. An
+  and 11a — and line 23 = f2_15). An
   incomplete return is refused (`return_incomplete`, no file written).
+- *Filing packet export* is implemented:
+  `tax return export --return <id> --type packet --forms-dir <dir>
+  --out-dir <dir>` writes the filled Form 1040 (the `--type pdf` path
+  above, with the template taken from the forms dir) plus every
+  applicable schedule, each filled through the same audited backend
+  from its own geometrically verified map
+  (`crates/tax-forms/forms/*-2025-field-map.json`, same derivation
+  method as the 1040 map), and a `manifest.json` reporting every form
+  as `filled`, `not_applicable`, or `missing_template` — a form whose
+  inputs exist but whose template is absent from `--forms-dir` is a
+  loud manifest entry, never a silent skip. Template convention: the
+  blank TY2025 PDFs live in `--forms-dir` under the packet's canonical
+  names (`f1040.pdf`, `f1040sd.pdf`, `f8949.pdf`, `f1040s1.pdf`,
+  `f1040s2.pdf`, `f1040sc.pdf`, `f1040sse.pdf`, `f10408812.pdf` — the
+  IRS publishes Schedule 8812 as `f1040s8.pdf` — and `f1040s1a.pdf`);
+  one `f1040sc.pdf` template serves every Schedule C. An incomplete
+  return is refused, like the PDF export. Acceptance:
+  `scripts/packet_acceptance.py` builds the golden returns 002 / 005 /
+  009 / 010 through the CLI, exports packets, and reads the filled
+  fields back with pypdf. Packet scope and simplifications:
+  - Schedule D + Form 8949: every stored 1099-B transaction is listed
+    on Form 8949. v1 treats all entries as basis-reported (the input
+    carries no basis-reported flag): short-term → Form 8949 Part I
+    Box A, long-term → Part II Box D, so the totals land on Schedule D
+    lines **1b/8b** — the printed TY2025 routing for 8949-reported
+    transactions — not the 1a/8a aggregate shortcut, which is only for
+    transactions NOT listed on Form 8949. Amounts and lines 7/15/16
+    are identical either way. Schedule D lines 6/14 (prior-year
+    carryovers in) stay blank — carryovers are computed out, not
+    consumed, in v1; line 13 (capital gain distributions) stays blank
+    (not ingested); lines 18/19 (28% / §1250 worksheets) stay blank
+    (out of scope) and line 20 is answered on that basis; the QOF
+    question stays unanswered (not modeled).
+  - Form 8949's TY2025 fillable has **11 transaction rows per part**
+    (not 14). A (term × box) group with more rows fills the first 11;
+    the overflow is reported in the manifest notes and the page totals
+    cover the listed rows only (Schedule D still carries the full
+    engine totals). Continuation pages are out of scope — an
+    overflowing packet is NOT complete for filing. Columns (b)/(c)
+    (dates) and (f) (adjustment code) fill only when the transaction
+    stored them (`date_acquired` / `date_sold` / `adjustment_code` on
+    the 1099-B entry); blanks are noted in the manifest.
+  - Schedule C: one per 1099-NEC engagement; expenses are the single
+    stored aggregate, listed as one Part V row, totaled on line 48,
+    and carried to line **27b** (TY2025 line 27a is the Form 7205
+    deduction). Header boxes A/B (principal business / code), E
+    (address), F (accounting method), G/H/I/J stay blank (not
+    modeled) and are flagged in the manifest notes; a loss-making
+    Schedule C still needs one line 32 at-risk box checked by hand.
+  - Schedule SE: line 8a takes the engine's W-2 Box 1 wage total as
+    the proxy for Box 3 Social Security wages (the return stores no
+    Box 3 total; same proxy as the `nec_ss_wage_proxy` validation
+    finding). The engine does not apply the form's $400 net-earnings
+    filing threshold; when it would matter, the manifest says so.
+    Line 7's wage base is pre-printed on the TY2025 form (no field).
+  - Schedule 8812: Part I and Part II-A are filled; **Part II-B is
+    not implemented** (lines 21–26 blank) — when line 16b is $5,100
+    or more and line 20 is less than line 17, the Part II-A amount on
+    line 27 can understate the ACTC, and the manifest notes the
+    routing.
+  - Schedule 1-A: Parts I (MAGI), V (seniors), and VI (total) are
+    filled when a senior deduction applies. Parts II–IV (tips /
+    overtime / car loan interest) stay blank — those deductions are
+    not modeled at all in v1, so no return can need them in the
+    packet.
+  - An internal `schedules` view (per-form applicability and the
+    internal schedule values, integer cents) is included in the
+    compute output (`tax return get`, JSON export, packet export);
+    it reuses the packet derivations, so it cannot disagree with the
+    filled forms.
 
 ## Filing
 
-- No e-file. MeF export returns `not_implemented`. JSON and filled-PDF
-  export only (PDF scope above).
+- No e-file. MeF export returns `not_implemented`. JSON, filled-PDF,
+  and filing-packet export only (scopes above).
 - No IRS/state credential handling of any kind, by design (v1).
 
 ## CLI

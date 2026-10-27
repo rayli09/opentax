@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 pub use tax_core::FilingStatus;
 use tax_core::{FactResult, Money, TaxParams};
 
+pub mod packet;
 pub mod worksheets;
 pub use worksheets::{
     capital_loss_carryover, classify_dependent, classify_eic_child, combine_schedule_d,
@@ -111,6 +112,20 @@ pub struct BrokerTxn {
     pub adjustment: Money,
     /// Short-term or long-term, per the broker's reporting.
     pub term: TxnTerm,
+    /// Box 1b: date acquired (ISO `YYYY-MM-DD`), when transcribed.
+    /// Display-only: Form 8949 column (b). Never computed on; absent
+    /// means the 8949 cell stays blank (noted in the packet manifest).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_acquired: Option<String>,
+    /// Box 1c: date sold or disposed of (ISO `YYYY-MM-DD`), when
+    /// transcribed. Display-only: Form 8949 column (c).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_sold: Option<String>,
+    /// Form 8949 column (f) adjustment code(s) (e.g. `\"W\"` for a wash
+    /// sale), when the broker statement reports one. Display-only:
+    /// printed beside the Box 1g `adjustment` amount in column (g).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjustment_code: Option<String>,
 }
 
 impl BrokerTxn {
@@ -1742,6 +1757,9 @@ mod tests {
                     cost_basis: Some(Money::from_cents(600_000)),
                     adjustment: Money::ZERO,
                     term: TxnTerm::Short,
+                    date_acquired: None,
+                    date_sold: None,
+                    adjustment_code: None,
                 },
                 BrokerTxn {
                     description: "50 sh EXAMPLE".into(),
@@ -1749,6 +1767,9 @@ mod tests {
                     cost_basis: Some(Money::from_cents(350_000)),
                     adjustment: Money::ZERO,
                     term: TxnTerm::Long,
+                    date_acquired: None,
+                    date_sold: None,
+                    adjustment_code: None,
                 },
             ],
             federal_withholding: Money::ZERO,
@@ -1809,6 +1830,9 @@ mod tests {
                     cost_basis: Some(Money::from_cents(1_000_000)),
                     adjustment: Money::ZERO,
                     term: TxnTerm::Short,
+                    date_acquired: None,
+                    date_sold: None,
+                    adjustment_code: None,
                 },
                 BrokerTxn {
                     description: "50 sh EXAMPLE".into(),
@@ -1816,6 +1840,9 @@ mod tests {
                     cost_basis: Some(Money::from_cents(1_000_000)),
                     adjustment: Money::ZERO,
                     term: TxnTerm::Long,
+                    date_acquired: None,
+                    date_sold: None,
+                    adjustment_code: None,
                 },
             ],
             federal_withholding: Money::ZERO,
@@ -1871,6 +1898,9 @@ mod tests {
                 cost_basis: Some(Money::from_cents(600_000)),
                 adjustment: Money::ZERO,
                 term: TxnTerm::Long,
+                date_acquired: None,
+                date_sold: None,
+                adjustment_code: None,
             }],
             federal_withholding: Money::ZERO,
         }];

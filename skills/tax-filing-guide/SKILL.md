@@ -32,8 +32,9 @@ explained honestly and the user still gets a working path to filed.
    - **Free File Fillable Forms**: no income limit, federal only, no
      guidance or state return — the user keys the computed figures in
      themselves. The JSON export from tax-preparer is their worksheet.
-   - **Paper**: print the completed forms, mail per IRS instructions for
-     the user's state; keep a copy and mailing evidence.
+   - **Paper**: print the completed forms (the packet export below),
+     mail per IRS instructions for the user's state; keep a copy and
+     mailing evidence.
    - A paid preparer / commercial software remains a valid choice; the
      exported JSON and line summary make that handoff quick.
 3. Whichever channel: the user enters/submits; you may read back figures
@@ -43,6 +44,38 @@ explained honestly and the user still gets a working path to filed.
    channel, confirmation/receipt details they provide) in the summary.
    That user report is the only evidence of filing — mark reviewer
    status 4 from it, never from anything the CLI produced.
+
+## The paper packet: what you mail, in what order
+
+For the paper channel, the deliverable is the packet export
+(`tax return export --return <id> --type packet --forms-dir <dir>
+--out-dir <dir>`; see tax-preparer step 5). Check its `manifest.json`
+first: every form must be `filled` or `not_applicable`. A
+`missing_template` entry, a Form 8949 overflow note, or an unchecked
+Schedule C line 32 note means the packet is **not yet complete for
+filing** — say so and stop; do not present it as ready to mail.
+
+What goes in the envelope, front to back (the Form 1040 instructions'
+assembly order):
+
+1. Payment voucher / check if an amount is owed (per the 1040
+   instructions — never cash).
+2. Form 1040, with Copy B of each W-2 and any 1099 showing federal
+   withholding attached to its front, as the 1040 instructions direct.
+3. The schedules, behind the 1040, in **Attachment Sequence Number**
+   order — the number printed at the top right of each form:
+   Schedule 1-A (1A), Schedule 1 (01), Schedule 2 (02), Schedule C
+   (09; one per 1099-NEC engagement, in packet order), Schedule D
+   (12), Form 8949 (12A), Schedule SE (17), Schedule 8812 (47).
+   Only the forms the manifest marks `filled` are included.
+4. Sign and date the 1040 (both spouses on a joint return) — the user
+   signs, always; an unsigned return is not filed.
+
+Mail to the IRS service center for the user's state per the 1040
+instructions, keep a full copy plus mailing evidence (certified mail
+receipt or equivalent), and record the mailing as the user's
+confirmation under step 4 above. The CLI produces the forms only; it
+never mails, submits, or pays.
 
 ## Iron rules
 
