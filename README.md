@@ -63,6 +63,7 @@ tax return export --return <id> --type json
 tax node list
 tax node template --document w2
 tax doc classify --file some-document.pdf
+tax doc extract --file w2.pdf   # born-digital W-2/1099-INT/DIV/NEC → form-add-ready node + evidence
 tax skills list
 
 # PDF form primitives (inspect any IRS form; fill it with an audited report)
@@ -92,7 +93,7 @@ crates/tax-core   Money (integer cents), fact-completeness model, expression
 crates/tax-forms  Form 1040 TY2025 minimal slice + input types (W-2, 1099s)
 crates/tax-pdf    AcroForm inspect (lopdf) + audited fill (pdfer_forms),
                   behind a PdfBackend trait
-crates/tax-doc    Document classification, W-2 cross-checks, OCR/text traits
+crates/tax-doc    Document classification, born-digital field extraction, W-2 cross-checks, OCR/text traits
 crates/tax-cli    The `tax` binary (clap; JSON on stdout when piped)
 skills/           Router + intake / ingest / preparer / reviewer / filing-guide
 benchmark/cases/  Golden cases with per-value source citations

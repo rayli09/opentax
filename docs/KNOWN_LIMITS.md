@@ -283,13 +283,65 @@ This list is the contract: anything not listed as working is not claimed.
 
 ## Documents (tax-doc)
 
-- Classification is title matching on extracted text only.
+- Classification is title matching on extracted text only. Known
+  weakness (pre-existing, unchanged by the extraction lane): the
+  substring rules match cross-references inside other forms — a real
+  blank Form 1040 classifies as `1099-r` and Schedule D / Form 8949
+  as `1099-b`, because their text mentions those forms. `doc extract`
+  inherits the label but still fails safe: those kinds are not
+  extractable, so it reports `unrecognized` and extracts nothing.
 - W-2 validation implements the Social Security and Medicare rate checks
   only, and only when Boxes 3–6 were provided.
 - No OCR ships in v1 (`NoOcr` reports unavailable). Scanned documents need
   the agent-vision path described in the ingest skill.
-- Text extraction is lopdf's crude built-in text dump: no positions, no
-  tables, reading order not guaranteed.
+- Text extraction for `doc classify` is lopdf's crude built-in text
+  dump: no positions, no tables, reading order not guaranteed.
+
+### `tax doc extract` (born-digital W-2 / 1099-INT / 1099-DIV / 1099-NEC)
+
+- Born-digital PDFs only. A document whose text layer yields fewer
+  than 25 characters reports `needs_ocr`; nothing is ever guessed.
+- Extraction is label-anchored and best-effort: issuer layouts vary,
+  so a form whose labels/values are laid out unusually (values above
+  labels, far-right columns beyond the search bands, rotated text)
+  extracts fewer fields and reports `partial` with per-field evidence
+  and warnings — review the evidence before entering the node.
+- Layout rules, in order: AcroForm field values (fillable copies)
+  first, then the text layer — label phrase found (box-numbered hits
+  preferred over look-alike phrases in titles), value token searched
+  same-line-right, then ≤30 pt below, then ≤45 pt below, then
+  same-line far right. The below-band is capped at 45 pt so an empty
+  box never steals the next box's value.
+- A located-but-empty box emits `"0"` ONLY where the payload field
+  defaults to zero (1099 withholding boxes, tax-exempt interest,
+  qualified dividends). Required boxes (W-2 Boxes 1–2, INT Box 1, DIV
+  Box 1a, NEC Box 1) and W-2's optional `Option` boxes are omitted
+  when empty — absence, not zero.
+- Payer/employer name = the first text line of the name block below
+  the printed label, column-clustered; multi-line names and names
+  sharing a row with unexpected text can truncate or misread —
+  evidence shows the raw line.
+- Privacy: the taxpayer's SSN is never extracted. No rule reads the
+  employee/recipient SSN or TIN boxes, and a PAYER'S TIN found in SSN
+  shape (`NNN-NN-NNNN`) is refused, never emitted — only EIN-shaped
+  (`NN-NNNNNNN`) payer/employer IDs are extracted (W-2 `employer_ein`;
+  1099-NEC `payer_ein`). The W-2 payload has no employer-name field;
+  the extracted `employer_name` rides along in the node for the
+  agent's eyeball check and is ignored by `form add`.
+- 1099-B statements are deliberately NOT extracted: broker layouts
+  vary too much for label-anchored rules (status `unrecognized`,
+  agent-vision path remains). 1099-R is likewise not implemented.
+- Geometry limits: word positions come from the content-stream text
+  state (Tm/Td/TJ, `cm`); page `/Rotate`, vertical/CJK text, and
+  Type0 fonts without a `/ToUnicode` map are not handled (undecodable
+  text simply fails to match labels). Glyph widths resolve from
+  `/Widths` / CID `/W`, then base-14 AFM fallback tables, then a
+  1000-unit default — widths affect word boxes only, never values.
+- Multiple copies of a form on one page (e.g. W-2 Copy B + C): the
+  first copy in reading order is extracted; a warning records the
+  copies, and differing values across copies are flagged loudly.
+- The 1099-NEC `expenses` field is not printed on the form and is
+  never extracted; the filer supplies it from their records.
 
 ## PDF (tax-pdf)
 
