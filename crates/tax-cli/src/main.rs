@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 use tax_core::{FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::{
-    build_fill_values, compute_1040, validate_1099_div, Form1040Input, I1099BInput, I1099DivInput,
-    I1099IntInput, W2Input,
+    build_fill_values, compute_1040, deductible_part_of_se_tax, schedule_c_net_profit,
+    schedule_se_tax, validate_1099_div, Form1040Input, I1099BInput, I1099DivInput, I1099IntInput,
+    I1099NecInput, W2Input,
 };
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
@@ -350,6 +351,14 @@ fn stored_bs(ret: &StoredReturn) -> CResult<Vec<I1099BInput>> {
         .collect()
 }
 
+fn stored_necs(ret: &StoredReturn) -> CResult<Vec<I1099NecInput>> {
+    ret.entries
+        .iter()
+        .filter(|e| e.node_type == "1099-nec")
+        .map(|e| serde_json::from_value::<I1099NecInput>(e.data.clone()).map_err(json_err))
+        .collect()
+}
+
 /// Aggregate the 1099-B entries of a partial return the same way the
 /// engine does: (net_short, net_long, line_7, schd_net_capital_gain)
 /// facts — Incomplete when any transaction is missing proceeds or
@@ -442,11 +451,18 @@ const ALL_LINES: &[&str] = &[
     "schd_net_capital_gain",
     "schd_carryover_short",
     "schd_carryover_long",
+    "8",
+    "schc_net_profit",
     "9",
+    "10",
+    "schedse_net_earnings",
     "11",
     "12",
     "15",
     "16",
+    "23",
+    "sched2_se_tax",
+    "24",
     "25a",
     "25d",
     "33",
@@ -467,6 +483,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
     let ints = stored_ints(ret)?;
     let divs = stored_divs(ret)?;
     let bs = stored_bs(ret)?;
+    let necs = stored_necs(ret)?;
     let status = FilingStatus::parse(&ret.status).map_err(|e| CliErr::new("invalid_status", e))?;
     let mut warnings = Vec::new();
 
@@ -494,6 +511,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 f1099_ints: ints,
                 f1099_divs: divs,
                 f1099_bs: bs,
+                f1099_necs: necs,
             };
             let computed = compute_1040(&input, params);
             warnings.extend(computed.notes.iter().cloned());
@@ -535,12 +553,34 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 lines.insert("schd_net_capital_gain".into(), gain);
                 b_withholding = wh;
             }
-            if !ints.is_empty() || !divs.is_empty() || !bs.is_empty() {
+            let mut nec_withholding = Money::ZERO;
+            if !necs.is_empty() {
+                // The self-employment lines depend only on stored NEC
+                // and W-2 entries, so they are computable here exactly
+                // as the engine computes them. Line 24 stays Incomplete:
+                // it also needs line 16, which needs total income.
+                let schc_net = schedule_c_net_profit(&necs);
+                let se = schedule_se_tax(schc_net, wages, params);
+                lines.insert("schc_net_profit".into(), FactResult::Complete(schc_net));
+                lines.insert("8".into(), FactResult::Complete(schc_net));
+                lines.insert(
+                    "schedse_net_earnings".into(),
+                    FactResult::Complete(se.net_earnings),
+                );
+                lines.insert("sched2_se_tax".into(), FactResult::Complete(se.tax));
+                lines.insert("23".into(), FactResult::Complete(se.tax));
+                lines.insert(
+                    "10".into(),
+                    FactResult::Complete(deductible_part_of_se_tax(se.tax)),
+                );
+                nec_withholding = necs.iter().map(|f| f.federal_withholding).sum();
+            }
+            if !ints.is_empty() || !divs.is_empty() || !bs.is_empty() || !necs.is_empty() {
                 // Withholding on every stored document is recorded, so
                 // the withholding totals are computable from the stored set.
                 let int_wh: Money = ints.iter().map(|f| f.federal_withholding).sum();
                 let div_wh: Money = divs.iter().map(|f| f.federal_withholding).sum();
-                let total_wh = w2_withholding + int_wh + div_wh + b_withholding;
+                let total_wh = w2_withholding + int_wh + div_wh + b_withholding + nec_withholding;
                 lines.insert("25d".into(), FactResult::Complete(total_wh));
                 lines.insert("33".into(), FactResult::Complete(total_wh));
             }
@@ -701,6 +741,10 @@ const CASE004_INPUT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/004-qdcg-showcase/input.json");
 const CASE004_CORRECT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/004-qdcg-showcase/correct.json");
+const CASE005_INPUT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/005-w2-nec/input.json");
+const CASE005_CORRECT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/005-w2-nec/correct.json");
 
 /// (case directory name, embedded input.json, embedded correct.json).
 const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
@@ -708,6 +752,7 @@ const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
     ("002-w2-1099s", CASE002_INPUT, CASE002_CORRECT),
     ("003-capital-loss-limit", CASE003_INPUT, CASE003_CORRECT),
     ("004-qdcg-showcase", CASE004_INPUT, CASE004_CORRECT),
+    ("005-w2-nec", CASE005_INPUT, CASE005_CORRECT),
 ];
 
 fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String>)> {
@@ -838,7 +883,8 @@ fn schema_json() -> Value {
                 "ordinary_dividends": {"type": "money_cents_string"},
                 "f1099_ints": {"type": "array", "items": "I1099IntInput"},
                 "f1099_divs": {"type": "array", "items": "I1099DivInput"},
-                "f1099_bs": {"type": "array", "items": "I1099BInput"}
+                "f1099_bs": {"type": "array", "items": "I1099BInput"},
+                "f1099_necs": {"type": "array", "items": "I1099NecInput"}
             },
             "W2Input": {
                 "employer_ein": {"type": "string", "example": "12-3456789"},
@@ -875,6 +921,13 @@ fn schema_json() -> Value {
                 "cost_basis": {"type": "money_cents_string", "form": "1099-B Box 1e", "note": "omit only when unreported — the return's capital-gain lines become incomplete"},
                 "adjustment": {"type": "money_cents_string", "form": "1099-B Box 1g", "default": "0"},
                 "term": {"type": "enum", "values": ["short", "long"]}
+            },
+            "I1099NecInput": {
+                "payer_name": {"type": "string"},
+                "payer_ein": {"type": "string", "optional": true},
+                "nonemployee_compensation": {"type": "money_cents_string", "form": "1099-NEC Box 1"},
+                "federal_withholding": {"type": "money_cents_string", "form": "1099-NEC Box 4", "default": "0"},
+                "expenses": {"type": "money_cents_string", "default": "0", "note": "total Schedule C expenses for this engagement, from the filer's records — not a 1099-NEC box; v1 takes one total per engagement (docs/KNOWN_LIMITS.md)"}
             }
         }
     })
@@ -903,6 +956,11 @@ fn node_templates() -> Vec<(String, bool, Value)> {
             "1099-b".to_string(),
             true,
             json!({"payer_name": "", "transactions": [{"description": "", "proceeds": "0", "cost_basis": "0", "adjustment": "0", "term": "short"}], "federal_withholding": "0"}),
+        ),
+        (
+            "1099-nec".to_string(),
+            true,
+            json!({"payer_name": "", "nonemployee_compensation": "0", "federal_withholding": "0", "expenses": "0"}),
         ),
     ]
 }
@@ -1046,6 +1104,11 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     }
                 }
             }
+            if !stored_w2s(&ret)?.is_empty() && !stored_necs(&ret)?.is_empty() {
+                findings.push(json!({"code": "nec_ss_wage_proxy", "severity": "info",
+                    "message": "return has both W-2 and 1099-NEC entries: the Schedule SE Social Security wage-base room is figured from total W-2 Box 1 wages as a proxy for Box 3 Social Security wages (Schedule SE line 8a). The two differ when Box 1 is reduced by pre-tax amounts that remain Social Security wages (e.g. 401(k) deferrals), in which case the SE tax's Social Security part can be overstated; Box 3, even when transcribed, is not used for this in v1 (docs/KNOWN_LIMITS.md)",
+                    "field": null, "entry": null}));
+            }
             let valid = !findings.iter().any(|f| f["severity"] == "error");
             let human = findings
                 .iter()
@@ -1182,10 +1245,11 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
                 "1099-int" => "1099int",
                 "1099-div" => "1099div",
                 "1099-b" => "1099b",
+                "1099-nec" => "1099nec",
                 _ => {
                     return Ok(Out::ok(
                         json!({"status": "not_implemented", "node_type": node_type,
-                                "detail": "v1 stores and computes w2, 1099-int, 1099-div, and 1099-b entries (see `tax node list`)"}),
+                                "detail": "v1 stores and computes w2, 1099-int, 1099-div, 1099-b, and 1099-nec entries (see `tax node list`)"}),
                         format!("adding {node_type}: not implemented in v1"),
                     ));
                 }
@@ -1215,6 +1279,10 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
                 }
                 "1099-b" => {
                     let _: I1099BInput = serde_json::from_value(value.clone()).map_err(json_err)?;
+                }
+                "1099-nec" => {
+                    let _: I1099NecInput =
+                        serde_json::from_value(value.clone()).map_err(json_err)?;
                 }
                 _ => unreachable!(),
             }
@@ -1380,11 +1448,17 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
         ("net_capital_gain", "schd_net_capital_gain"),
         ("capital_loss_carryover_short", "schd_carryover_short"),
         ("capital_loss_carryover_long", "schd_carryover_long"),
+        ("additional_income", "8"),
+        ("schedule_c_net_profit", "schc_net_profit"),
         ("total_income", "9"),
+        ("adjustments", "10"),
         ("agi", "11"),
         ("standard_deduction", "12"),
         ("taxable_income", "15"),
         ("tax", "16"),
+        ("se_tax", "23"),
+        ("net_se_earnings", "schedse_net_earnings"),
+        ("total_tax", "24"),
         ("overpaid", "34"),
         ("refund", "34"),
         ("amount_owed", "37"),
@@ -1420,16 +1494,23 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
         "7" => ("Schedule D combination of the 1099-B nets (internal keys schd_net_short / schd_net_long): the combined gain in full, or a loss limited to $3,000 ($1,500 MFS) by IRC 1211(b), with the rest carried over".to_string(), "Form 1040, line 7 (capital gain or loss, via Schedule D lines 16/21)".to_string()),
         "schd_net_short" => ("sum of (proceeds - basis + adjustment) over short-term 1099-B transactions".to_string(), "Form 8949 / Schedule D aggregation (internal key)".to_string()),
         "schd_net_long" => ("sum of (proceeds - basis + adjustment) over long-term 1099-B transactions".to_string(), "Form 8949 / Schedule D aggregation (internal key)".to_string()),
-        "9" => ("line 1z + line 2b + line 3b + line 7".to_string(), "Form 1040, line 9".to_string()),
-        "11" => ("line 9 minus adjustments — v1 has no adjustments, so AGI = line 9".to_string(), "Form 1040, line 11".to_string()),
+        "8" => ("Schedule C net profit from 1099-NEC engagements (internal key schc_net_profit), via Schedule 1 line 3 — in v1 the only additional income on Schedule 1".to_string(), "Form 1040, line 8 (additional income from Schedule 1)".to_string()),
+        "schc_net_profit" => ("sum over 1099-NEC entries of (Box 1 nonemployee compensation minus the engagement's total Schedule C expenses); a net loss is allowed".to_string(), "Schedule C / Schedule 1, line 3 (internal key)".to_string()),
+        "9" => ("line 1z + line 2b + line 3b + line 7 + line 8".to_string(), "Form 1040, line 9".to_string()),
+        "10" => ("the deductible part of self-employment tax: one-half of line 23 (Schedule 1 line 15, from Schedule SE line 13)".to_string(), "Form 1040, line 10; IRC 164(f)".to_string()),
+        "11" => ("line 9 minus line 10 (adjustments to income)".to_string(), "Form 1040, line 11".to_string()),
         "12" => (format!("standard deduction for filing status '{}' from params/2025.json", ret.status), params.source.clone()),
         "15" => ("line 11 minus line 12, floored at zero".to_string(), "Form 1040, line 15".to_string()),
         "16" => (line16_derivation(view.line16_method.as_deref()), params.source.clone()),
+        "23" => ("self-employment tax from Schedule SE, via Schedule 2 line 4: 12.4% Social Security on net SE earnings (internal key schedse_net_earnings) up to the wage-base room left after W-2 wages, plus 2.9% Medicare on all net SE earnings; rates and wage base from params/2025.json".to_string(), "Form 1040, line 23; Schedule SE; IRC 1401".to_string()),
+        "schedse_net_earnings" => ("Schedule SE line 4a: Schedule C net profit times 92.35%; zero when the net is a loss".to_string(), "Schedule SE, line 4a; IRC 1402(a) (internal key)".to_string()),
+        "sched2_se_tax" => ("the Schedule SE tax as it enters Schedule 2 line 4; equal to line 23".to_string(), "Schedule 2, line 4 (internal key)".to_string()),
+        "24" => ("line 16 plus line 23".to_string(), "Form 1040, line 24".to_string()),
         "schd_net_capital_gain" => ("the QDCG worksheet's capital-gain input: the smaller of Schedule D lines 15 and 16 when both are gains, else 0".to_string(), "Qualified Dividends and Capital Gain Tax Worksheet, line 3 (Instructions for Form 1040)".to_string()),
         "schd_carryover_short" => ("short-term capital loss carried to next year per the Capital Loss Carryover Worksheet (the $3,000/$1,500 allowance is absorbed against short-term losses first)".to_string(), "Instructions for Schedule D, Capital Loss Carryover Worksheet".to_string()),
         "schd_carryover_long" => ("long-term capital loss carried to next year per the Capital Loss Carryover Worksheet".to_string(), "Instructions for Schedule D, Capital Loss Carryover Worksheet".to_string()),
-        "34" => ("line 33 minus line 16 when payments exceed tax, else 0".to_string(), "Form 1040, line 34".to_string()),
-        "37" => ("line 16 minus line 33 when tax exceeds payments, else 0".to_string(), "Form 1040, line 37".to_string()),
+        "34" => ("line 33 minus line 24 when payments exceed total tax, else 0".to_string(), "Form 1040, line 34".to_string()),
+        "37" => ("line 24 minus line 33 when total tax exceeds payments, else 0".to_string(), "Form 1040, line 37".to_string()),
         _ => ("computed directly from stored inputs".to_string(), "Form 1040 instructions".to_string()),
     };
 

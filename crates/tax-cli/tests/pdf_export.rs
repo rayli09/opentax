@@ -9,7 +9,7 @@ use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 use tax_core::{FilingStatus, Money, TaxParams};
 use tax_forms::{
     build_fill_values, compute_1040, BrokerTxn, Form1040Input, I1099BInput, I1099DivInput,
-    I1099IntInput, TxnTerm, W2Input,
+    I1099IntInput, I1099NecInput, TxnTerm, W2Input,
 };
 use tax_pdf::{LopdfBackend, PdfBackend, PdferBackend};
 
@@ -240,6 +240,35 @@ fn case002_input() -> Form1040Input {
             ],
             federal_withholding: Money::ZERO,
         }],
+        f1099_necs: vec![],
+    }
+}
+
+/// Golden case 005 inputs (benchmark/cases/f1040/2025/005-w2-nec).
+fn case005_input() -> Form1040Input {
+    Form1040Input {
+        status: FilingStatus::Single,
+        w2s: vec![W2Input {
+            employer_ein: "12-3456789".into(),
+            wages: Money::from_cents(5_000_000),
+            federal_withholding: Money::from_cents(400_000),
+            social_security_wages: None,
+            social_security_tax: None,
+            medicare_wages: None,
+            medicare_tax: None,
+        }],
+        interest_income: Money::ZERO,
+        ordinary_dividends: Money::ZERO,
+        f1099_ints: vec![],
+        f1099_divs: vec![],
+        f1099_bs: vec![],
+        f1099_necs: vec![I1099NecInput {
+            payer_name: "Example Client LLC".into(),
+            payer_ein: None,
+            nonemployee_compensation: Money::from_cents(2_000_000),
+            federal_withholding: Money::ZERO,
+            expenses: Money::from_cents(200_000),
+        }],
     }
 }
 
@@ -249,6 +278,33 @@ fn builder_plus_backend_fill_synthetic_with_real_qnames() {
     let computed = compute_1040(&case002_input(), &params);
     assert!(computed.complete);
     let plan = build_fill_values(&computed.lines, FilingStatus::Single).unwrap();
+
+    // The NEC lane's map changes: line 24 is now fed by the engine's own
+    // line 24 (= 16 + 23), and lines 8 / 10 / 23 are mapped and filled —
+    // for case 002 all three are complete zeros and are filled as such
+    // under the fill-all-complete-lines rule.
+    let by_line = |l: &str| plan.values.iter().find(|v| v.line == l).map(|v| &v.value);
+    assert_eq!(by_line("24").map(String::as_str), Some("4163.00"));
+    assert_eq!(by_line("8").map(String::as_str), Some("0.00"));
+    assert_eq!(by_line("10").map(String::as_str), Some("0.00"));
+    assert_eq!(by_line("23").map(String::as_str), Some("0.00"));
+    let field_of = |l: &str| plan.values.iter().find(|v| v.line == l).map(|v| &v.field);
+    assert_eq!(
+        field_of("8").map(String::as_str),
+        Some("topmostSubform[0].Page1[0].f1_72[0]")
+    );
+    assert_eq!(
+        field_of("10").map(String::as_str),
+        Some("topmostSubform[0].Page1[0].f1_74[0]")
+    );
+    assert_eq!(
+        field_of("23").map(String::as_str),
+        Some("topmostSubform[0].Page2[0].f2_15[0]")
+    );
+    assert_eq!(
+        field_of("24").map(String::as_str),
+        Some("topmostSubform[0].Page2[0].f2_16[0]")
+    );
 
     // The synthetic carries only three of the mapped fields; fill just
     // those (the backend audit would rightly refuse unknown fields).
@@ -282,4 +338,25 @@ fn builder_plus_backend_fill_synthetic_with_real_qnames() {
     assert_eq!(get(Q_2B).as_deref(), Some("500.00"));
     assert_eq!(get(Q_11A).as_deref(), Some("53000.00"));
     assert_eq!(get(Q_SINGLE).as_deref(), Some("1"));
+}
+
+#[test]
+fn fill_plan_case005_nec_lines() {
+    let params = TaxParams::load_2025().unwrap();
+    let computed = compute_1040(&case005_input(), &params);
+    assert!(computed.complete);
+    let plan = build_fill_values(&computed.lines, FilingStatus::Single).unwrap();
+    let by_line = |l: &str| plan.values.iter().find(|v| v.line == l).map(|v| &v.value);
+    // Hand-derived in benchmark case 005: Sch C net $18,000 -> line 8;
+    // SE tax $2,543.32 -> line 23; half $1,271.66 -> line 10; total tax
+    // $8,672.32 -> line 24; owed $4,672.32 -> line 37 (34 stays blank).
+    assert_eq!(by_line("8").map(String::as_str), Some("18000.00"));
+    assert_eq!(by_line("10").map(String::as_str), Some("1271.66"));
+    assert_eq!(by_line("23").map(String::as_str), Some("2543.32"));
+    assert_eq!(by_line("24").map(String::as_str), Some("8672.32"));
+    assert_eq!(by_line("37").map(String::as_str), Some("4672.32"));
+    assert!(
+        by_line("34").is_none(),
+        "line 34 stays blank when 37 is owed"
+    );
 }

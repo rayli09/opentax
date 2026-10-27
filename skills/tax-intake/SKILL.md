@@ -24,7 +24,9 @@ of (a) facts to provide and (b) documents to gather. No computation here.
    incomplete until they exist as documents or recorded facts.
 5. Hand the user a document checklist derived from their income sources:
    one W-2 per job; 1099-INT per bank; 1099-DIV per fund/broker;
-   1099-B for brokerage sales; prior-year return if available.
+   1099-B for brokerage sales; 1099-NEC per side-income payer **plus
+   their own expense records for each engagement** (the expenses total
+   is an entered fact, not a form box); prior-year return if available.
 6. Confirm a short facts summary back to the user and stop. Next step is
    tax-ingest (documents) or tax-preparer (facts already entered).
 
@@ -36,7 +38,8 @@ privacy warning before reading documents).
 
 ## Authority limits
 
-Scope is TY2025 Form 1040 with W-2 wages plus interest/dividends at the
-engine level. If the user's situation needs anything in
-`docs/KNOWN_LIMITS.md` (Schedule C/D/E, credits, state returns…), say so
+Scope is TY2025 Form 1040 with W-2 wages, interest/dividends/capital
+gains from 1099s, and 1099-NEC side income (simplified Schedule C/SE)
+at the engine level. If the user's situation needs anything in
+`docs/KNOWN_LIMITS.md` (Schedule E, credits, state returns…), say so
 now — before collecting documents — and stop that part.

@@ -8,6 +8,10 @@
 //! - Qualified Dividends and Capital Gain Tax Worksheet: Instructions
 //!   for Form 1040, TY2025 ("Qualified Dividends and Capital Gain Tax
 //!   Worksheet—Line 16", `i1040gi.pdf`).
+//! - Schedule SE (simplified): Form 1040 Schedule SE, TY2025, Section B
+//!   lines 4a, 10–13 as reduced by the brief (no church-employee or
+//!   optional-method lines; the W-2 Social Security wage input is the
+//!   caller's Box 1 proxy — see docs/KNOWN_LIMITS.md).
 //!
 //! Money is integer cents throughout; the only multiplications are the
 //! worksheet's 15% / 20% rates, done with [`Money::mul_bp`] (integer
@@ -236,6 +240,70 @@ pub fn line16_tax(
     }
 }
 
+/// The simplified Schedule SE computation (Short Schedule SE / Section B
+/// reduced to the lines the v1 inputs can feed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScheduleSe {
+    /// Schedule SE line 4a: net earnings from self-employment — the
+    /// Schedule C net profit × 92.35% (IRC §1402(a)). Zero when the net
+    /// profit is zero or a loss: a loss produces no SE tax and no
+    /// negative earnings.
+    pub net_earnings: Money,
+    /// Schedule SE line 10: Social Security part — 12.4% (IRC §1401(a))
+    /// of the smaller of net earnings or the wage-base room left after
+    /// W-2 Social Security wages.
+    pub ss_part: Money,
+    /// Schedule SE line 11: Medicare part — 2.9% (IRC §1401(b)) of net
+    /// earnings (no wage-base cap).
+    pub medicare_part: Money,
+    /// Schedule SE line 12: total self-employment tax (lines 10 + 11),
+    /// which flows to Schedule 2 line 4 and Form 1040 line 23.
+    pub tax: Money,
+}
+
+/// Figure Schedule SE tax from the Schedule C net profit.
+///
+/// `w2_ss_wages` is the total of W-2 Social Security wages (Schedule SE
+/// line 8a takes Box 3); the v1 engine passes Σ W-2 Box 1 wages as a
+/// documented proxy (docs/KNOWN_LIMITS.md). Components are figured in
+/// cents with [`Money::mul_bp`]; the paper Schedule SE rounds each line
+/// to whole dollars, so a paper filing can differ by a dollar.
+pub fn schedule_se_tax(
+    schc_net_profit: Money,
+    w2_ss_wages: Money,
+    params: &TaxParams,
+) -> ScheduleSe {
+    if schc_net_profit.cents() <= 0 {
+        return ScheduleSe {
+            net_earnings: Money::ZERO,
+            ss_part: Money::ZERO,
+            medicare_part: Money::ZERO,
+            tax: Money::ZERO,
+        };
+    }
+    let net_earnings = schc_net_profit.mul_bp(params.se_net_earnings_factor_bp);
+    let wage_base = Money::from_cents(params.social_security_wage_base_cents);
+    let ss_room = Money::from_cents((wage_base - w2_ss_wages).cents().max(0));
+    let ss_taxable = Money::from_cents(net_earnings.cents().min(ss_room.cents()));
+    let ss_part = ss_taxable.mul_bp(params.se_ss_rate_bp);
+    let medicare_part = net_earnings.mul_bp(params.se_medicare_rate_bp);
+    ScheduleSe {
+        net_earnings,
+        ss_part,
+        medicare_part,
+        tax: ss_part + medicare_part,
+    }
+}
+
+/// The deductible part of the SE tax (IRC §164(f); Schedule SE line 13 →
+/// Schedule 1 line 15 → Form 1040 line 10): one-half of the SE tax,
+/// rounded half up to the cent. SE tax is never negative, so the
+/// `(c + 1) / 2` form is exact half-up rounding here.
+pub fn deductible_part_of_se_tax(se_tax: Money) -> Money {
+    debug_assert!(se_tax.cents() >= 0);
+    Money::from_cents((se_tax.cents() + 1) / 2)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -462,5 +530,64 @@ mod tests {
         // is capped by line 24 (ordinary tax on all of line 1).
         let (tax, _) = line16_tax(m(99_000), m(100), Money::ZERO, FilingStatus::Single, &p);
         assert!(tax <= tax_on_amount(m(99_000), FilingStatus::Single, &p));
+    }
+
+    // -- Schedule SE ---------------------------------------------------
+
+    #[test]
+    fn se_tax_golden_case_005_figures() {
+        let p = params();
+        // Case 005: Sch C net $18,000, W-2 wages $50,000.
+        // Earnings = 18000 x 0.9235 = $16,623.00; SS room = 176100 -
+        // 50000 = $126,100, so all earnings are SS-taxable:
+        // SS = 16623 x 12.4% = $2,061.252 -> $2,061.25;
+        // Medicare = 16623 x 2.9% = $482.067 -> $482.07.
+        let se = schedule_se_tax(m(18_000), m(50_000), &p);
+        assert_eq!(se.net_earnings, Money::from_cents(1_662_300));
+        assert_eq!(se.ss_part, Money::from_cents(206_125));
+        assert_eq!(se.medicare_part, Money::from_cents(48_207));
+        assert_eq!(se.tax, Money::from_cents(254_332));
+        // Half of $2,543.32 is exactly $1,271.66.
+        assert_eq!(
+            deductible_part_of_se_tax(se.tax),
+            Money::from_cents(127_166)
+        );
+    }
+
+    #[test]
+    fn se_tax_wage_base_cap_zeroes_ss_part_only() {
+        let p = params();
+        // W-2 wages $200,000 already exceed the $176,100 base: no SS
+        // room remains, but Medicare has no cap.
+        let se = schedule_se_tax(m(18_000), m(200_000), &p);
+        assert_eq!(se.net_earnings, Money::from_cents(1_662_300));
+        assert_eq!(se.ss_part, Money::ZERO);
+        assert_eq!(se.medicare_part, Money::from_cents(48_207));
+        assert_eq!(se.tax, Money::from_cents(48_207));
+        // Partial room: wages $170,000 leave $6,100 of base; SS applies
+        // to $6,100 only: 6100 x 12.4% = $756.40.
+        let se = schedule_se_tax(m(18_000), m(170_000), &p);
+        assert_eq!(se.ss_part, Money::from_cents(75_640));
+    }
+
+    #[test]
+    fn se_tax_zero_or_loss_profit_is_zero() {
+        let p = params();
+        for profit in [Money::ZERO, m(-3_000)] {
+            let se = schedule_se_tax(profit, m(50_000), &p);
+            assert_eq!(se.net_earnings, Money::ZERO);
+            assert_eq!(se.tax, Money::ZERO);
+        }
+    }
+
+    #[test]
+    fn se_tax_half_rounds_half_up() {
+        let p = params();
+        // $100 profit: earnings $92.35; SS = 92.35 x 12.4% = $11.4514
+        // -> $11.45; Medicare = 92.35 x 2.9% = $2.67815 -> $2.68;
+        // tax = $14.13 (odd cents) -> half rounds half up to $7.07.
+        let se = schedule_se_tax(m(100), Money::ZERO, &p);
+        assert_eq!(se.tax, Money::from_cents(1_413));
+        assert_eq!(deductible_part_of_se_tax(se.tax), Money::from_cents(707));
     }
 }

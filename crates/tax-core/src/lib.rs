@@ -357,6 +357,16 @@ impl FilingStatus {
     }
 }
 
+fn default_se_ss_rate_bp() -> u32 {
+    1240
+}
+fn default_se_medicare_rate_bp() -> u32 {
+    290
+}
+fn default_se_net_earnings_factor_bp() -> u32 {
+    9235
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bracket {
     /// Upper income threshold in cents; `null` = unbounded top bracket.
@@ -381,6 +391,17 @@ pub struct TaxParams {
     pub source: String,
     pub standard_deduction_cents: HashMap<String, i64>,
     pub social_security_wage_base_cents: i64,
+    /// Self-employment (Schedule SE) Social Security rate, basis points
+    /// (12.4% per IRC §1401(a)).
+    #[serde(default = "default_se_ss_rate_bp")]
+    pub se_ss_rate_bp: u32,
+    /// Self-employment Medicare rate, basis points (2.9% per IRC §1401(b)).
+    #[serde(default = "default_se_medicare_rate_bp")]
+    pub se_medicare_rate_bp: u32,
+    /// Net-earnings factor for self-employment income, basis points
+    /// (92.35% per IRC §1402(a); Schedule SE line 4a).
+    #[serde(default = "default_se_net_earnings_factor_bp")]
+    pub se_net_earnings_factor_bp: u32,
     pub ordinary_brackets: HashMap<String, Vec<Bracket>>,
     /// IRC §1211(b) capital-loss allowance per filing status (cents).
     #[serde(default)]
@@ -680,6 +701,19 @@ mod tests {
         assert_eq!(t(FilingStatus::Hoh).twenty_rate_from_cents, 56_670_000);
         assert_eq!(t(FilingStatus::Mfs).zero_rate_up_to_cents, 4_835_000);
         assert_eq!(t(FilingStatus::Mfs).twenty_rate_from_cents, 30_000_000);
+    }
+
+    #[test]
+    fn params_2025_self_employment() {
+        let p = TaxParams::load_2025().unwrap();
+        // SSA 2025 announcement (Oct. 10, 2024; Fact Sheet "2025 Social
+        // Security Changes"): wage base $176,100.
+        assert_eq!(p.social_security_wage_base_cents, 17_610_000);
+        // IRC 1401(a): 12.4% Social Security; IRC 1401(b): 2.9% Medicare.
+        assert_eq!(p.se_ss_rate_bp, 1240);
+        assert_eq!(p.se_medicare_rate_bp, 290);
+        // IRC 1402(a) / Schedule SE line 4a: net earnings = 92.35%.
+        assert_eq!(p.se_net_earnings_factor_bp, 9235);
     }
 
     #[test]
