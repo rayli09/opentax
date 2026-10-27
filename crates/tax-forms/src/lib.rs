@@ -11,8 +11,8 @@ use tax_core::{FactResult, Money, TaxParams};
 
 pub mod worksheets;
 pub use worksheets::{
-    capital_loss_carryover, combine_schedule_d, line16_tax, qdcg_tax, tax_on_amount,
-    ScheduleDCombination,
+    capital_loss_carryover, combine_schedule_d, deductible_part_of_se_tax, line16_tax, qdcg_tax,
+    schedule_se_tax, tax_on_amount, ScheduleDCombination, ScheduleSe,
 };
 
 /// One W-2 (Form W-2, Wage and Tax Statement). Money = cents.
@@ -133,6 +133,45 @@ pub struct I1099BInput {
     pub federal_withholding: Money,
 }
 
+/// One 1099-NEC (Nonemployee Compensation). Money = cents.
+///
+/// `expenses` is NOT a box on Form 1099-NEC: it is the total of the
+/// Schedule C expenses for that engagement, supplied from the filer's
+/// records (v1 simplification — one expense total per engagement, no
+/// per-category Schedule C; see docs/KNOWN_LIMITS.md). An absent field
+/// means the engagement reported no expenses, following the template
+/// convention for reported-none amounts. A net loss on an engagement is
+/// allowed and flows through to Schedule 1 line 3.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct I1099NecInput {
+    pub payer_name: String,
+    /// Payer's EIN (optional; identification only, never computed on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payer_ein: Option<String>,
+    /// Box 1: nonemployee compensation → Schedule C gross receipts.
+    pub nonemployee_compensation: Money,
+    /// Box 4: federal income tax withheld → Form 1040 line 25d component.
+    #[serde(default)]
+    pub federal_withholding: Money,
+    /// Total Schedule C expenses for this engagement (not a 1099-NEC box).
+    #[serde(default)]
+    pub expenses: Money,
+}
+
+impl I1099NecInput {
+    /// Schedule C net profit (loss) for this engagement: Box 1 − expenses.
+    pub fn net_profit(&self) -> Money {
+        self.nonemployee_compensation - self.expenses
+    }
+}
+
+/// Schedule C net profit (loss) over all 1099-NEC engagements
+/// (Σ (Box 1 − expenses)) — Schedule 1 line 3, flowing to Form 1040
+/// line 8. An empty set is a stated fact: net zero.
+pub fn schedule_c_net_profit(necs: &[I1099NecInput]) -> Money {
+    necs.iter().map(|n| n.net_profit()).sum()
+}
+
 /// The complete set of inputs the v1 1040 slice consumes. Scalar income
 /// fields are required: an absent field is a deserialization error, not a
 /// zero. Document collections default to empty (no such documents is a
@@ -154,6 +193,8 @@ pub struct Form1040Input {
     pub f1099_divs: Vec<I1099DivInput>,
     #[serde(default)]
     pub f1099_bs: Vec<I1099BInput>,
+    #[serde(default)]
+    pub f1099_necs: Vec<I1099NecInput>,
 }
 
 /// A computed return: line number (Form 1040 numbering) → fact result.
@@ -163,8 +204,12 @@ pub struct Form1040Input {
 /// (net short-term / long-term gain or loss aggregated from 1099-B
 /// transactions), `schd_net_capital_gain` (the QDCG worksheet's line 3
 /// input), and `schd_carryover_short` / `schd_carryover_long` (capital
-/// loss carryovers to the next year, as positive amounts). They are not
-/// Form 1040 line numbers.
+/// loss carryovers to the next year, as positive amounts) — plus the
+/// self-employment keys `schc_net_profit` (Schedule C net profit from
+/// 1099-NEC engagements, Schedule 1 line 3), `schedse_net_earnings`
+/// (Schedule SE line 4a net earnings) and `sched2_se_tax` (the Schedule
+/// SE tax as it enters Schedule 2 line 4, equal to line 23). They are
+/// not Form 1040 line numbers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComputedReturn {
     pub lines: BTreeMap<String, FactResult<Money>>,
@@ -225,11 +270,16 @@ pub fn validate_1099_div(div: &I1099DivInput) -> Vec<ConsistencyFinding> {
 /// 3a qualified dividends (Σ 1099-DIV Box 1b), 3b ordinary dividends
 /// (direct + Σ 1099-DIV Box 1a), 7 capital gain/loss (the Schedule D
 /// combination of the 1099-B nets, with the IRC §1211(b) loss limit),
-/// 9 total income, 11 AGI, 12 standard deduction, 15 taxable income,
-/// 16 tax, 25a W-2 withholding, 25d total withheld (W-2 + 1099-INT/DIV/B
-/// Box 4), 33 total other payments and refundable credits (simplified:
-/// = 25d), 34 overpaid (refund) when payments exceed tax, 37 amount owed
-/// otherwise. Plus the internal `schd_*` keys described on
+/// 8 additional income from Schedule 1 (v1: the Schedule C net profit
+/// from 1099-NEC engagements only), 9 total income, 10 adjustments to
+/// income (v1: the deductible part of SE tax, Schedule 1 line 15), 11 AGI
+/// (9 − 10), 12 standard deduction, 15 taxable income, 16 tax,
+/// 23 other taxes (v1: the Schedule SE tax, via Schedule 2 line 4),
+/// 24 total tax (16 + 23), 25a W-2 withholding, 25d total withheld
+/// (W-2 + 1099-INT/DIV/B/NEC Box 4), 33 total other payments and
+/// refundable credits (simplified: = 25d), 34 overpaid (refund) when
+/// payments exceed line 24, 37 amount owed otherwise. Plus the internal
+/// `schd_*` / `schc_*` / `schedse_*` / `sched2_*` keys described on
 /// [`ComputedReturn`].
 ///
 /// Line 16 is figured by the method the 1040 instructions prescribe
@@ -240,15 +290,19 @@ pub fn validate_1099_div(div: &I1099DivInput) -> Vec<ConsistencyFinding> {
 /// Carryover Worksheet (Instructions for Schedule D).
 ///
 /// Completeness: a 1099-B transaction missing proceeds or basis makes
-/// lines 7, 9, 11, 15, 16, 34, 37 (and the `schd_*` keys) `Incomplete`;
-/// independent lines stay `Complete`.
+/// lines 7, 9, 11, 15, 16, 24, 34, 37 (and the `schd_*` keys)
+/// `Incomplete`; independent lines stay `Complete` — in particular the
+/// self-employment lines (8, 10, 23 and the `schc_*` / `schedse_*` /
+/// `sched2_*` keys) depend only on 1099-NEC and W-2 inputs.
 ///
-/// Simplifications (docs/KNOWN_LIMITS.md): no adjustments to income (AGI =
-/// total income), no itemizing, no credits. Schedule D is the simplified
-/// two-net combination (no K-1 / Forms 6252/4684 / capital gain
-/// distribution components, no 28%-rate or unrecaptured §1250 amounts),
-/// so the Schedule D Tax Worksheet is never triggered; NIIT (Form 8960)
-/// is not figured.
+/// Simplifications (docs/KNOWN_LIMITS.md): the only adjustment to income
+/// is the deductible part of SE tax; no itemizing, no credits, no QBI.
+/// Schedule D is the simplified two-net combination (no K-1 / Forms
+/// 6252/4684 / capital gain distribution components, no 28%-rate or
+/// unrecaptured §1250 amounts), so the Schedule D Tax Worksheet is never
+/// triggered; NIIT (Form 8960) is not figured. Schedule SE is the
+/// simplified computation in [`worksheets::schedule_se_tax`], with Σ W-2
+/// Box 1 wages standing in for Box 3 Social Security wages.
 pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn {
     let wages: Money = input.w2s.iter().map(|w| w.wages).sum();
     let w2_withholding: Money = input.w2s.iter().map(|w| w.federal_withholding).sum();
@@ -315,16 +369,30 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
         None => FactResult::Incomplete,
     };
 
+    // 1099-NEC: Box 1 − expenses → Schedule C net profit (Schedule 1
+    // line 3 → Form 1040 line 8); Box 4 → 25d. Schedule SE tax is
+    // figured on the aggregate net profit; Σ W-2 Box 1 wages stand in
+    // for Box 3 Social Security wages (documented proxy).
+    let schc_net = schedule_c_net_profit(&input.f1099_necs);
+    let nec_withholding: Money = input.f1099_necs.iter().map(|f| f.federal_withholding).sum();
+    let se = schedule_se_tax(schc_net, wages, params);
+    let se_deduction = deductible_part_of_se_tax(se.tax);
+
     let line2b = input.interest_income + int_interest;
     let line3b = input.ordinary_dividends + div_ordinary;
-    let total_withholding = w2_withholding + int_withholding + div_withholding + b_withholding;
+    let total_withholding =
+        w2_withholding + int_withholding + div_withholding + b_withholding + nec_withholding;
 
     let complete = |v: Money| FactResult::Complete(v);
     let total_income_f = add_facts(
         add_facts(complete(wages), complete(line2b)),
-        add_facts(complete(line3b), capital_gain_f.clone()),
+        add_facts(
+            add_facts(complete(line3b), capital_gain_f.clone()),
+            complete(schc_net),
+        ),
     );
-    let agi_f = total_income_f.clone();
+    // Line 10 (adjustments) → line 11 AGI = line 9 − line 10.
+    let agi_f = add_facts(total_income_f.clone(), complete(-se_deduction));
     let deduction = params.standard_deduction(input.status);
     let taxable_f = agi_f
         .clone()
@@ -352,10 +420,13 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
         }
         _ => (FactResult::Incomplete, FactResult::Incomplete),
     };
+    // Line 24 (total tax) = line 16 + line 23; overpayment / amount owed
+    // compare line 33 payments against line 24, per the form.
+    let total_tax_f = tax_f.clone().map(|t| t + se.tax);
     let payments_f = complete(total_withholding);
-    let (overpaid_f, owed_f) = match tax_f.clone() {
+    let (overpaid_f, owed_f) = match total_tax_f.clone() {
         FactResult::Complete(tax) | FactResult::Placeholder(tax) => {
-            let wrap = |v: Money| match tax_f {
+            let wrap = |v: Money| match total_tax_f {
                 FactResult::Placeholder(_) => FactResult::Placeholder(v),
                 _ => FactResult::Complete(v),
             };
@@ -381,11 +452,18 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     lines.insert("schd_net_capital_gain".into(), schd_gain_f);
     lines.insert("schd_carryover_short".into(), carry_short_f);
     lines.insert("schd_carryover_long".into(), carry_long_f);
+    lines.insert("8".into(), complete(schc_net));
+    lines.insert("schc_net_profit".into(), complete(schc_net));
+    lines.insert("schedse_net_earnings".into(), complete(se.net_earnings));
+    lines.insert("sched2_se_tax".into(), complete(se.tax));
     lines.insert("9".into(), total_income_f);
+    lines.insert("10".into(), complete(se_deduction));
     lines.insert("11".into(), agi_f);
     lines.insert("12".into(), complete(deduction));
     lines.insert("15".into(), taxable_f);
     lines.insert("16".into(), tax_f);
+    lines.insert("23".into(), complete(se.tax));
+    lines.insert("24".into(), total_tax_f);
     lines.insert("25a".into(), complete(w2_withholding));
     lines.insert("25d".into(), complete(total_withholding));
     lines.insert("33".into(), payments_f);
@@ -407,20 +485,33 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
             .to_string(),
         _ => "Line 16 was not figured (the return is incomplete).".to_string(),
     };
+    let mut notes = vec![
+        line16_note,
+        "Line 7 is the Schedule D combination of the 1099-B nets; a net \
+         capital loss is limited to $3,000 ($1,500 if married filing \
+         separately) under IRC 1211(b), and the unused loss carries over \
+         (internal keys schd_carryover_short / schd_carryover_long)."
+            .to_string(),
+        "The only adjustment to income (line 10) is the deductible part of \
+         self-employment tax; no credits or itemized deductions in v1."
+            .to_string(),
+    ];
+    if !input.f1099_necs.is_empty() {
+        notes.push(
+            "Schedule C net profit from 1099-NEC engagements flows through \
+             Schedule 1 line 3 to line 8. Schedule SE tax (line 23, and \
+             line 24 = 16 + 23) is figured on 92.35% of the net profit; \
+             one-half of it is deducted on line 10. The Schedule SE \
+             wage-base room uses W-2 Box 1 wages as a proxy for Box 3 \
+             Social Security wages (docs/KNOWN_LIMITS.md)."
+                .to_string(),
+        );
+    }
     ComputedReturn {
         complete,
         lines,
         line16_method,
-        notes: vec![
-            line16_note,
-            "Line 7 is the Schedule D combination of the 1099-B nets; a net \
-             capital loss is limited to $3,000 ($1,500 if married filing \
-             separately) under IRC 1211(b), and the unused loss carries over \
-             (internal keys schd_carryover_short / schd_carryover_long)."
-                .to_string(),
-            "AGI equals total income: no adjustments, credits, or itemized deductions in v1."
-                .to_string(),
-        ],
+        notes,
     }
 }
 
@@ -625,6 +716,7 @@ mod tests {
             f1099_ints: vec![],
             f1099_divs: vec![],
             f1099_bs: vec![],
+            f1099_necs: vec![],
         }
     }
 
@@ -857,6 +949,139 @@ mod tests {
         assert_eq!(line("37"), 230_500, "amount owed $2,305.00");
     }
 
+    fn case005_input() -> Form1040Input {
+        let mut input = golden_input();
+        input.f1099_necs = vec![I1099NecInput {
+            payer_name: "Example Client LLC".into(),
+            payer_ein: None,
+            nonemployee_compensation: Money::from_cents(2_000_000),
+            federal_withholding: Money::ZERO,
+            expenses: Money::from_cents(200_000),
+        }];
+        input
+    }
+
+    /// Golden case 005 (benchmark/cases/f1040/2025/005-w2-nec): W-2
+    /// $50,000 plus one 1099-NEC engagement (Box 1 $20,000, expenses
+    /// $2,000). Hand-derived (see the case's _sources): Sch C net
+    /// $18,000 → line 8; SE earnings 18000 × 0.9235 = $16,623.00;
+    /// SS part 16623 × 12.4% = $2,061.25 (W-2 proxy wages $50,000 leave
+    /// the full earnings under the $176,100 base); Medicare 16623 ×
+    /// 2.9% = $482.07; SE tax $2,543.32 → line 23; half = $1,271.66 →
+    /// line 10; AGI $66,728.34; taxable $50,978.34 → Tax Table row
+    /// 50,950–51,000 single = $6,129 (line 16); line 24 = $8,672.32;
+    /// owed 8672.32 − 4000 = $4,672.32.
+    #[test]
+    fn golden_w2_with_nec() {
+        let params = TaxParams::load_2025().unwrap();
+        let r = compute_1040(&case005_input(), &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("1a"), 5_000_000);
+        assert_eq!(line("schc_net_profit"), 1_800_000, "Sch C net $18,000");
+        assert_eq!(line("8"), 1_800_000, "line 8 = Schedule 1 business income");
+        assert_eq!(line("9"), 6_800_000, "total income $68,000");
+        assert_eq!(
+            line("schedse_net_earnings"),
+            1_662_300,
+            "SE earnings $16,623.00"
+        );
+        assert_eq!(line("sched2_se_tax"), 254_332);
+        assert_eq!(line("23"), 254_332, "SE tax $2,543.32");
+        assert_eq!(line("10"), 127_166, "deductible half of SE tax $1,271.66");
+        assert_eq!(line("11"), 6_672_834, "AGI $66,728.34");
+        assert_eq!(line("12"), 1_575_000);
+        assert_eq!(line("15"), 5_097_834, "taxable $50,978.34");
+        assert_eq!(line("16"), 612_900, "tax $6,129.00 (Tax Table)");
+        assert_eq!(r.line16_method.as_deref(), Some("tax_table"));
+        assert_eq!(line("24"), 867_232, "total tax $8,672.32 = 16 + 23");
+        assert_eq!(line("25a"), 400_000);
+        assert_eq!(line("25d"), 400_000);
+        assert_eq!(line("33"), 400_000);
+        assert_eq!(line("34"), 0, "nothing overpaid");
+        assert_eq!(line("37"), 467_232, "amount owed $4,672.32");
+    }
+
+    #[test]
+    fn case005_json_round_trip() {
+        let json = r#"{
+            "status": "single",
+            "w2s": [{"employer_ein": "12-3456789", "wages": "5000000", "federal_withholding": "400000"}],
+            "interest_income": "0",
+            "ordinary_dividends": "0",
+            "f1099_necs": [{"payer_name": "Example Client LLC", "nonemployee_compensation": "2000000", "federal_withholding": "0", "expenses": "200000"}]
+        }"#;
+        let input: Form1040Input = serde_json::from_str(json).unwrap();
+        assert_eq!(input, case005_input());
+    }
+
+    #[test]
+    fn nec_loss_flows_to_line_8_with_no_se_tax() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut input = golden_input();
+        input.f1099_necs = vec![I1099NecInput {
+            payer_name: "Client".into(),
+            payer_ein: None,
+            nonemployee_compensation: Money::from_cents(500_000),
+            federal_withholding: Money::ZERO,
+            expenses: Money::from_cents(800_000),
+        }];
+        let r = compute_1040(&input, &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("schc_net_profit"), -300_000, "Sch C loss -$3,000");
+        assert_eq!(line("8"), -300_000, "the loss flows to line 8 in full");
+        assert_eq!(line("schedse_net_earnings"), 0, "no SE earnings on a loss");
+        assert_eq!(line("23"), 0, "no SE tax on a loss");
+        assert_eq!(line("10"), 0);
+        assert_eq!(line("9"), 4_700_000, "total income reduced by the loss");
+        assert_eq!(line("24"), line("16"), "line 24 = 16 when SE tax is 0");
+    }
+
+    #[test]
+    fn nec_multiple_engagements_aggregate() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut input = golden_input();
+        input.f1099_necs = vec![
+            I1099NecInput {
+                payer_name: "Client A".into(),
+                payer_ein: None,
+                nonemployee_compensation: Money::from_cents(1_000_000),
+                federal_withholding: Money::from_cents(10_000),
+                expenses: Money::from_cents(100_000),
+            },
+            I1099NecInput {
+                payer_name: "Client B".into(),
+                payer_ein: None,
+                nonemployee_compensation: Money::from_cents(500_000),
+                federal_withholding: Money::ZERO,
+                expenses: Money::from_cents(50_000),
+            },
+        ];
+        let r = compute_1040(&input, &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        // Nets: (10000 - 1000) + (5000 - 500) = $13,500.
+        assert_eq!(line("schc_net_profit"), 1_350_000);
+        assert_eq!(line("8"), 1_350_000);
+        // SE earnings: 13500 x 0.9235 = $12,467.25.
+        assert_eq!(line("schedse_net_earnings"), 1_246_725);
+        // NEC Box 4 withholding joins line 25d.
+        assert_eq!(line("25d"), 410_000);
+    }
+
+    #[test]
+    fn nec_se_tax_capped_by_w2_wages_over_base() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut input = case005_input();
+        input.w2s[0].wages = Money::from_cents(20_000_000); // $200,000 > base
+        let r = compute_1040(&input, &params);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        // SS room exhausted by the W-2 (Box 1 proxy): only Medicare.
+        assert_eq!(line("23"), 48_207, "Medicare part only, $482.07");
+        assert_eq!(line("10"), 24_104, "half of $482.07, rounded half up");
+    }
+
     #[test]
     fn case002_json_round_trip() {
         let json = r#"{
@@ -910,6 +1135,7 @@ mod tests {
             "11",
             "15",
             "16",
+            "24",
             "34",
             "37",
         ] {
@@ -919,13 +1145,17 @@ mod tests {
                 "line {line} must be incomplete"
             );
         }
-        // Independent lines stay complete and exact.
+        // Independent lines stay complete and exact — including the
+        // self-employment lines, which depend only on NEC/W-2 inputs.
         let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
         assert_eq!(line("1a"), 5_000_000);
         assert_eq!(line("2b"), 50_000);
         assert_eq!(line("3a"), 60_000);
         assert_eq!(line("3b"), 100_000);
+        assert_eq!(line("8"), 0);
+        assert_eq!(line("10"), 0);
         assert_eq!(line("12"), 1_575_000);
+        assert_eq!(line("23"), 0);
         assert_eq!(line("25d"), 400_000);
         assert_eq!(line("33"), 400_000);
     }
@@ -983,10 +1213,11 @@ mod tests {
         assert_eq!(map.year, 2025);
         assert!(!map.derivation.is_empty());
         let amounts: Vec<_> = map.entries.iter().filter(|e| e.kind == "amount").collect();
-        // 20 mapped amount fields: 1a 1z 2a 2b 3a 3b 7 9 11a 11b 12e 14 15
-        // 16 24 25a 25d 33 34 37 — engine line 11 feeds both 11a and 11b,
-        // line 12 feeds 12e and 14, and line 16 feeds 16 and 24.
-        assert_eq!(amounts.len(), 20);
+        // 23 mapped amount fields: 1a 1z 2a 2b 3a 3b 7 8 9 10 11a 11b 12e
+        // 14 15 16 23 24 25a 25d 33 34 37 — engine line 11 feeds both 11a
+        // and 11b, line 12 feeds 12e and 14, and line 24 is fed by the
+        // engine's own line 24 (= 16 + 23).
+        assert_eq!(amounts.len(), 23);
         for e in &map.entries {
             assert!(e.qname.starts_with("topmostSubform[0]."), "{}", e.qname);
             assert!(!e.note.is_empty(), "every entry documents its evidence");
@@ -997,7 +1228,7 @@ mod tests {
                 .find(|e| e.kind == "amount" && e.line == line)
                 .map(|e| e.source_line().to_string())
         };
-        assert_eq!(src("24").as_deref(), Some("16"));
+        assert_eq!(src("24").as_deref(), Some("24"));
         assert_eq!(src("14").as_deref(), Some("12"));
     }
 
@@ -1005,8 +1236,8 @@ mod tests {
     fn complete_lines(overpaid: i64, owed: i64) -> BTreeMap<String, FactResult<Money>> {
         let mut lines = BTreeMap::new();
         for l in [
-            "1a", "1z", "2a", "2b", "3a", "3b", "7", "9", "11", "12", "15", "16", "25a", "25d",
-            "33",
+            "1a", "1z", "2a", "2b", "3a", "3b", "7", "8", "9", "10", "11", "12", "15", "16", "23",
+            "24", "25a", "25d", "33",
         ] {
             lines.insert(l.to_string(), FactResult::Complete(Money::from_cents(100)));
         }

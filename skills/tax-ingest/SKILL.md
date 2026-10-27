@@ -23,9 +23,15 @@ touches raw documents; treat every file as sensitive.
    printed, even if it looks wrong.
 4. Enter each document:
    `tax form add --return <id> --node-type w2 --file <entry.json>`
-   (v1 computes W-2, 1099-INT, 1099-DIV, and 1099-B entries; any other
-   node type returns `not_implemented` — tell the user, don't work
-   around it.)
+   (v1 computes W-2, 1099-INT, 1099-DIV, 1099-B, and 1099-NEC entries;
+   any other node type returns `not_implemented` — tell the user, don't
+   work around it.)
+   - **1099-NEC exception:** the entry's `expenses` field is NOT printed
+     on the 1099-NEC. Transcribe Box 1 (and Box 4, if present) from the
+     document; for `expenses`, ask the user for that engagement's total
+     Schedule C expenses from their records and record the source as
+     "user-provided records" — never estimate, itemize, or invent it.
+     No expenses reported means the user states there were none.
 5. Run `tax return validate --return <id>`. The deterministic checks
    (e.g. W-2 Social Security/Medicare rate cross-checks) will flag
    transcription errors and genuinely odd documents alike. Report every

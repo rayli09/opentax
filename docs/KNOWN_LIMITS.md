@@ -4,22 +4,27 @@ This list is the contract: anything not listed as working is not claimed.
 
 ## Compute (tax-forms)
 
-- Only Form 1040, only these lines: 1a, 1z, 2a, 2b, 3a, 3b, 7, 9, 11, 12,
-  15, 16, 25a, 25d, 33, 34, 37 — plus five internal keys in the computed
-  lines map, which are not Form 1040 line numbers: `schd_net_short` /
-  `schd_net_long` (net short-/long-term gain or loss from 1099-B),
-  `schd_net_capital_gain` (the QDCG worksheet's capital-gain input), and
-  `schd_carryover_short` / `schd_carryover_long` (capital loss
-  carryovers to the next year, as positive amounts).
+- Only Form 1040, only these lines: 1a, 1z, 2a, 2b, 3a, 3b, 7, 8, 9, 10,
+  11, 12, 15, 16, 23, 24, 25a, 25d, 33, 34, 37 — plus internal keys in
+  the computed lines map, which are not Form 1040 line numbers:
+  `schd_net_short` / `schd_net_long` (net short-/long-term gain or loss
+  from 1099-B), `schd_net_capital_gain` (the QDCG worksheet's
+  capital-gain input), `schd_carryover_short` / `schd_carryover_long`
+  (capital loss carryovers to the next year, as positive amounts),
+  `schc_net_profit` (Schedule C net profit from 1099-NEC engagements),
+  `schedse_net_earnings` (Schedule SE line 4a net earnings), and
+  `sched2_se_tax` (the Schedule SE tax entering Schedule 2 line 4,
+  equal to line 23).
 - Income sources: W-2 wages; 1099-INT (Box 1 → line 2b, Box 8
   tax-exempt interest → line 2a, Box 4 withholding → line 25d);
   1099-DIV (Box 1a → line 3b, Box 1b qualified → line 3a, Box 4 →
   line 25d); 1099-B (per-transaction Box 1d proceeds − Box 1e basis +
-  Box 1g adjustment as reported, aggregated by term). A 1099-B
+  Box 1g adjustment as reported, aggregated by term); 1099-NEC (Box 1 →
+  Schedule C → line 8, Box 4 withholding → line 25d). A 1099-B
   transaction missing proceeds or basis makes the capital-gain lines
   (7, the `schd_*` keys, and everything downstream) Incomplete, never
   zero. Wash-sale and other adjustments are taken as reported in
-  Box 1g — they are not computed. No Schedule C/E, no K-1, no crypto.
+  Box 1g — they are not computed. No Schedule E, no K-1, no crypto.
 - Schedule D is computed as the simplified two-net combination, not
   produced as a form: line 7 = Schedule D line 16 when it is a gain;
   when it is a loss, the Schedule D line 21 amount — the loss limited
@@ -57,8 +62,39 @@ This list is the contract: anything not listed as working is not claimed.
   from a whole-dollar paper filing by a dollar.
 - Line 12 is the standard deduction only; no itemizing, no additional
   amounts (age/blindness), no QBI deduction (line 13).
-- AGI = total income: no adjustments (student loan interest, HSA, SE tax…).
-- No credits (CTC, EITC, education, foreign), no AMT, no NIIT, no other taxes.
+- Line 10 is the deductible part of self-employment tax only (Schedule 1
+  line 15); no other adjustments (student loan interest, HSA, IRA…).
+- No credits (CTC, EITC, education, foreign), no AMT, no NIIT. The only
+  "other tax" is self-employment tax on line 23 (Schedule 2 line 4);
+  line 24 = line 16 + line 23.
+- Schedule C / Schedule SE (simplified, for 1099-NEC side income):
+  - One `expenses` total per 1099-NEC engagement stands in for the whole
+    Schedule C expense section — no per-category expenses, no cost of
+    goods sold or inventory, no home-office deduction (Form 8829 /
+    simplified method), no vehicle methods. `expenses` is not a
+    1099-NEC box; it comes from the filer's records. A net loss on an
+    engagement is allowed and flows to line 8 in full (no at-risk /
+    passive-activity limits).
+  - Schedule SE is the Short Schedule SE logic: net earnings = Schedule
+    C net profit × 92.35% (IRC §1402(a); zero when the net is a loss);
+    Social Security part = 12.4% (IRC §1401(a)) of net earnings capped
+    at the TY2025 wage base ($176,100, SSA 2025 announcement) minus
+    W-2 Social Security wages; Medicare part = 2.9% (IRC §1401(b)) of
+    net earnings, uncapped. Rates and the wage base are params data
+    (params/2025.json, with sources).
+  - The W-2 Social Security wage input is approximated by Σ W-2 **Box 1**
+    wages — Schedule SE line 8a takes Box 3, but Box 1 is what v1
+    requires on a W-2 entry. The two differ when Box 1 is reduced by
+    pre-tax amounts that remain Social Security wages (e.g. 401(k)
+    deferrals), which can overstate the SE Social Security part.
+    `tax return validate` raises an info finding (`nec_ss_wage_proxy`)
+    on any return holding both W-2 and 1099-NEC entries.
+  - No Additional Medicare Tax (0.9%, Form 8959), no exemptions from SE
+    tax (ministers, etc.), no optional methods, no church-employee
+    income, no estimated-tax underpayment penalty (Form 2210), and no
+    §199A QBI deduction on the Schedule C profit. SE figures are kept in
+    cents; the paper Schedule SE rounds to whole dollars, so a paper
+    filing can differ by a dollar.
 - Line 33 is simplified to equal 25d (withholding only).
 - No state returns.
 - Filing statuses: single, mfj, hoh, mfs parameters are included; mfs
@@ -134,9 +170,12 @@ This list is the contract: anything not listed as working is not claimed.
   applied in v1. TY2025 layout notes: AGI is written to both 11a and
   11b (the form repeats it on page 2), the standard deduction to 12e
   and to line 14 (= 12e + 13a + 13b, and the engine computes no
-  13a/13b), and total tax to both 16 and 24 (= 22 + 23, no 17–23
-  amounts). Schedules are not exported. An incomplete return is
-  refused (`return_incomplete`, no file written).
+  13a/13b), and line 24 is written from engine line 24 (= 16 + 23;
+  engine line 22 is always 0 since no lines 17–21 amounts exist).
+  Lines 8, 10, and 23 are exported too (geometrically verified like the
+  rest: line 8 = f1_72, line 10 = f1_74 — on page 1, between lines 9
+  and 11a — and line 23 = f2_15). Schedules are not exported. An
+  incomplete return is refused (`return_incomplete`, no file written).
 
 ## Filing
 

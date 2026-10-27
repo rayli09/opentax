@@ -9,8 +9,9 @@ The agent never does arithmetic. Every number on a return is produced by
 tested, deterministic code, or transcribed verbatim from a source document
 with its source recorded.
 
-> **Status: scaffold.** A working vertical slice (TY2025 Form 1040 with W-2
-> income), not a finished tax product. See `docs/KNOWN_LIMITS.md` for
+> **Status: scaffold.** A working vertical slice (TY2025 Form 1040 with
+> W-2 income, bank/broker 1099s, and 1099-NEC side income with Schedule
+> C / Schedule SE), not a finished tax product. See `docs/KNOWN_LIMITS.md` for
 > exactly what is missing. JSON export and filled-PDF export (amounts +
 > filing status onto a user-supplied TY2025 1040 template) work; MeF
 > e-file does not (it reports `not_implemented` honestly).
