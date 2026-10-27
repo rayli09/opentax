@@ -1185,7 +1185,10 @@ fn form_540(input: &Form1040Input, ca: &CaComputed, params: &TaxParams) -> Packe
 
     // Filing status: exactly one radio entry resolves, via a
     // per-status dictionary key (see the map's source_line values).
-    check(&mut dict, &format!("filing_status_{}", input.status.as_str()));
+    check(
+        &mut dict,
+        &format!("filing_status_{}", input.status.as_str()),
+    );
 
     // Exemption counts (boxes) + amounts (engine lines 7-11).
     let (personal, blind, senior, dependents) = exemption_counts(input, params);
