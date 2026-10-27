@@ -2068,6 +2068,8 @@ fn extract_w2(
             social_security_tax: money("social_security_tax"),
             medicare_wages: money("medicare_wages"),
             medicare_tax: money("medicare_tax"),
+            state_wages: None,
+            state_withholding: None,
         };
         checks = validate_w2(&input, params);
     } else {

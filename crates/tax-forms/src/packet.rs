@@ -1093,6 +1093,8 @@ mod tests {
                 social_security_tax: None,
                 medicare_wages: None,
                 medicare_tax: None,
+                state_wages: None,
+                state_withholding: None,
             }],
             interest_income: Money::ZERO,
             ordinary_dividends: Money::ZERO,
@@ -1102,6 +1104,7 @@ mod tests {
             f1099_necs: vec![],
             dependents: vec![],
             identity: None,
+            state: None,
         }
     }
 
@@ -1197,6 +1200,7 @@ mod tests {
                 nonemployee_compensation: m(10_000),
                 federal_withholding: Money::ZERO,
                 expenses: m(1_000),
+                state_withholding: None,
             },
             I1099NecInput {
                 payer_name: "Client B".into(),
@@ -1204,6 +1208,7 @@ mod tests {
                 nonemployee_compensation: m(5_000),
                 federal_withholding: Money::ZERO,
                 expenses: Money::ZERO,
+                state_withholding: None,
             },
         ];
         let computed = compute_1040(&input, &params());
@@ -1265,6 +1270,7 @@ mod tests {
             nonemployee_compensation: m(1_000),
             federal_withholding: Money::ZERO,
             expenses: m(3_000),
+            state_withholding: None,
         }];
         let computed = compute_1040(&input, &params());
         let forms = build_packet(&input, &computed, &params());

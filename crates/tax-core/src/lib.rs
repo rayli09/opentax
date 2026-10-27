@@ -1745,8 +1745,14 @@ mod tests {
             p.exemption_phaseout_threshold(FilingStatus::Hoh).cents(),
             37_831_000
         );
-        assert_eq!(p.exemption_phaseout_step(FilingStatus::Single).cents(), 250_000);
-        assert_eq!(p.exemption_phaseout_step(FilingStatus::Mfs).cents(), 125_000);
+        assert_eq!(
+            p.exemption_phaseout_step(FilingStatus::Single).cents(),
+            250_000
+        );
+        assert_eq!(
+            p.exemption_phaseout_step(FilingStatus::Mfs).cents(),
+            125_000
+        );
         // FTB 3514 (2025): AGI limit $32,901; investment income $4,814;
         // Part II AGI-lookup thresholds $4,661 / $6,998 / $9,823.
         assert_eq!(p.caleitc.agi_limit_cents, 3_290_100);
@@ -1762,7 +1768,10 @@ mod tests {
         assert_eq!(p.yctc.phaseout_threshold_cents, 2_742_500);
         assert_eq!(p.yctc.reduction_per_100_dollars_cents, 2_171);
         // Form 540 line 62: 1% over $1,000,000.
-        assert_eq!(p.behavioral_health_services_tax.threshold_cents, 100_000_000);
+        assert_eq!(
+            p.behavioral_health_services_tax.threshold_cents,
+            100_000_000
+        );
         assert_eq!(p.behavioral_health_services_tax.rate_bp, 100);
     }
 
@@ -1831,15 +1840,36 @@ mod tests {
         let tax = |s: FilingStatus, dollars: i64| table.tax(s, Money::from_cents(dollars * 100));
         // Spot cells read off the booklet pages.
         assert_eq!(tax(FilingStatus::Single, 25), Some(Money::from_cents(0)));
-        assert_eq!(tax(FilingStatus::Single, 6_500), Some(Money::from_cents(6_500)));
-        assert_eq!(tax(FilingStatus::Single, 19_500), Some(Money::from_cents(27_900)));
-        assert_eq!(tax(FilingStatus::Mfj, 19_500), Some(Money::from_cents(19_500)));
-        assert_eq!(tax(FilingStatus::Mfs, 19_500), Some(Money::from_cents(27_900)));
-        assert_eq!(tax(FilingStatus::Single, 33_500), Some(Money::from_cents(70_400)));
-        assert_eq!(tax(FilingStatus::Hoh, 33_500), Some(Money::from_cents(44_800)));
+        assert_eq!(
+            tax(FilingStatus::Single, 6_500),
+            Some(Money::from_cents(6_500))
+        );
+        assert_eq!(
+            tax(FilingStatus::Single, 19_500),
+            Some(Money::from_cents(27_900))
+        );
+        assert_eq!(
+            tax(FilingStatus::Mfj, 19_500),
+            Some(Money::from_cents(19_500))
+        );
+        assert_eq!(
+            tax(FilingStatus::Mfs, 19_500),
+            Some(Money::from_cents(27_900))
+        );
+        assert_eq!(
+            tax(FilingStatus::Single, 33_500),
+            Some(Money::from_cents(70_400))
+        );
+        assert_eq!(
+            tax(FilingStatus::Hoh, 33_500),
+            Some(Money::from_cents(44_800))
+        );
         // The cell that discriminates the table's midpoint convention
         // (head of household, row 99,651-99,750): $3,682 as printed.
-        assert_eq!(tax(FilingStatus::Hoh, 99_700), Some(Money::from_cents(368_200)));
+        assert_eq!(
+            tax(FilingStatus::Hoh, 99_700),
+            Some(Money::from_cents(368_200))
+        );
         // The table applies AT $100,000 in California (unlike the
         // federal table), and not above.
         assert!(tax(FilingStatus::Single, 100_000).is_some());
