@@ -1382,6 +1382,12 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     format!("only TY2025 parameter data ships in v1 (got {year})"),
                 ));
             }
+            if matches!((interest_cents, dividends_cents), (Some(i), _) | (_, Some(i)) if i < 0) {
+                return Err(CliErr::new(
+                    "invalid_input",
+                    "interest and dividend amounts cannot be negative",
+                ));
+            }
             let other_income = match (interest_cents, dividends_cents) {
                 (Some(i), Some(d)) => Some(OtherIncome {
                     interest: Money::from_cents(i),
