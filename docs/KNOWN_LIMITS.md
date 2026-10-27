@@ -501,9 +501,67 @@ This list is the contract: anything not listed as working is not claimed.
 
 ## Filing
 
-- No e-file. MeF export returns `not_implemented`. JSON, filled-PDF,
-  and filing-packet export only (scopes above).
-- No IRS/state credential handling of any kind, by design (v1).
+- No e-file and no transmission of any kind. MeF **export** exists
+  (`tax return export --type mef --out <file.xml>`); it produces a
+  standards-shaped artifact for import/review/testing — it cannot be
+  filed. Transmission requires a firm-level EFIN/ETIN, annual IRS
+  Assurance Testing (ATS) per form family, and per-state approvals;
+  credentials are non-transferable and none exist in this tool, by
+  design (v1). No IRS/state credential handling of any kind.
+- MeF export scope and honesty tiers:
+  - **Form documents (Tier A)**: `IRS1040` plus the schedules the
+    engine computes, with the packet's applicability rules —
+    Schedules 1, 2, C (one per 1099-NEC engagement), D, SE, 8812,
+    1-A, Form 8949, and Schedule EIC when it can be represented.
+    Element names, order, and types follow the official IRS TY2025
+    MeF schema package, version **2025v5.2** (Final Release,
+    2026-02-19; the IRS distributes the package only through its
+    Secure Object Repository, so reference copies are vendored with
+    provenance under `scripts/mef-schemas/`). The emitted documents
+    are validated against those XSDs by `scripts/mef_acceptance.py`
+    — the binary itself performs no XSD validation and its export
+    report says so (`validation.xsd_validated: false`). One disclosed
+    substitution: the schemas' shared `Common/efileTypes.xsd` is the
+    authentic TY2015 file (the TY2025 Common file is SOR-gated too),
+    with three post-2015 leaf types supplied by the harness; none of
+    them gates an emitted element.
+  - **Envelope (Tier B)**: `Return` / `ReturnHeader` / `ReturnData`
+    per IRS Publication 4164 (Rev. 12-2025) §2.10.1 and the header
+    vocabulary of a production transmitter — NOT XSD-validated (the
+    envelope schemas are not publicly available). The header omits
+    originator (EFIN), software ID, PIN/signature, and
+    filing-security groups, which only a credentialed transmitter
+    can populate.
+  - Amounts are **whole dollars** (the MeF amount types are integer
+    dollars), rounded per field from the engine's cents, half away
+    from zero; the export report lists every rounded field and any
+    total that stops cross-footing by a dollar. The JSON/PDF exports
+    keep cents and are the precise artifacts.
+  - A stored taxpayer identity is **required** (unlike PDF export,
+    which tolerates its absence and reports identity fields
+    skipped): the ReturnHeader Filer block needs the taxpayer's name
+    and SSN. The full SSN appears in the XML file — it is the filing
+    artifact — and never in the CLI's stdout report.
+  - `IRSW2` documents are not emitted: the return stores each W-2's
+    EIN and amounts, but not the employer's name, name control, or
+    address, which the schema requires.
+  - Schedule EIC is omitted (with a note in the export report) when
+    an EIC qualifying child's relationship cannot be represented:
+    that form's `ChildRelationshipCd` enumeration is gender-specific
+    (SON / DAUGHTER / …) with no generic value, and the return
+    records a child without gender. On Form 1040's `DependentDetail`
+    the same child is emitted as OTHER (a disclosed lossy mapping;
+    STEPCHILD and FOSTER CHILD map exactly in both places).
+  - The schema requires two answers the return does not record:
+    `VirtualCurAcquiredDurTYInd` (digital assets) is emitted `false`
+    — no digital-asset transaction exists anywhere in the return's
+    modeled scope — and Schedule C's accounting-method choice is
+    emitted as cash, matching the engine's cash-shaped Schedule C
+    model (the PDF packet leaves that box blank). Both are disclosed
+    in the export report's validation notes.
+  - The refund is emitted as a full refund to the filer
+    (`OverpaidAmt` = `RefundAmt`): no Form 8888 split and nothing
+    applied to next year's estimated tax, matching the engine.
 
 ## CLI
 

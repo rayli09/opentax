@@ -67,7 +67,9 @@ computation (like MeF business rules), so it runs on partial returns.
   cross-document consistency, grounding checks. The validator never
   silently fixes a number.
 - **L5 Review & export**: annotated pages, a ranked flag list, and export
-  of the computed return (JSON today; filled PDF and MeF XML next).
+  of the computed return (JSON, filled PDF, filing packet, and MeF
+  XML — the last an export artifact only; transmission stays out of
+  scope, see "The MeF moat" below).
 
 ## PDF filling: spike verdict → implemented decision
 

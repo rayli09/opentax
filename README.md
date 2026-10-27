@@ -21,8 +21,13 @@ with its source recorded.
 > onto a user-supplied TY2025 1040 template), and filing-packet export
 > (`--type packet`: the filled 1040 plus every applicable schedule —
 > Schedule D, Form 8949, Schedules 1, 2, C, SE, 8812, 1-A — with a
-> per-form manifest) work; MeF e-file does not
-> (it reports `not_implemented` honestly). Taxpayer identity can be
+> per-form manifest) work; MeF XML export
+> (`--type mef`) also works — the return as standards-shaped XML
+> (TY2025v5.2 form documents, whole-dollar amounts, XSD-validated by
+> `scripts/mef_acceptance.py`) for import/review/testing. It is an
+> artifact, not a filing: MeF transmission requires an EFIN holder
+> and IRS acceptance testing, and this tool holds no e-file
+> credentials. Taxpayer identity can be
 > stored per return (`tax return set-identity`): it drives the
 > age-65/blind standard-deduction additions, the Schedule 1-A senior
 > deduction, and fills the form's

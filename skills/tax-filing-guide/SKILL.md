@@ -37,6 +37,12 @@ explained honestly and the user still gets a working path to filed.
      mailing evidence.
    - A paid preparer / commercial software remains a valid choice; the
      exported JSON and line summary make that handoff quick.
+   - The MeF XML export (`tax return export --type mef`) is **not a
+     channel**: it produces a standards-shaped artifact (TY2025v5.2
+     form documents) that a credentialed transmitter's software could
+     import or a reviewer could inspect. It cannot be uploaded to the
+     IRS by the user, and the export itself says so — never present
+     it as something the user can submit.
 3. Whichever channel: the user enters/submits; you may read back figures
    from `tax return get` to help them key accurately, quoting engine
    output only.

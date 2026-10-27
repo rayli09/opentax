@@ -1,0 +1,921 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://www.irs.gov/efile" targetNamespace="http://www.irs.gov/efile" elementFormDefault="qualified" attributeFormDefault="unqualified">
+
+	<xsd:annotation>
+		<xsd:documentation>
+			<Description>IRS e-file Schema - IRS Form 1040 Schedule 1</Description>
+			<TaxYear>2025</TaxYear>
+			<MaturityLevel>Final Release</MaturityLevel>
+			<ReleaseDate>February 19 2026</ReleaseDate>
+		</xsd:documentation>
+	</xsd:annotation>
+	
+	<xsd:include schemaLocation="../../../Common/efileTypes.xsd"/>
+
+	<!-- ================================================================== -->
+	<!-- ==================== IRS Form 1040 Schedule 1 ==================== -->
+	<!-- ================================================================== -->
+
+	<xsd:element name="IRS1040Schedule1">
+		<xsd:annotation>
+			<xsd:documentation>IRS Form 1040 Schedule 1</xsd:documentation>
+		</xsd:annotation>
+		<xsd:complexType>
+		<xsd:complexContent>
+			<xsd:extension base="IRS1040Schedule1Type">
+				<xsd:attributeGroup ref="DocumentAttributes">
+					<xsd:annotation>
+						<xsd:documentation>Common return document attributes</xsd:documentation>
+					</xsd:annotation>
+				</xsd:attributeGroup>
+				<xsd:attribute name="documentName" type="xsd:string" fixed="IRS1040Schedule1">
+					<xsd:annotation>
+						<xsd:documentation>IRS internal use only. To avoid error in the return, do not include the attribute name or value.</xsd:documentation>
+					</xsd:annotation>
+				</xsd:attribute>
+				<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+				<xsd:attribute name="referenceDocumentName" type="StringType" fixed="BinaryAttachment GeneralDependencyMedium GeneralDependencySmall"/>
+			</xsd:extension>
+		</xsd:complexContent>
+		</xsd:complexType>
+	 </xsd:element>
+
+	 <xsd:complexType name="IRS1040Schedule1Type">
+		<xsd:annotation>
+			<xsd:documentation>Content model for Form 1040 Schedule 1</xsd:documentation>
+		</xsd:annotation>
+		<xsd:sequence>
+		
+			<!-- FORM 1099-K REPORTED ERROR OR LOSS Amount -->
+			<xsd:element name="Form1099KRptErrorOrLossAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Form 1099-K amount reported in error or for personal items sold at a loss</Description>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+		
+			<!-- Part I  Additional Income -->
+
+			<!-- State And Local Income Tax Refund Amount -->
+			<xsd:element name="StateLocalIncomeTaxRefundAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>State And Local Income Tax Refund Amount</Description>
+						<LineNumber>1</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			
+			<!-- Alimony Received Group -->
+			<xsd:element name="AlimonyReceivedGrp" minOccurs="0" maxOccurs="10">
+				<xsd:complexType>
+					<xsd:sequence>
+						<!-- Alimony Received Amount -->
+						<xsd:element name="AlimonyReceivedAmt" type="USAmountNNType">
+							<xsd:annotation>
+								<xsd:documentation>
+									<Description>Alimony Received Amount</Description>
+									<LineNumber>2a</LineNumber>
+								</xsd:documentation>
+							</xsd:annotation>
+						</xsd:element>
+
+						<!-- Divorce Or Separation Agreement Date -->
+						<xsd:element name="DivorceOrSeparationAgreementDt" type="YearMonthType">
+							<xsd:annotation>
+								<xsd:documentation>
+									<Description>Divorce Or Separation Agreement Date</Description>
+									<LineNumber>2b</LineNumber>
+								</xsd:documentation>
+							</xsd:annotation>
+						</xsd:element>
+
+					</xsd:sequence>
+				</xsd:complexType>
+			</xsd:element>
+
+			<!-- Total Alimony Received Amount -->
+			<xsd:element name="TotalAlimonyReceivedAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Total Alimony Received Amount</Description>
+						<LineNumber>2a</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+
+			<!-- Business Income Or Loss Amount -->
+			<xsd:element name="BusinessIncomeLossAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Business Income Or Loss Amount</Description>
+						<LineNumber>3</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS1040ScheduleC"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			<!-- Form 4797 Indicator -->
+			<xsd:element name="Form4797Ind" type="CheckboxType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Form 4797 Indicator</Description>
+						<LineNumber>4</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>	
+			<!-- Form 4684 Indicator -->
+			<xsd:element name="Form4684Ind" type="CheckboxType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Form 4684 Indicator</Description>
+						<LineNumber>4</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>			
+			<!-- Other Gains Or Losses Amount -->
+			<xsd:element name="OtherGainLossAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Other Gains Or Losses Amount</Description>
+						<LineNumber>4</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS4797"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+
+			<!-- Rental Real Estate Income Or Loss Amount -->
+			<xsd:element name="RentalRealEstateIncomeLossAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Rental Real Estate Income Or Loss Amount</Description>
+						<LineNumber>5</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS1040ScheduleE"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+
+			<!-- Net Farm Profit Or Loss Amount -->
+			<xsd:element name="NetFarmProfitLossAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Net Farm Profit Or Loss Amount</Description>
+						<LineNumber>6</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS1040ScheduleF"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			
+			<!-- Repaid overpayment Indicator -->
+			<xsd:element name="RepaidOverpaymentInd" type="CheckboxType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Repaid overpayment Indicator</Description>
+						<LineNumber>7</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+		
+			<!-- Repayment Amount -->
+			<xsd:element name="RepaymentAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Repayment </Description>
+						<LineNumber>7</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			
+			<!-- Unemployment Compensation Amount -->
+			<xsd:element name="UnemploymentCompAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Unemployment Compensation Amount</Description>
+						<LineNumber>7</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			
+			<!-- Other Income: -->
+			
+			<!-- Net operating loss -->
+			<xsd:element name="NetOperatingLossDeductionAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Net operating loss</Description>
+						<LineNumber>8a</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="NetOperatingLossCarryforwardDeductionStatement"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			<!-- Gambling income -->
+			<xsd:element name="GamblingReportableWinningAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Gambling income</Description>
+						<LineNumber>8b</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Cancellation of debt -->
+			<xsd:element name="DebtCancellationAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Cancellation of debt</Description>
+						<LineNumber>8c</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Foreign earned income exclusion -->
+			<xsd:element name="TotalIncomeExclusionAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Foreign earned income exclusion</Description>
+						<LineNumber>8d</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS2555"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			
+			<!-- Income from Form 8853 -->
+			<xsd:element name="TotArcherMSAMedcrLTCAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Income from Form 8853</Description>
+						<LineNumber>8e</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS8853"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			
+			<!-- Income from Form 8889 -->
+			<xsd:element name="TotHSADistriHDHPAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Income from Form 8889</Description>
+						<LineNumber>8f</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS8889"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			
+			<!-- Alaska Permanent Fund dividends -->
+			<xsd:element name="AlaskaPermanentFundDivAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Alaska Permanent Fund dividends</Description>
+						<LineNumber>8g</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Jury duty pay -->
+			<xsd:element name="JuryDutyPayAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Jury duty pay</Description>
+						<LineNumber>8h</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Prizes and awards -->
+			<xsd:element name="PrizesAwardsAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Prizes and awards</Description>
+						<LineNumber>8i</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Activity not engaged in for profit income -->
+			<xsd:element name="ActivityNotForProfitIncmAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Activity not engaged in for profit income</Description>
+						<LineNumber>8j</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Stock options -->
+			<xsd:element name="StockOptionsAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Stock options</Description>
+						<LineNumber>8k</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Income from the rental of personal property -->
+			<xsd:element name="RentalIncomePersonalPropAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Income from the rental of personal property</Description>
+						<LineNumber>8l</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Olympic and Paralympic medals and USOC prize money -->
+			<xsd:element name="OlympicParalympicMedalUSOCAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Olympic and Paralympic medals and USOC prize money</Description>
+						<LineNumber>8m</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Section 951(a) inclusion -->
+			<xsd:element name="Section951aInclusionAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Section 951(a) inclusion</Description>
+						<LineNumber>8n</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Section 951A(a) inclusion -->
+			<xsd:element name="Section951AaInclusionAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Section 951A(a) inclusion</Description>
+						<LineNumber>8o</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Section 461(l) excess business loss adjustment -->		
+			<xsd:element name="ExcessBusinessLossAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Section 461(l) excess business loss adjustment</Description>
+						<LineNumber>8p</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS461"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			<!-- Taxable distributions from an ABLE account -->
+			<xsd:element name="TaxableABLEDistributionsAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Taxable distributions from an ABLE account</Description>
+						<LineNumber>8q</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			
+			<!-- Taxable Scholarship Income -->		
+			<xsd:element name="GrantsOrScholarshipsAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Taxable Scholarship Income</Description>
+						<LineNumber>8r</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS1042S"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			
+			<!-- Nontaxable Medicaid Waiver -->
+			<xsd:element name="NontxMedicaidWaiverPymtAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Nontaxable Medicaid Waiver</Description>
+						<LineNumber>8s</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			
+			<!-- Nonqualified Deferred Compensation -->
+			<xsd:element name="NonqlfyDeferredCompensationAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Nonqualified Deferred Compensation</Description>
+						<LineNumber>8t</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			
+			<!-- Certain wages from penal institutions -->
+			<xsd:element name="CertainPenalInstnWagesAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Certain wages from penal institutions</Description>
+						<LineNumber>8u</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			
+			<!-- Digital Assets Amount -->
+			<xsd:element name="DigitalAssetsAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Digital assets received as ordinary income not reported elsewhere</Description>
+						<LineNumber>8v</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			
+			<!-- Other Income Total Amount -->		
+			<xsd:element name="OtherIncomeTotalAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<LineNumber>8z</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="OtherIncomeTypeStatement"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			
+			<!-- Total Other Income Amount -->
+			<xsd:element name="TotalOtherIncomeAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Total Other Income Amount</Description>
+						<LineNumber>9</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+
+			<!-- Total Additional Income Amount  -->
+			<xsd:element name="TotalAdditionalIncomeAmt" type="USAmountType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Total Additional Income Amount</Description>
+						<LineNumber>10</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+
+			<!-- Part II  Adjustments to Income -->			
+
+			<!-- Educator Expenses Amount -->
+			<xsd:element name="EducatorExpensesAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Educator Expenses Amount</Description>
+						<LineNumber>11</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>	
+
+			<!-- Business Expenses Of Reservists And Others Amount -->
+			<xsd:element name="BusExpnsReservistsAndOthersAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Business Expenses Of Reservists And Others Amount</Description>
+						<LineNumber>12</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS2106"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+
+			<!-- Health Savings Account Deduction Amount -->
+			<xsd:element name="HealthSavingsAccountDedAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Health Savings Account Deduction Amount</Description>
+						<LineNumber>13</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS8889"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+
+			<!-- Moving Expenses Amount -->
+			<xsd:element name="MovingExpenseAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Moving Expenses Amount</Description>
+						<LineNumber>14</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS3903"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			
+			<!-- Claim storage fees Indicator -->
+			<xsd:element name="ClaimStorageFeesInd" type="CheckboxType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Claim storage fees Indicator</Description>
+						<LineNumber>14</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>			
+
+			<!-- Deductible Self-Employment Tax Amount -->
+			<xsd:element name="DeductibleSelfEmploymentTaxAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Deductible Self-Employment Tax Amount</Description>
+						<LineNumber>15</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS1040ScheduleSE"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+
+			<!-- Self-Employed SEP, SIMPLE, And Qualified Plans Amount -->
+			<xsd:element name="SelfEmpldSepSimpleQlfyPlansAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Self-Employed SEP, SIMPLE, And Qualified Plans Amount</Description>
+						<LineNumber>16</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+
+			<!-- Self-Employed Health Insurance Deduction Amount -->
+			<xsd:element name="SelfEmpldHealthInsDedAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Self-Employed Health Insurance Deduction Amount</Description>
+						<LineNumber>17</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+
+			<!-- Penalty On Early Withdrawal Of Savings Amount -->
+			<xsd:element name="PnltyOnErlyWthdrwOfSavingsAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Penalty On Early Withdrawal Of Savings Amount</Description>
+						<LineNumber>18</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+
+			<!-- Alimony Amount Group -->
+			<xsd:element name="AlimonyAmountGrp" minOccurs="0" maxOccurs="10">
+				<xsd:complexType>
+					<xsd:sequence>
+
+						<!-- Alimony Paid Amount -->
+						<xsd:element name="AlimonyPaidAmt" type="USAmountNNType">
+							<xsd:annotation>
+								<xsd:documentation>
+									<Description>Alimony Paid Amount</Description>
+									<LineNumber>19a</LineNumber>
+								</xsd:documentation>
+							</xsd:annotation>
+						</xsd:element>
+
+						<!-- Recipient's SSN -->
+						<xsd:element name="RecipientSSN" type="SSNType">
+							<xsd:annotation>
+								<xsd:documentation>
+									<Description>Recipient's SSN</Description>
+									<LineNumber>19b</LineNumber>
+								</xsd:documentation>
+							</xsd:annotation>
+						</xsd:element>
+
+						<!-- Divorce Or Separation Agreement Date -->
+						<xsd:element name="DivorceOrSeparationAgreementDt" type="YearMonthType">
+							<xsd:annotation>
+								<xsd:documentation>
+									<Description>Date Or Separation Agreement Date</Description>
+									<LineNumber>19c</LineNumber>
+								</xsd:documentation>
+							</xsd:annotation>
+						</xsd:element>
+					</xsd:sequence>
+				</xsd:complexType>
+			</xsd:element>
+
+			<!-- Total Alimony Paid Amount -->
+			<xsd:element name="TotalAlimonyPaidAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Total Alimony Paid Amount</Description>
+						<LineNumber>19a</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+
+			<!-- IRA Deduction Amount -->
+			<xsd:element name="IRADeductionAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>IRA Deduction Amount</Description>
+						<LineNumber>20</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			
+			<!-- Married filing separately and lived apart for the entire year Indicator -->
+			<xsd:element name="MFSLiveApartEntireYrInd" type="CheckboxType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Married filing separately and lived apart for the entire year</Description>
+						<LineNumber>20</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>			
+
+			<!-- Student Loan Interest Deduction Amount -->
+			<xsd:element name="StudentLoanInterestDedAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Student Loan Interest Deduction Amount</Description>
+						<LineNumber>21</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:simpleType>
+					<xsd:restriction base="USAmountNNType">
+						<xsd:maxInclusive value="2500"/>
+					</xsd:restriction>
+				</xsd:simpleType>
+			</xsd:element>
+
+			<!-- Tuition And Fees deduction Amount -->
+			<xsd:element name="TuitionAndFeesDedAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Tuition And Fees deduction Amount</Description>
+						<LineNumber>22</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS8917"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			
+			<!-- Archer MSA deduction -->
+			<xsd:element name="ArcherMSADeductionAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Archer MSA deduction</Description>
+						<LineNumber>23</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS8853"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			
+			<!-- Other adjustments -->
+			<!-- Jury duty pay deduction amount -->
+			<xsd:element name="JuryDutyPayDeductionAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Jury duty pay deduction amount</Description>
+						<LineNumber>24a</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Deductible expenses from the rental of personal property engaged in for profit -->
+			<xsd:element name="RntlIncmPrsnlPropExpnssDedAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Deductible expenses from the rental of personal property engaged in for profit</Description>
+						<LineNumber>24b</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Nontaxable amount of the value of Olympic and Paralympic medals and USOC prize money -->
+			<xsd:element name="OlympcPrlympcMedalUSOCDedAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Nontaxable amount of the value of Olympic and Paralympic medals and USOC prize money</Description>
+						<LineNumber>24c</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Reforestation amortization and expenses -->
+			<xsd:element name="RforAmortzExpnssDedAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Reforestation amortization and expenses</Description>
+						<LineNumber>24d</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Repayment of supplemental unemployment benefits -->
+			<xsd:element name="RepaymentSuppUnemplBnftDedAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Repayment of supplemental unemployment benefits</Description>
+						<LineNumber>24e</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Contributions to section 501(c)(18)(D) pension plan -->
+			<xsd:element name="Sect501c18DContriDedAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Contributions to section 501(c)(18)(D) pension plan</Description>
+						<LineNumber>24f</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Contributions by certain chaplains to section 403(b) plans -->
+			<xsd:element name="Section403bContriDedAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Contributions by certain chaplains to section 403(b) plans</Description>
+						<LineNumber>24g</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Attorney fees and court costs for actions involving certain unlawful discrimination claims -->
+			<xsd:element name="AttyFeesCrtCostsDedAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Attorney fees and court costs for actions involving certain unlawful discrimination claims</Description>
+						<LineNumber>24h</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Attorrney fees and court costs you paid in connection with an award from the IRS -->
+			<xsd:element name="AttyFeesCrtCostsPdDedAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Attorrney fees and court costs you paid in connection with an award from the IRS for information you provided that helped the IRS detect tax law violations</Description>
+						<LineNumber>24i</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Housing deduction from Form 2555 -->
+			<xsd:element name="HousingDeductionAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Housing deduction from Form 2555</Description>
+						<LineNumber>24j</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS2555"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			<!-- Excess deductions of Section 67(e) expenses from Schedule K-1 (Form 1041) -->
+			<xsd:element name="Section67eExcessDeductionAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Excess deductions of Section 67(e) expenses from Schedule K-1 (Form 1041)</Description>
+						<LineNumber>24k</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="IRS1041ScheduleK1"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			
+
+			<!-- Other Adjustments Total Amount -->
+			<xsd:element name="OtherAdjustmentsTotalAmt" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Other Adjustments Total Amount</Description>
+						<LineNumber>24z</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+				<xsd:complexType>
+					<xsd:simpleContent>
+						<xsd:extension base="USAmountNNType">
+							<xsd:attribute name="referenceDocumentId" type="IdListType"/>
+							<xsd:attribute name="referenceDocumentName" type="StringType" fixed="OtherAdjustmentsStatement"/>
+						</xsd:extension>
+					</xsd:simpleContent>
+				</xsd:complexType>
+			</xsd:element>
+			<!-- Total other ajustments from lines 24a through 24z -->
+			<xsd:element name="TotalOtherAdjustmentsAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Total other ajustments from lines 24a through 24z</Description>
+						<LineNumber>25</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+			<!-- Total Adjustments Amount -->
+			<xsd:element name="TotalAdjustmentsAmt" type="USAmountNNType" minOccurs="0">
+				<xsd:annotation>
+					<xsd:documentation>
+						<Description>Total Adjustments Amount</Description>
+						<LineNumber>26</LineNumber>
+					</xsd:documentation>
+				</xsd:annotation>
+			</xsd:element>
+
+		</xsd:sequence>
+	</xsd:complexType>
+
+</xsd:schema>

@@ -12,6 +12,7 @@ use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use tax_core::{FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
+use tax_forms::mef::build_mef;
 use tax_forms::packet::{build_packet, schedules_view};
 use tax_forms::{
     additional_standard_deduction, build_fill_values_with_dependents, compute_1040,
@@ -150,13 +151,18 @@ enum ReturnAction {
     /// List stored returns (PII-free: id, year, status, completeness,
     /// whether identity is set).
     List,
-    /// Export a stored return. json, pdf and packet work; mef reports
-    /// not_implemented. pdf requires --template (a blank TY2025 Form 1040
+    /// Export a stored return. json, pdf, packet, and mef work.
+    /// pdf requires --template (a blank TY2025 Form 1040
     /// PDF) and --out. packet requires --forms-dir (a directory holding
     /// the blank TY2025 form PDFs under their canonical names —
     /// f1040.pdf, f1040sd.pdf, f8949.pdf, f1040s1.pdf, f1040s2.pdf,
     /// f1040sc.pdf, f1040sse.pdf, f10408812.pdf, f1040s1a.pdf) and
     /// --out-dir (the packet is written there, with a manifest.json).
+    /// mef requires --out (the XML file to write) and a stored taxpayer
+    /// identity (the ReturnHeader cannot be populated without one);
+    /// it writes MeF-schema-shaped XML (TY2025v5.2 form documents;
+    /// whole-dollar amounts; NOT transmissible — no e-file credentials
+    /// exist in this tool, see docs/KNOWN_LIMITS.md).
     Export {
         #[arg(long)]
         r#return: String,
@@ -1620,11 +1626,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                         format!("exported JSON to {}", path.display()),
                     ))
                 }
-                "mef" => Ok(Out::ok(
-                    json!({"status": "not_implemented", "format": export_type,
-                            "detail": "MeF XML export is not implemented in v1; no file was produced. JSON export is the supported artifact."}),
-                    "mef export: not implemented in v1 (no file produced)".to_string(),
-                )),
+                "mef" => mef_export(&ret, &params, out.as_ref()),
                 "pdf" => {
                     let template = template.as_ref().ok_or_else(|| {
                         CliErr::new(
@@ -1947,6 +1949,94 @@ fn packet_export(
                 "forms": detail_forms,
                 "schedules": schedules_view(&input, &computed, params)}),
         human_lines.join("\n"),
+    ))
+}
+
+/// Current UTC time as an ISO 8601 timestamp (`YYYY-MM-DDTHH:MM:SSZ`)
+/// for the MeF `ReturnTs`. Civil-date conversion from epoch days
+/// (Howard Hinnant's algorithm); no clock crate in the workspace.
+fn utc_now_iso() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = (secs / 86_400) as i64;
+    let secs_of_day = secs % 86_400;
+    let (hh, mm, ss) = (
+        secs_of_day / 3600,
+        (secs_of_day % 3600) / 60,
+        secs_of_day % 60,
+    );
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    format!("{year:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
+}
+
+/// `return export --type mef`: the return as MeF-shaped XML
+/// (TY2025v5.2 form documents in a Pub 4164 Return/ReturnHeader/
+/// ReturnData envelope), written to `--out`.
+///
+/// Stricter than the PDF export in two ways, both by design: the
+/// return must be complete (a filing artifact cannot carry
+/// placeholders), and a stored taxpayer identity is REQUIRED (the
+/// ReturnHeader's Filer block needs the taxpayer's name and SSN —
+/// see tax_forms::mef). The full SSN lands in the XML file only; the
+/// stdout report below carries no name or SSN. The report's
+/// `validation.xsd_validated` is false: the binary performs no XSD
+/// validation — `scripts/mef_acceptance.py` validates the emitted
+/// form documents against the official TY2025v5.2 XSDs.
+fn mef_export(ret: &StoredReturn, params: &TaxParams, out: Option<&PathBuf>) -> CResult<Out> {
+    let out_path = out
+        .ok_or_else(|| CliErr::new("missing_out", "mef export requires --out <output XML path>"))?;
+    let view = compute_view(ret, params)?;
+    if !view.complete {
+        return Err(CliErr::with_extra(
+            "return_incomplete",
+            format!(
+                "return {} is incomplete; lines missing or incomplete: {}",
+                ret.id,
+                view.incomplete.join(", ")
+            ),
+            json!({"incomplete_lines": view.incomplete}),
+        ));
+    }
+    let input = form_input(ret)?;
+    let computed = compute_1040(&input, params);
+    let export = build_mef(&input, &computed, params, ret.year, &utc_now_iso())
+        .map_err(|e| CliErr::new(e.code, e.message))?;
+    if let Some(parent) = out_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(io_err)?;
+        }
+    }
+    std::fs::write(out_path, &export.xml).map_err(io_err)?;
+    let human = format!(
+        "mef export: wrote {} ({} documents: {}; schema {}, whole-dollar amounts, \
+         NOT transmissible — see validation notes)",
+        out_path.display(),
+        export.documents.len(),
+        export.documents.join(", "),
+        tax_forms::mef::MEF_SCHEMA_VERSION,
+    );
+    Ok(Out::ok(
+        json!({"status": "generated", "type": "mef", "format": "mef",
+        "output": out_path.display().to_string(),
+        "documents": export.documents,
+        "document_count": export.documents.len(),
+        "validation": {
+            "xsd_validated": false,
+            "schema_version": tax_forms::mef::MEF_SCHEMA_VERSION,
+            "notes": export.notes,
+        }}),
+        human,
     ))
 }
 

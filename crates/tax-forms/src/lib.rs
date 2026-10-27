@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 pub use tax_core::FilingStatus;
 use tax_core::{FactResult, Money, TaxParams};
 
+pub mod mef;
 pub mod packet;
 pub mod worksheets;
 pub use worksheets::{
