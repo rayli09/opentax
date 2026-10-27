@@ -40,12 +40,13 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::{json, Value};
 use tax_core::{FactResult, FilingStatus, Money, TaxParams};
 
+use crate::ca540::{exemption_counts, CaComputed};
 use crate::worksheets::{
     deductible_part_of_se_tax, schedule_1a_senior_deduction, schedule_8812, schedule_se_tax,
 };
 use crate::{
-    format_amount, mask_ssn, normalize_ssn, BrokerTxn, ComputedReturn, F1040FieldMap, FillValue,
-    Form1040Input, TxnTerm,
+    format_amount, mask_ssn, normalize_ssn, BrokerTxn, ComputedReturn, DependentRelationship,
+    F1040FieldMap, FillValue, Form1040Input, TxnTerm,
 };
 
 /// One schedule's worth of packet output.
@@ -105,6 +106,7 @@ fn packet_field_map(form: &str) -> F1040FieldMap {
         "f1040sse" => include_str!("../forms/f1040sse-2025-field-map.json"),
         "f10408812" => include_str!("../forms/f10408812-2025-field-map.json"),
         "f1040s1a" => include_str!("../forms/f1040s1a-2025-field-map.json"),
+        "f540" => include_str!("../forms/f540-2025-field-map.json"),
         other => panic!("no bundled field map for packet form {other}"),
     };
     serde_json::from_str(text)
@@ -1064,6 +1066,291 @@ pub fn schedules_view(
 }
 
 // ---------------------------------------------------------------------------
+// California — Form 540 + Schedule CA (540)
+// ---------------------------------------------------------------------------
+
+/// The Schedule CA (540) not-applicable reason for an in-scope
+/// California return: the CA engine states the Schedule CA Part I
+/// totals (Form 540 lines 14/16) as zero for every v1 return, and
+/// Schedule CA is required only when there ARE adjustments.
+const SCH_CA_NOT_APPLICABLE_REASON: &str = "no California adjustments in v1 scope: the CA engine states Schedule CA (540), Part I totals (Form 540 lines 14 and 16) as zero for every in-scope return \u{2014} California conforms to the federal treatment of all v1 facts, including the deductible part of self-employment tax (see docs/KNOWN_LIMITS.md) \u{2014} and Schedule CA is required only when there are adjustments, so no Schedule CA is filed with this return";
+
+/// The printed relationship text for the Form 540 Dependents section.
+fn ca_relationship_label(relationship: DependentRelationship) -> &'static str {
+    match relationship {
+        DependentRelationship::Child => "Child",
+        DependentRelationship::Stepchild => "Stepchild",
+        DependentRelationship::FosterChild => "Foster child",
+        DependentRelationship::Other => "Other",
+    }
+}
+
+/// Build the California Form 540 packet form from the CA engine's
+/// stated lines, the stored identity, and the exemption counts (the
+/// counts are the one thing the form prints that the engine states
+/// only as amounts; they come from the same `exemption_counts`
+/// derivation the engine's amounts are built from).
+fn form_540(input: &Form1040Input, ca: &CaComputed, params: &TaxParams) -> PacketForm {
+    let mut dict: HashMap<String, String> = HashMap::new();
+    let mut notes: Vec<String> = vec![
+        "county at time of filing (Side 1) left blank: county is not stored on the return"
+            .to_string(),
+        "principal-residence address fields left blank: not stored; if the mailing address above is not the principal/physical residence at filing time, enter that address by hand".to_string(),
+        "line 12 (California state wages) left blank: it is informational on the printed form and not a line the CA engine states (it is the total of W-2 Box 16)".to_string(),
+        "lines 40\u{2013}47 (credits), 61, 63, 72\u{2013}74, 77, 91\u{2013}96, 98, 99, and 110\u{2013}115 left blank: not computed in CA v1 (see docs/KNOWN_LIMITS.md); lines 111/114 (amount you owe) add lines 94/96/110 to line 100, so a filer with a balance due starts from the printed line 100".to_string(),
+        "signature block, direct-deposit fields, and the voter / health-care / organ-donor elections left blank: bank routing and account numbers are not stored, and the signer signs".to_string(),
+        "Form 540 carries no occupation field; stored occupations are not printed on it".to_string(),
+    ];
+
+    // Running name/SSN headers (a separate field on every side).
+    header(&mut dict, &mut notes, input, "header_name", "header_ssn");
+
+    // Side 1 identity block.
+    match input.identity.as_ref() {
+        None => notes.push(
+            "Form 540 name/address/date-of-birth fields left blank: no taxpayer identity is stored on this return"
+                .to_string(),
+        ),
+        Some(id) => {
+            let person = &id.person;
+            if let Some(v) = person.first_name.as_deref() {
+                text(&mut dict, "taxpayer_first_name", v);
+            }
+            if let Some(v) = person.last_name.as_deref() {
+                text(&mut dict, "taxpayer_last_name", v);
+            }
+            if let Some(digits) = person.ssn.as_deref().and_then(normalize_ssn) {
+                text(&mut dict, "taxpayer_ssn", &digits);
+            }
+            if let Some(dob) = person.date_of_birth.as_deref() {
+                text(&mut dict, "taxpayer_dob", &form_date(dob));
+            }
+            if person.first_name.is_some() || person.last_name.is_some() {
+                notes.push(
+                    "middle initial and suffix fields left blank: neither is stored in the return's identity"
+                        .to_string(),
+                );
+            }
+            if let Some(address) = id.address.as_ref() {
+                if let Some(v) = address.street.as_deref() {
+                    text(&mut dict, "address_street", v);
+                }
+                if let Some(v) = address.apt.as_deref() {
+                    text(&mut dict, "address_apt", v);
+                }
+                if let Some(v) = address.city.as_deref() {
+                    text(&mut dict, "address_city", v);
+                }
+                if let Some(v) = address.state.as_deref() {
+                    text(&mut dict, "address_state", v);
+                }
+                if let Some(v) = address.zip.as_deref() {
+                    text(&mut dict, "address_zip", v);
+                }
+            }
+            if let Some(spouse) = id.spouse.as_ref() {
+                if let Some(v) = spouse.first_name.as_deref() {
+                    text(&mut dict, "spouse_first_name", v);
+                }
+                if let Some(v) = spouse.last_name.as_deref() {
+                    text(&mut dict, "spouse_last_name", v);
+                }
+                if let Some(digits) = spouse.ssn.as_deref().and_then(normalize_ssn) {
+                    text(&mut dict, "spouse_ssn", &digits);
+                }
+                if let Some(dob) = spouse.date_of_birth.as_deref() {
+                    text(&mut dict, "spouse_dob", &form_date(dob));
+                }
+                if input.status == FilingStatus::Mfs {
+                    let full = [
+                        spouse.first_name.as_deref(),
+                        spouse.last_name.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                    if !full.is_empty() {
+                        text(&mut dict, "mfs_spouse_name", &full);
+                    }
+                }
+            }
+            if id.can_be_claimed_as_dependent {
+                check(&mut dict, "claimed_as_dependent");
+            }
+        }
+    }
+
+    // Filing status: exactly one radio entry resolves, via a
+    // per-status dictionary key (see the map's source_line values).
+    check(
+        &mut dict,
+        &format!("filing_status_{}", input.status.as_str()),
+    );
+
+    // Exemption counts (boxes) + amounts (engine lines 7-11).
+    let (personal, blind, senior, dependents) = exemption_counts(input, params);
+    text(&mut dict, "7_count", &personal.to_string());
+    text(&mut dict, "8_count", &blind.to_string());
+    text(&mut dict, "9_count", &senior.to_string());
+    text(&mut dict, "10_count", &dependents.to_string());
+
+    // Dependents section (Side 2): the form has exactly three
+    // columns. The stored name splits like the federal export: first
+    // word = first name, the remainder = last name.
+    if input.dependents.len() > 3 {
+        notes.push(format!(
+            "{} dependents are stored but the Form 540 Dependents section has only \
+             three columns; the first three are printed (exemption credits are still \
+             computed for all {})",
+            input.dependents.len(),
+            input.dependents.len()
+        ));
+    }
+    for (i, dep) in input.dependents.iter().take(3).enumerate() {
+        let n = i + 1;
+        let mut words = dep.name.split_whitespace();
+        let first = words.next().unwrap_or("");
+        let last = words.collect::<Vec<_>>().join(" ");
+        if !first.is_empty() {
+            text(&mut dict, &format!("dep{n}_first_name"), first);
+        }
+        if !last.is_empty() {
+            text(&mut dict, &format!("dep{n}_last_name"), &last);
+        }
+        if let Some(digits) = dep.ssn.as_deref().and_then(normalize_ssn) {
+            text(&mut dict, &format!("dep{n}_ssn"), &digits);
+        }
+        text(
+            &mut dict,
+            &format!("dep{n}_relationship"),
+            ca_relationship_label(dep.relationship),
+        );
+    }
+
+    // Engine-stated amount lines. Lines 14/16/34 are stated zeros and
+    // are printed so the paper arithmetic chain (15 = 13 - 14,
+    // 17 = 15 + 16, 35 = 33 + 34) reads correctly.
+    for key in [
+        "7", "8", "9", "10", "11", "13", "14", "15", "16", "17", "18", "19", "31", "32", "33",
+        "34", "35", "48", "64", "71", "75", "76", "78",
+    ] {
+        if let Some(v) = line(&ca.lines, key) {
+            amt(&mut dict, key, v);
+        }
+    }
+    // Line 62 (Behavioral Health Services Tax): printed only when
+    // the tax actually applies (> $1,000,000 of taxable income).
+    match line(&ca.lines, "62") {
+        Some(v) if v.cents() > 0 => amt(&mut dict, "62", v),
+        Some(_) => notes.push(
+            "line 62 (Behavioral Health Services Tax) left blank: the CA engine states it as zero (it applies only above $1,000,000 of taxable income)"
+                .to_string(),
+        ),
+        None => {}
+    }
+    // Lines 97/100 are the form's mutually exclusive overpaid/due
+    // pair: each is printed only when greater than zero (the federal
+    // export treats lines 34/37 the same way).
+    let mut balance_printed = false;
+    for key in ["97", "100"] {
+        if let Some(v) = line(&ca.lines, key) {
+            if v.cents() > 0 {
+                amt(&mut dict, key, v);
+                balance_printed = true;
+            }
+        }
+    }
+    if !balance_printed {
+        notes.push(
+            "lines 97 and 100 are both zero (total payments exactly equal total tax); neither is printed"
+                .to_string(),
+        );
+    }
+    // Line 31's source checkbox, from the engine's method.
+    match ca.line31_method.as_deref() {
+        Some("ca_tax_table") => check(&mut dict, "31_tax_table"),
+        Some("ca_rate_schedule") => check(&mut dict, "31_rate_schedule"),
+        _ => {}
+    }
+
+    let values = resolve_values(&packet_field_map("f540"), &dict);
+    let view_lines: serde_json::Map<String, Value> = ca
+        .lines
+        .iter()
+        .filter_map(|(k, f)| f.value().map(|m| (k.clone(), json!(m.cents()))))
+        .collect();
+    PacketForm {
+        form: "f540",
+        label: "Form 540",
+        file_name: "f540.pdf".to_string(),
+        applicable: true,
+        not_applicable_reason: None,
+        values,
+        notes,
+        view: json!({
+            "applicable": true,
+            "lines": view_lines,
+            "line31_method": ca.line31_method,
+        }),
+    }
+}
+
+/// Build the California packet forms, in filing order after the
+/// federal forms: Form 540, then Schedule CA (540).
+///
+/// With no state block stored, both forms are `not_applicable` (a
+/// federal-only packet gains exactly these two manifest entries).
+/// With a California block, Form 540 is filled from the CA engine's
+/// computation (`ca` must be `Some` — the caller computes it) and
+/// Schedule CA is always `not_applicable` in v1: the engine states
+/// its Part I totals (Form 540 lines 14/16) as zero for every
+/// in-scope return, and Schedule CA is required only when there ARE
+/// adjustments — filling a zero form would misrepresent the filing.
+pub fn build_ca_packet(
+    input: &Form1040Input,
+    ca: Option<&CaComputed>,
+    params: &TaxParams,
+) -> Vec<PacketForm> {
+    match &input.state {
+        None => vec![
+            PacketForm::not_applicable(
+                "f540",
+                "Form 540",
+                "f540.pdf".to_string(),
+                "no state return is selected on this return (tax return set-state); federal-only packet"
+                    .to_string(),
+                json!({"applicable": false}),
+            ),
+            PacketForm::not_applicable(
+                "f540ca",
+                "Schedule CA (540)",
+                "f540ca.pdf".to_string(),
+                "no California return is selected on this return".to_string(),
+                json!({"applicable": false}),
+            ),
+        ],
+        Some(_) => {
+            let ca = ca.expect(
+                "build_ca_packet: a CA computation is required when a state block is stored",
+            );
+            vec![
+                form_540(input, ca, params),
+                PacketForm::not_applicable(
+                    "f540ca",
+                    "Schedule CA (540)",
+                    "f540ca.pdf".to_string(),
+                    SCH_CA_NOT_APPLICABLE_REASON.to_string(),
+                    json!({"applicable": false}),
+                ),
+            ]
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1280,5 +1567,100 @@ mod tests {
         assert!(!form(&forms, "f1040sse").applicable);
         assert!(!form(&forms, "f1040s2").applicable);
         assert_eq!(val(form(&forms, "f1040s1"), "3"), Some("-2000.00"));
+    }
+
+    // -----------------------------------------------------------------
+    // California packet forms
+    // -----------------------------------------------------------------
+
+    fn ca_input() -> Form1040Input {
+        let mut input = base_input();
+        input.w2s[0].state_wages = Some(m(50_000));
+        input.w2s[0].state_withholding = Some(m(1_500));
+        input.state = Some(crate::StateBlock {
+            state: "CA".into(),
+            residency: "full_year".into(),
+        });
+        input.identity = Some(crate::TaxpayerIdentity {
+            person: crate::PersonIdentity {
+                first_name: Some("Case".into()),
+                last_name: Some("Tester".into()),
+                ssn: Some("123456789".into()),
+                date_of_birth: Some("1990-06-15".into()),
+                occupation: Some("Engineer".into()),
+                blind: false,
+            },
+            address: Some(crate::MailingAddress {
+                street: Some("1 Main St".into()),
+                apt: None,
+                city: Some("Fremont".into()),
+                state: Some("CA".into()),
+                zip: Some("94538".into()),
+            }),
+            spouse: None,
+            can_be_claimed_as_dependent: false,
+        });
+        input
+    }
+
+    fn ca_forms(input: &Form1040Input) -> Vec<PacketForm> {
+        let fed = compute_1040(input, &params());
+        let ca_params = tax_core::CaParams::load_2025().unwrap();
+        let ca = crate::compute_ca540(input, &fed, &params(), &ca_params);
+        build_ca_packet(input, Some(&ca), &params())
+    }
+
+    #[test]
+    fn ca_forms_not_applicable_without_state_block() {
+        let input = base_input();
+        let forms = build_ca_packet(&input, None, &params());
+        assert_eq!(forms.len(), 2);
+        assert!(!form(&forms, "f540").applicable);
+        assert!(!form(&forms, "f540ca").applicable);
+    }
+
+    #[test]
+    fn ca_540_filled_from_engine_and_identity() {
+        let input = ca_input();
+        let forms = ca_forms(&input);
+        let f540 = form(&forms, "f540");
+        assert!(f540.applicable);
+        // Golden case ca-001 shape: $50,000 of CA wages, $1,500 withheld.
+        assert_eq!(val(f540, "13"), Some("50000.00"));
+        assert_eq!(val(f540, "19"), Some("44294.00"));
+        assert_eq!(val(f540, "31"), Some("1193.00"));
+        assert_eq!(val(f540, "71"), Some("1500.00"));
+        assert_eq!(val(f540, "97"), Some("460.00"));
+        assert_eq!(val(f540, "100"), None);
+        assert_eq!(val(f540, "62"), None); // a stated zero stays blank
+        assert_eq!(val(f540, "7_count"), Some("1"));
+        assert_eq!(val(f540, "31_tax_table"), Some("Yes"));
+        // The filing-status radio carries the form's literal on-state.
+        let status = f540
+            .values
+            .iter()
+            .find(|v| v.line == "filing_status")
+            .unwrap();
+        assert_eq!(status.value, "1 . Single.");
+        assert_eq!(status.field, "540_form_1036 RB");
+        // Identity: names split, DOB reformatted, SSN full in the fill
+        // value but masked in the report value.
+        assert_eq!(val(f540, "taxpayer_first_name"), Some("Case"));
+        assert_eq!(val(f540, "taxpayer_dob"), Some("06/15/1990"));
+        let ssn = f540
+            .values
+            .iter()
+            .find(|v| v.line == "taxpayer_ssn")
+            .unwrap();
+        assert_eq!(ssn.value, "123456789");
+        assert_eq!(ssn.display_value.as_deref(), Some("***-**-6789"));
+        // Schedule CA is never filled in v1.
+        let sch = form(&forms, "f540ca");
+        assert!(!sch.applicable);
+        assert!(sch
+            .not_applicable_reason
+            .as_deref()
+            .unwrap()
+            .contains("no California adjustments"));
     }
 }

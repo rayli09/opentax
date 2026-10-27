@@ -154,7 +154,7 @@ fn fact(lines: &BTreeMap<String, FactResult<Money>>, key: &str) -> FactResult<Mo
 /// older by December 31, 2025"). Dependent exemptions count every
 /// stored dependent entry — the dependents claimed in the Form 540
 /// Dependents section.
-fn exemption_counts(input: &Form1040Input, params: &TaxParams) -> (u32, u32, u32, u32) {
+pub(crate) fn exemption_counts(input: &Form1040Input, params: &TaxParams) -> (u32, u32, u32, u32) {
     let status = input.status;
     let identity = input.identity.as_ref();
     let claimable = identity

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use tax_core::{CaParams, FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::mef::build_mef;
-use tax_forms::packet::{build_packet, schedules_view};
+use tax_forms::packet::{build_ca_packet, build_packet, schedules_view};
 use tax_forms::{
     additional_standard_deduction, build_fill_values_with_dependents, compute_1040, compute_ca540,
     deductible_part_of_se_tax, eic_childless_age_outcome, eic_qualifying_children, mask_ssn,
@@ -196,7 +196,8 @@ enum ReturnAction {
     /// PDF) and --out. packet requires --forms-dir (a directory holding
     /// the blank TY2025 form PDFs under their canonical names —
     /// f1040.pdf, f1040sd.pdf, f8949.pdf, f1040s1.pdf, f1040s2.pdf,
-    /// f1040sc.pdf, f1040sse.pdf, f10408812.pdf, f1040s1a.pdf) and
+    /// f1040sc.pdf, f1040sse.pdf, f10408812.pdf, f1040s1a.pdf, plus
+    /// f540.pdf when a California state block is selected) and
     /// --out-dir (the packet is written there, with a manifest.json).
     /// mef requires --out (the XML file to write) and a stored taxpayer
     /// identity (the ReturnHeader cannot be populated without one);
@@ -2152,15 +2153,30 @@ fn packet_export(
     })?;
     let view = compute_view(ret, params)?;
     if !view.complete {
-        return Err(CliErr::with_extra(
-            "return_incomplete",
+        // The overall completeness conjoins the federal and (when a
+        // state block is stored) California sections; name the
+        // California lines explicitly when they are the gap, so a
+        // CA-incomplete return does not report federal-only lines.
+        let mut message = if view.incomplete.is_empty() {
+            format!("return {} is incomplete", ret.id)
+        } else {
             format!(
                 "return {} is incomplete; lines missing or incomplete: {}",
                 ret.id,
                 view.incomplete.join(", ")
-            ),
-            json!({"incomplete_lines": view.incomplete}),
-        ));
+            )
+        };
+        let mut extra = json!({"incomplete_lines": view.incomplete});
+        if let Some(state) = &view.state {
+            if !state.complete {
+                message.push_str(&format!(
+                    "; California (Form 540) lines incomplete: {}",
+                    state.incomplete.join(", ")
+                ));
+                extra["state_incomplete_lines"] = json!(state.incomplete);
+            }
+        }
+        return Err(CliErr::with_extra("return_incomplete", message, extra));
     }
     let input = form_input(ret)?;
     let status = input.status;
@@ -2246,8 +2262,21 @@ fn packet_export(
         }
     }
 
-    // The schedules.
-    for form in build_packet(&input, &computed, params) {
+    // The schedules, then the California forms (Form 540 filled when
+    // a state block is stored; both CA forms report not_applicable on
+    // a federal-only return).
+    let mut packet_forms = build_packet(&input, &computed, params);
+    {
+        let ca = match &input.state {
+            Some(_) => {
+                let ca_params = CaParams::load_2025().map_err(json_err)?;
+                Some(compute_ca540(&input, &computed, params, &ca_params))
+            }
+            None => None,
+        };
+        packet_forms.extend(build_ca_packet(&input, ca.as_ref(), params));
+    }
+    for form in packet_forms {
         if !form.applicable {
             let reason = form.not_applicable_reason.clone().unwrap_or_default();
             record(

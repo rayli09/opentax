@@ -362,12 +362,21 @@ fn acroform_field_refs(doc: &Document) -> PdfResult<Vec<Object>> {
         Object::Dictionary(d) => d.clone(),
         _ => return Ok(Vec::new()),
     };
-    Ok(acro_owned
-        .get(b"Fields")
-        .ok()
-        .and_then(|o| o.as_array().ok())
-        .cloned()
-        .unwrap_or_default())
+    // The /Fields value is usually a direct array (IRS forms), but some
+    // producers (the FTB's Form 540 among them) store it as an indirect
+    // reference to an array object; resolve that shape too, or every
+    // field of such a form enumerates as missing.
+    let fields = match acro_owned.get(b"Fields") {
+        Ok(Object::Array(a)) => a.clone(),
+        Ok(Object::Reference(id)) => doc
+            .get_object(*id)
+            .ok()
+            .and_then(|o| o.as_array().ok())
+            .cloned()
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    Ok(fields)
 }
 
 fn collect_fields(doc: &Document) -> PdfResult<Vec<FieldAcc>> {
@@ -1346,6 +1355,88 @@ mod tests {
                 .all(|n| !n.contains('\u{fffd}') && !n.contains('\0')),
             "names must be clean: {names:?}"
         );
+    }
+
+    #[test]
+    fn inspect_and_fill_with_indirect_fields_array() {
+        // Regression: some producers (the FTB's Form 540) store the
+        // AcroForm /Fields value as an indirect reference to an array
+        // object instead of a direct array. Enumeration used to resolve
+        // only the direct shape and report zero fields for such forms,
+        // which made every fill fail its pre-flight as "unknown field".
+        let src = tmp("form-indirect-src.pdf");
+        let out = tmp("form-indirect-filled.pdf");
+        {
+            let mut doc = Document::with_version("1.5");
+            let pages_id = doc.new_object_id();
+            let field_id = doc.new_object_id();
+            let fields_array_id = doc.new_object_id();
+            let page_id = doc.new_object_id();
+            let catalog_id = doc.new_object_id();
+
+            let mut field = Dictionary::new();
+            field.set("Type", Object::Name(b"Annot".to_vec()));
+            field.set("Subtype", Object::Name(b"Widget".to_vec()));
+            field.set("FT", Object::Name(b"Tx".to_vec()));
+            field.set("T", Object::string_literal("540_form_2019"));
+            field.set(
+                "Rect",
+                Object::Array(vec![
+                    Object::Integer(100),
+                    Object::Integer(700),
+                    Object::Integer(300),
+                    Object::Integer(720),
+                ]),
+            );
+            field.set("P", Object::Reference(page_id));
+            field.set("F", Object::Integer(4));
+            doc.set_object(field_id, field);
+            doc.set_object(
+                fields_array_id,
+                Object::Array(vec![Object::Reference(field_id)]),
+            );
+
+            let mut page = Dictionary::new();
+            page.set("Type", Object::Name(b"Page".to_vec()));
+            page.set("Parent", Object::Reference(pages_id));
+            page.set(
+                "MediaBox",
+                Object::Array(vec![
+                    Object::Integer(0),
+                    Object::Integer(0),
+                    Object::Integer(612),
+                    Object::Integer(792),
+                ]),
+            );
+            page.set("Annots", Object::Array(vec![Object::Reference(field_id)]));
+            doc.set_object(page_id, page);
+
+            let mut pages = Dictionary::new();
+            pages.set("Type", Object::Name(b"Pages".to_vec()));
+            pages.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+            pages.set("Count", Object::Integer(1));
+            doc.set_object(pages_id, pages);
+
+            let mut acro = Dictionary::new();
+            acro.set("Fields", Object::Reference(fields_array_id));
+            acro.set("DA", Object::string_literal("/Helv 0 Tf 0 g"));
+
+            let mut catalog = Dictionary::new();
+            catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+            catalog.set("Pages", Object::Reference(pages_id));
+            catalog.set("AcroForm", Object::Dictionary(acro));
+            doc.set_object(catalog_id, catalog);
+            doc.trailer.set("Root", Object::Reference(catalog_id));
+            doc.save(&src).unwrap();
+        }
+        let fields = inspect_fields(&src).unwrap();
+        assert_eq!(fields.len(), 1, "fields: {fields:?}");
+        assert_eq!(fields[0].name, "540_form_2019");
+        let values = HashMap::from([("540_form_2019".to_string(), "28000.00".to_string())]);
+        let report = PdferBackend.fill_fields(&src, &values, &out).unwrap();
+        assert_eq!(report.changed_fields, vec!["540_form_2019".to_string()]);
+        let after = inspect_fields(&out).unwrap();
+        assert_eq!(after[0].value.as_deref(), Some("28000.00"));
     }
 
     #[test]
