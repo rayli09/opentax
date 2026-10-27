@@ -12,6 +12,12 @@
 //!   lines 4a, 10–13 as reduced by the brief (no church-employee or
 //!   optional-method lines; the W-2 Social Security wage input is the
 //!   caller's Box 1 proxy — see docs/KNOWN_LIMITS.md).
+//! - Schedule 8812 (simplified): Schedule 8812 (Form 1040), TY2025,
+//!   Part I (child tax credit / credit for other dependents, with the
+//!   phaseout of lines 9–12 and the Credit Limit Worksheet A of the
+//!   Schedule 8812 instructions) and Part II-A (additional child tax
+//!   credit); Part II-B (three or more qualifying children) is not
+//!   implemented — see docs/KNOWN_LIMITS.md for every simplification.
 //!
 //! Money is integer cents throughout; the only multiplications are the
 //! worksheet's 15% / 20% rates, done with [`Money::mul_bp`] (integer
@@ -21,6 +27,8 @@
 //! docs/KNOWN_LIMITS.md).
 
 use tax_core::{bracket_tax, FilingStatus, Money, TaxParams, TaxTable};
+
+use crate::{DependentInput, DependentRelationship};
 
 /// The Schedule D combination of the two 8949 nets, in Schedule D's own
 /// line numbering (our simplified Schedule D: line 7 = net short-term
@@ -304,6 +312,169 @@ pub fn deductible_part_of_se_tax(se_tax: Money) -> Money {
     Money::from_cents((se_tax.cents() + 1) / 2)
 }
 
+/// Which Schedule 8812 credit (if any) one stored dependent qualifies
+/// for under the tests v1 models: relationship, age under 17 at
+/// year-end, and the more-than-half-the-year residency test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DependentCreditClass {
+    /// Qualifying child for the child tax credit (Schedule 8812 line 4).
+    ChildTaxCredit,
+    /// Other dependent (Schedule 8812 line 6).
+    OtherDependent,
+    /// No credit: fails the residency test as modeled in v1.
+    None,
+}
+
+/// Classify one dependent (Schedule 8812, Part I):
+/// - credit for the child tax credit requires a child-type relationship
+///   (child, stepchild, foster child), age under 17 on December 31, and
+///   having lived with the taxpayer more than half the year;
+/// - any other stored dependent who meets the residency test takes the
+///   credit-for-other-dependents path (v1 simplification: the support
+///   and gross-income tests for qualifying relatives are not modeled —
+///   see docs/KNOWN_LIMITS.md);
+/// - a dependent who lived with the taxpayer 6 months or fewer gets no
+///   credit in v1.
+pub fn classify_dependent(dep: &DependentInput) -> DependentCreditClass {
+    if dep.months_lived_with_taxpayer <= 6 {
+        return DependentCreditClass::None;
+    }
+    let child_type = matches!(
+        dep.relationship,
+        DependentRelationship::Child
+            | DependentRelationship::Stepchild
+            | DependentRelationship::FosterChild
+    );
+    if child_type && dep.age < 17 {
+        DependentCreditClass::ChildTaxCredit
+    } else {
+        DependentCreditClass::OtherDependent
+    }
+}
+
+/// The simplified Schedule 8812 computation (TY2025 form, transcribed
+/// line by line at the simplified level; money = cents throughout).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Schedule8812 {
+    /// Line 4: number of qualifying children under age 17.
+    pub ctc_children: u32,
+    /// Line 6: number of other dependents.
+    pub odc_dependents: u32,
+    /// Line 8: tentative credit — line 5 ($2,200 × line 4) + line 7
+    /// ($500 × line 6), before the phaseout.
+    pub tentative_credit: Money,
+    /// Line 11: phaseout reduction — 5% of the line 10 amount (MAGI over
+    /// the line 9 threshold, rounded up to the next multiple of $1,000).
+    pub phaseout_reduction: Money,
+    /// Line 12: credit after the phaseout (line 8 − line 11; zero when
+    /// the reduction is at least the tentative credit — the form stops
+    /// there and allows no credit at all).
+    pub credit_after_phaseout: Money,
+    /// Line 13: the Credit Limit Worksheet A amount. In v1 this is Form
+    /// 1040 line 16: Worksheet A line 1 takes Form 1040 line 18
+    /// (= line 16 + line 17), and every other input to the worksheet
+    /// (line 17 AMT, the Schedule 3 nonrefundable credits of Worksheet
+    /// A line 2, and Credit Limit Worksheet B) is zero or inapplicable
+    /// for the v1 input set.
+    pub credit_limit: Money,
+    /// Line 14 → Form 1040 line 19: the nonrefundable child tax credit
+    /// and credit for other dependents — the smaller of lines 12 or 13.
+    pub nonrefundable_credit: Money,
+    /// Part II-A, line 18a: earned income, as defined by the caller
+    /// (v1: total W-2 wages plus a positive Schedule C net profit).
+    pub earned_income: Money,
+    /// Part II-A, line 27 → Form 1040 line 28: the additional child tax
+    /// credit — the smallest of (line 16a: line 12 − line 14), (line
+    /// 16b: $1,700 × line 4) and (line 20: 15% of earned income over
+    /// $2,500). Part II-B (three or more qualifying children) is not
+    /// implemented, so for those filers this can understate the ACTC
+    /// (docs/KNOWN_LIMITS.md).
+    pub additional_child_tax_credit: Money,
+}
+
+/// Figure Schedule 8812 for a return.
+///
+/// `magi` is the modified AGI of line 3 — v1 takes it to be the AGI
+/// itself (the line 2 exclusions, Puerto Rico / Form 2555 / Form 4563
+/// income, do not exist in the v1 input set). `income_tax` is Form 1040
+/// line 16, the base of Credit Limit Worksheet A (see
+/// [`Schedule8812::credit_limit`]). `earned_income` is the Part II-A
+/// line 18a amount (v1 definition on [`Schedule8812::earned_income`]).
+pub fn schedule_8812(
+    dependents: &[DependentInput],
+    status: FilingStatus,
+    magi: Money,
+    income_tax: Money,
+    earned_income: Money,
+    params: &TaxParams,
+) -> Schedule8812 {
+    let mut ctc_children: u32 = 0;
+    let mut odc_dependents: u32 = 0;
+    for dep in dependents {
+        match classify_dependent(dep) {
+            DependentCreditClass::ChildTaxCredit => ctc_children += 1,
+            DependentCreditClass::OtherDependent => odc_dependents += 1,
+            DependentCreditClass::None => {}
+        }
+    }
+
+    // Part I. Line 5 = line 4 × $2,200; line 7 = line 6 × $500;
+    // line 8 = lines 5 + 7.
+    let tentative_credit = Money::from_cents(
+        ctc_children as i64 * params.ctc_per_child_cents
+            + odc_dependents as i64 * params.odc_per_dependent_cents,
+    );
+    // Lines 9–11: the phaseout. Line 10 is the MAGI excess over the
+    // line 9 threshold, rounded UP to the next multiple of $1,000
+    // (zero when MAGI is at or under the threshold); line 11 is 5% of
+    // line 10 ($50 per $1,000 or fraction thereof).
+    let threshold = params.ctc_phaseout_threshold(status);
+    let excess_cents = (magi - threshold).cents().max(0);
+    let line10_cents = if excess_cents == 0 {
+        0
+    } else {
+        // $1,000 = 100_000 cents.
+        (excess_cents + 100_000 - 1) / 100_000 * 100_000
+    };
+    let phaseout_reduction = Money::from_cents(line10_cents).mul_bp(params.ctc_phaseout_rate_bp);
+    // Line 12: line 8 − line 11 (the form stops when line 8 is not more
+    // than line 11 — the same zero floor).
+    let credit_after_phaseout =
+        Money::from_cents((tentative_credit - phaseout_reduction).cents().max(0));
+    // Line 13 (Credit Limit Worksheet A) and line 14.
+    let credit_limit = Money::from_cents(income_tax.cents().max(0));
+    let nonrefundable_credit =
+        Money::from_cents(credit_after_phaseout.cents().min(credit_limit.cents()));
+
+    // Part II-A. Line 16a = line 12 − line 14 (the unused portion);
+    // line 16b = line 4 × $1,700; line 17 = the smaller of the two.
+    let unused = credit_after_phaseout - nonrefundable_credit;
+    let actc_cap = Money::from_cents(ctc_children as i64 * params.actc_cap_per_child_cents);
+    let line17 = Money::from_cents(unused.cents().min(actc_cap.cents()));
+    // Lines 19–20: 15% of earned income over $2,500 (floored at zero).
+    let ei_excess = Money::from_cents(
+        (earned_income - Money::from_cents(params.actc_earned_income_threshold_cents))
+            .cents()
+            .max(0),
+    );
+    let line20 = ei_excess.mul_bp(params.actc_rate_bp);
+    // Line 27 (for filers not in Part II-B) = the smaller of lines 17
+    // or 20.
+    let additional_child_tax_credit = Money::from_cents(line17.cents().min(line20.cents()));
+
+    Schedule8812 {
+        ctc_children,
+        odc_dependents,
+        tentative_credit,
+        phaseout_reduction,
+        credit_after_phaseout,
+        credit_limit,
+        nonrefundable_credit,
+        earned_income,
+        additional_child_tax_credit,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -578,6 +749,193 @@ mod tests {
             assert_eq!(se.net_earnings, Money::ZERO);
             assert_eq!(se.tax, Money::ZERO);
         }
+    }
+
+    // -- Schedule 8812 -------------------------------------------------
+
+    fn dep(relationship: DependentRelationship, age: u32, months: u32) -> DependentInput {
+        DependentInput {
+            name: "Test Dependent".into(),
+            relationship,
+            age,
+            months_lived_with_taxpayer: months,
+        }
+    }
+
+    #[test]
+    fn classify_dependent_boundaries() {
+        use DependentRelationship::*;
+        // Age test: under 17 on December 31 qualifies; 17 does not.
+        assert_eq!(
+            classify_dependent(&dep(Child, 16, 12)),
+            DependentCreditClass::ChildTaxCredit
+        );
+        assert_eq!(
+            classify_dependent(&dep(Child, 17, 12)),
+            DependentCreditClass::OtherDependent
+        );
+        // Stepchildren and foster children are child-type relationships.
+        assert_eq!(
+            classify_dependent(&dep(Stepchild, 10, 12)),
+            DependentCreditClass::ChildTaxCredit
+        );
+        assert_eq!(
+            classify_dependent(&dep(FosterChild, 10, 12)),
+            DependentCreditClass::ChildTaxCredit
+        );
+        // Residency test: more than half the year — 7 months qualifies,
+        // 6 does not (and no ODC either).
+        assert_eq!(
+            classify_dependent(&dep(Child, 10, 7)),
+            DependentCreditClass::ChildTaxCredit
+        );
+        assert_eq!(
+            classify_dependent(&dep(Child, 10, 6)),
+            DependentCreditClass::None
+        );
+        assert_eq!(
+            classify_dependent(&dep(Other, 40, 6)),
+            DependentCreditClass::None
+        );
+        // Relationship "other" is ODC at any age.
+        assert_eq!(
+            classify_dependent(&dep(Other, 10, 12)),
+            DependentCreditClass::OtherDependent
+        );
+        assert_eq!(
+            classify_dependent(&dep(Other, 40, 12)),
+            DependentCreditClass::OtherDependent
+        );
+    }
+
+    #[test]
+    fn sched8812_golden_case_006_figures() {
+        let p = params();
+        // Case 006: MFJ, AGI $90,000, line 16 $6,546, earned income
+        // $90,000; children 7 and 4 (CTC) + other dependent 19 (ODC).
+        let deps = vec![
+            dep(DependentRelationship::Child, 7, 12),
+            dep(DependentRelationship::Child, 4, 12),
+            dep(DependentRelationship::Other, 19, 12),
+        ];
+        let s = schedule_8812(&deps, FilingStatus::Mfj, m(90_000), m(6_546), m(90_000), &p);
+        assert_eq!(s.ctc_children, 2);
+        assert_eq!(s.odc_dependents, 1);
+        assert_eq!(s.tentative_credit, m(4_900), "2 x $2,200 + $500");
+        assert_eq!(s.phaseout_reduction, Money::ZERO, "MAGI under $400,000");
+        assert_eq!(s.credit_after_phaseout, m(4_900));
+        assert_eq!(
+            s.credit_limit,
+            m(6_546),
+            "Credit Limit Worksheet A = line 16"
+        );
+        assert_eq!(s.nonrefundable_credit, m(4_900));
+        assert_eq!(
+            s.additional_child_tax_credit,
+            Money::ZERO,
+            "credit fully absorbed: line 16a is zero"
+        );
+    }
+
+    #[test]
+    fn sched8812_golden_case_007_figures() {
+        let p = params();
+        // Case 007: HoH, AGI $30,000, line 16 $638, earned income
+        // $30,000; one child age 5.
+        let deps = vec![dep(DependentRelationship::Child, 5, 12)];
+        let s = schedule_8812(&deps, FilingStatus::Hoh, m(30_000), m(638), m(30_000), &p);
+        assert_eq!(s.tentative_credit, m(2_200));
+        assert_eq!(s.credit_after_phaseout, m(2_200));
+        assert_eq!(s.nonrefundable_credit, m(638), "limited by line 16");
+        // ACTC: unused 2200 - 638 = $1,562, under the $1,700 cap and
+        // under 15% x (30000 - 2500) = $4,125.
+        assert_eq!(s.additional_child_tax_credit, m(1_562));
+    }
+
+    #[test]
+    fn sched8812_phaseout_mechanics() {
+        let p = params();
+        let deps = vec![dep(DependentRelationship::Child, 5, 12)];
+        let big_tax = m(100_000);
+        let ei = m(500_000);
+        // MAGI exactly at the $200,000 threshold: no reduction.
+        let s = schedule_8812(&deps, FilingStatus::Single, m(200_000), big_tax, ei, &p);
+        assert_eq!(s.phaseout_reduction, Money::ZERO);
+        assert_eq!(s.credit_after_phaseout, m(2_200));
+        // $1 over: the excess rounds up to $1,000 -> $50 reduction.
+        let s = schedule_8812(&deps, FilingStatus::Single, m(200_001), big_tax, ei, &p);
+        assert_eq!(s.phaseout_reduction, m(50));
+        // Exactly $1,000 over: still one $1,000 unit -> $50.
+        let s = schedule_8812(&deps, FilingStatus::Single, m(201_000), big_tax, ei, &p);
+        assert_eq!(s.phaseout_reduction, m(50));
+        // $1,001 over: two units -> $100.
+        let s = schedule_8812(&deps, FilingStatus::Single, m(201_001), big_tax, ei, &p);
+        assert_eq!(s.phaseout_reduction, m(100));
+        // MFJ threshold is $400,000.
+        let s = schedule_8812(&deps, FilingStatus::Mfj, m(400_001), big_tax, ei, &p);
+        assert_eq!(s.phaseout_reduction, m(50));
+        // A reduction at least the tentative credit stops the credit
+        // entirely (form line 12): $500,000 single -> excess $300,000
+        // -> $15,000 reduction; no nonrefundable credit and no ACTC.
+        let s = schedule_8812(&deps, FilingStatus::Single, m(500_000), big_tax, ei, &p);
+        assert_eq!(s.credit_after_phaseout, Money::ZERO);
+        assert_eq!(s.nonrefundable_credit, Money::ZERO);
+        assert_eq!(s.additional_child_tax_credit, Money::ZERO);
+    }
+
+    #[test]
+    fn sched8812_actc_caps() {
+        let p = params();
+        let deps = vec![dep(DependentRelationship::Child, 5, 12)];
+        // Per-child cap binds: zero tax liability leaves the full
+        // $2,200 unused, earned income is ample -> ACTC = $1,700.
+        let s = schedule_8812(
+            &deps,
+            FilingStatus::Single,
+            m(200_000),
+            Money::ZERO,
+            m(200_000),
+            &p,
+        );
+        assert_eq!(s.nonrefundable_credit, Money::ZERO);
+        assert_eq!(s.additional_child_tax_credit, m(1_700));
+        // Earned-income formula binds: 15% x (10000 - 2500) = $1,125.
+        let s = schedule_8812(
+            &deps,
+            FilingStatus::Single,
+            m(10_000),
+            Money::ZERO,
+            m(10_000),
+            &p,
+        );
+        assert_eq!(s.additional_child_tax_credit, m(1_125));
+        // Earned income at or under $2,500: no ACTC.
+        let s = schedule_8812(
+            &deps,
+            FilingStatus::Single,
+            m(2_500),
+            Money::ZERO,
+            m(2_500),
+            &p,
+        );
+        assert_eq!(s.additional_child_tax_credit, Money::ZERO);
+        // ODC-only family: line 16b is $0 (no qualifying children), so
+        // the ACTC is always zero even with unused credit.
+        let deps = vec![
+            dep(DependentRelationship::Other, 40, 12),
+            dep(DependentRelationship::Other, 38, 12),
+        ];
+        let s = schedule_8812(
+            &deps,
+            FilingStatus::Single,
+            m(30_000),
+            Money::ZERO,
+            m(30_000),
+            &p,
+        );
+        assert_eq!(s.tentative_credit, m(1_000), "2 x $500 ODC");
+        assert_eq!(s.nonrefundable_credit, Money::ZERO);
+        assert_eq!(s.additional_child_tax_credit, Money::ZERO);
     }
 
     #[test]

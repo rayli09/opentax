@@ -366,6 +366,24 @@ fn default_se_medicare_rate_bp() -> u32 {
 fn default_se_net_earnings_factor_bp() -> u32 {
     9235
 }
+fn default_ctc_per_child_cents() -> i64 {
+    220_000
+}
+fn default_odc_per_dependent_cents() -> i64 {
+    50_000
+}
+fn default_actc_cap_per_child_cents() -> i64 {
+    170_000
+}
+fn default_ctc_phaseout_rate_bp() -> u32 {
+    500
+}
+fn default_actc_earned_income_threshold_cents() -> i64 {
+    250_000
+}
+fn default_actc_rate_bp() -> u32 {
+    1500
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bracket {
@@ -409,6 +427,35 @@ pub struct TaxParams {
     /// §1(j)(5)(B) maximum zero / 15-percent rate amounts per status.
     #[serde(default)]
     pub capital_gain_thresholds_cents: HashMap<String, CapitalGainThresholds>,
+    /// Child tax credit per qualifying child (Schedule 8812, line 5:
+    /// $2,200 for TY2025, as increased by the OBBBA).
+    #[serde(default = "default_ctc_per_child_cents")]
+    pub ctc_per_child_cents: i64,
+    /// Credit for other dependents, per dependent (Schedule 8812,
+    /// line 7: $500).
+    #[serde(default = "default_odc_per_dependent_cents")]
+    pub odc_per_dependent_cents: i64,
+    /// Additional child tax credit cap per qualifying child (Schedule
+    /// 8812, line 16b: $1,700 for TY2025).
+    #[serde(default = "default_actc_cap_per_child_cents")]
+    pub actc_cap_per_child_cents: i64,
+    /// CTC/ODC phaseout threshold (modified AGI) per filing status
+    /// (Schedule 8812, line 9: $400,000 MFJ, $200,000 all other
+    /// statuses).
+    #[serde(default)]
+    pub ctc_phaseout_threshold_cents: HashMap<String, i64>,
+    /// Phaseout rate applied to the excess MAGI after it is rounded up
+    /// to the next multiple of $1,000 (Schedule 8812, lines 10–11: 5%,
+    /// i.e. $50 per $1,000 or fraction thereof).
+    #[serde(default = "default_ctc_phaseout_rate_bp")]
+    pub ctc_phaseout_rate_bp: u32,
+    /// Earned income above which the ACTC's 15% measure applies
+    /// (Schedule 8812, Part II-A: $2,500).
+    #[serde(default = "default_actc_earned_income_threshold_cents")]
+    pub actc_earned_income_threshold_cents: i64,
+    /// ACTC earned-income rate (Schedule 8812, line 20: 15%).
+    #[serde(default = "default_actc_rate_bp")]
+    pub actc_rate_bp: u32,
 }
 
 impl TaxParams {
@@ -447,6 +494,23 @@ impl TaxParams {
         self.capital_gain_thresholds_cents
             .get(status.as_str())
             .copied()
+    }
+
+    /// CTC/ODC phaseout threshold (MAGI) for the status (Schedule
+    /// 8812, line 9): $400,000 if married filing jointly, $200,000 for
+    /// every other filing status.
+    pub fn ctc_phaseout_threshold(&self, status: FilingStatus) -> Money {
+        let fallback = if status == FilingStatus::Mfj {
+            40_000_000
+        } else {
+            20_000_000
+        };
+        Money::from_cents(
+            *self
+                .ctc_phaseout_threshold_cents
+                .get(status.as_str())
+                .unwrap_or(&fallback),
+        )
     }
 
     /// Bracket table in [`Op::BracketTax`] / [`bracket_tax`] form.
@@ -714,6 +778,41 @@ mod tests {
         assert_eq!(p.se_medicare_rate_bp, 290);
         // IRC 1402(a) / Schedule SE line 4a: net earnings = 92.35%.
         assert_eq!(p.se_net_earnings_factor_bp, 9235);
+    }
+
+    #[test]
+    fn params_2025_child_credits() {
+        let p = TaxParams::load_2025().unwrap();
+        // Schedule 8812 (Form 1040) TY2025: CTC $2,200 per qualifying
+        // child (line 5; OBBBA increase per the instructions' What's
+        // New), ODC $500 (line 7), ACTC cap $1,700 per child (line 16b).
+        assert_eq!(p.ctc_per_child_cents, 220_000);
+        assert_eq!(p.odc_per_dependent_cents, 50_000);
+        assert_eq!(p.actc_cap_per_child_cents, 170_000);
+        // Phaseout thresholds (line 9): $400,000 MFJ; $200,000 for all
+        // other filing statuses — MFS included.
+        assert_eq!(
+            p.ctc_phaseout_threshold(FilingStatus::Mfj).cents(),
+            40_000_000
+        );
+        assert_eq!(
+            p.ctc_phaseout_threshold(FilingStatus::Single).cents(),
+            20_000_000
+        );
+        assert_eq!(
+            p.ctc_phaseout_threshold(FilingStatus::Hoh).cents(),
+            20_000_000
+        );
+        assert_eq!(
+            p.ctc_phaseout_threshold(FilingStatus::Mfs).cents(),
+            20_000_000
+        );
+        // Lines 10-11: 5% of the excess rounded up to a $1,000 multiple.
+        assert_eq!(p.ctc_phaseout_rate_bp, 500);
+        // Part II-A: 15% of earned income over $2,500.
+        assert_eq!(p.actc_earned_income_threshold_cents, 250_000);
+        assert_eq!(p.actc_rate_bp, 1500);
+        assert!(p.source.contains("Schedule 8812"));
     }
 
     #[test]

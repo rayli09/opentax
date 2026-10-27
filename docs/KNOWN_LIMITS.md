@@ -5,16 +5,20 @@ This list is the contract: anything not listed as working is not claimed.
 ## Compute (tax-forms)
 
 - Only Form 1040, only these lines: 1a, 1z, 2a, 2b, 3a, 3b, 7, 8, 9, 10,
-  11, 12, 15, 16, 23, 24, 25a, 25d, 33, 34, 37 — plus internal keys in
-  the computed lines map, which are not Form 1040 line numbers:
+  11, 12, 15, 16, 19, 21, 22, 23, 24, 25a, 25d, 28, 32, 33, 34, 37 —
+  plus internal keys in the computed lines map, which are not Form
+  1040 line numbers:
   `schd_net_short` / `schd_net_long` (net short-/long-term gain or loss
   from 1099-B), `schd_net_capital_gain` (the QDCG worksheet's
   capital-gain input), `schd_carryover_short` / `schd_carryover_long`
   (capital loss carryovers to the next year, as positive amounts),
   `schc_net_profit` (Schedule C net profit from 1099-NEC engagements),
-  `schedse_net_earnings` (Schedule SE line 4a net earnings), and
+  `schedse_net_earnings` (Schedule SE line 4a net earnings),
   `sched2_se_tax` (the Schedule SE tax entering Schedule 2 line 4,
-  equal to line 23).
+  equal to line 23), and `sched8812_tentative` /
+  `sched8812_credit_after_phaseout` / `sched8812_earned_income`
+  (Schedule 8812 line 8, line 12, and line 18a measures behind the
+  child credits on lines 19/28).
 - Income sources: W-2 wages; 1099-INT (Box 1 → line 2b, Box 8
   tax-exempt interest → line 2a, Box 4 withholding → line 25d);
   1099-DIV (Box 1a → line 3b, Box 1b qualified → line 3a, Box 4 →
@@ -64,9 +68,54 @@ This list is the contract: anything not listed as working is not claimed.
   amounts (age/blindness), no QBI deduction (line 13).
 - Line 10 is the deductible part of self-employment tax only (Schedule 1
   line 15); no other adjustments (student loan interest, HSA, IRA…).
-- No credits (CTC, EITC, education, foreign), no AMT, no NIIT. The only
+- No education or foreign credits, no AMT, no NIIT. The only
   "other tax" is self-employment tax on line 23 (Schedule 2 line 4);
-  line 24 = line 16 + line 23.
+  line 24 = line 22 + line 23. Family credits (CTC / ODC / ACTC) are
+  implemented — see the Schedule 8812 section below.
+- Dependents and child credits (simplified Schedule 8812):
+  - Dependents are stored entries (`dependent` nodes: name,
+    relationship — child / stepchild / foster_child / other — age on
+    December 31, and months lived with the taxpayer). Classification
+    follows the Schedule 8812 tests that v1 models: the child tax
+    credit needs a child-type relationship, age under 17 at year-end,
+    and more than half the year lived with the taxpayer (months > 6);
+    any other stored dependent with months > 6 takes the $500 credit
+    for other dependents. TY2025 amounts (Schedule 8812 / its
+    instructions): CTC $2,200 per qualifying child, ODC $500, ACTC cap
+    $1,700 per qualifying child; phaseout thresholds $400,000 (MFJ) /
+    $200,000 (all other statuses), reduction = the excess over the
+    threshold rounded up to the next $1,000 × 5%.
+  - MAGI is taken to be AGI (Schedule 8812 line 3 modifications — e.g.
+    Forms 2555/4563 exclusions — do not exist in v1).
+  - The nonrefundable credit is limited by the Schedule 8812 **Credit
+    Limit Worksheet A**: Form 1040 line 18 (line 16 + line 17) minus
+    Schedule 3 nonrefundable credits — in v1, line 16 only (line 17
+    AMT is 0 and no Schedule 3 credits exist). The credit does **not**
+    offset self-employment tax (line 23); the form subtracts credits
+    from line 18 before line 23 is added on line 24.
+  - The additional child tax credit (line 28) is Schedule 8812 Part
+    II-A only: the smallest of the credit unused by line 19, the
+    per-child cap × qualifying children, or 15% of (earned income −
+    $2,500). The Part II-B alternative formula for three or more
+    qualifying children (Social Security taxes vs. earned income
+    credit) is NOT implemented.
+  - Earned income (Schedule 8812 line 18a) is a v1 definition: total
+    W-2 Box 1 wages, plus Schedule C net profit when positive. It does
+    not subtract Schedule SE tax, and combat pay / clergy / other
+    adjustments are not modeled.
+  - The ODC path does **not** model the qualifying-relative tests:
+    the 50% support test, the gross-income test, and the relationship /
+    member-of-household rules are not checked — any stored dependent
+    not CTC-eligible with months > 6 is credited. SSN/ITIN
+    requirements (a qualifying child needs an SSN issued by the due
+    date; the taxpayer needs an ITIN/SSN) are not modeled, and
+    dependent SSNs are not stored at all.
+  - The earned income credit (EIC / EITC, Form 1040 line 27) is a
+    **different credit and is NOT implemented** — nothing in v1 claims
+    it. The child and dependent care credit (Schedule 3 / Form 2441)
+    is likewise not implemented.
+  - With no dependents stored, lines 19/21/28/32 are stated Complete
+    zeros and 22/24/33 reduce to the pre-8812 arithmetic.
 - Schedule C / Schedule SE (simplified, for 1099-NEC side income):
   - One `expenses` total per 1099-NEC engagement stands in for the whole
     Schedule C expense section — no per-category expenses, no cost of
@@ -95,7 +144,8 @@ This list is the contract: anything not listed as working is not claimed.
     §199A QBI deduction on the Schedule C profit. SE figures are kept in
     cents; the paper Schedule SE rounds to whole dollars, so a paper
     filing can differ by a dollar.
-- Line 33 is simplified to equal 25d (withholding only).
+- Line 33 = line 25d + line 32 (withholding plus the refundable
+  credits above); no other payment lines (26, 31, …) exist in v1.
 - No state returns.
 - Filing statuses: single, mfj, hoh, mfs parameters are included; mfs
   special rules are not modeled.
@@ -163,15 +213,22 @@ This list is the contract: anything not listed as working is not claimed.
   verified line→field map in `crates/tax-forms/forms/f1040-2025-field-map.json`
   (widget rectangles matched against the printed line labels; the map
   file records the method and per-field evidence). Scope: computed
-  amount lines + the filing-status checkbox only. Identity fields
-  (name/SSN/address) are NOT filled — they are not stored in a return —
-  and are reported under `skipped`. Amounts are written as exact
-  dollars-and-cents (e.g. `4231.50`); whole-dollar rounding is NOT
-  applied in v1. TY2025 layout notes: AGI is written to both 11a and
-  11b (the form repeats it on page 2), the standard deduction to 12e
-  and to line 14 (= 12e + 13a + 13b, and the engine computes no
-  13a/13b), and line 24 is written from engine line 24 (= 16 + 23;
-  engine line 22 is always 0 since no lines 17–21 amounts exist).
+  amount lines, the filing-status checkbox, and the page-1 Dependents
+  table for stored dependents (name split first word / remainder into
+  the (1)/(2) fields, and the question-(7) credit checkbox — the
+  sibling `Btn` fields under the "Child tax credit" / "Credit for
+  other dependents" sub-columns — for the first four dependents; more
+  than four produces a warning, and the dependent (3) SSN fields are
+  reported under `skipped` because dependent SSNs are not stored).
+  Identity fields (name/SSN/address) are NOT filled — they are not
+  stored in a return — and are reported under `skipped`. Amounts are
+  written as exact dollars-and-cents (e.g. `4231.50`); whole-dollar
+  rounding is NOT applied in v1. TY2025 layout notes: AGI is written
+  to both 11a and 11b (the form repeats it on page 2), the standard
+  deduction to 12e and to line 14 (= 12e + 13a + 13b, and the engine
+  computes no 13a/13b), and line 24 is written from engine line 24
+  (= line 22 + line 23; line 22 = line 16 − line 21, the child
+  credits).
   Lines 8, 10, and 23 are exported too (geometrically verified like the
   rest: line 8 = f1_72, line 10 = f1_74 — on page 1, between lines 9
   and 11a — and line 23 = f2_15). Schedules are not exported. An

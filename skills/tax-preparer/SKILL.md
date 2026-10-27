@@ -21,8 +21,10 @@ description: Preparation skill for opentax. Use when facts/documents are entered
 5. Export the artifact: `tax return export --return <id> --type json`,
    or a filled Form 1040 PDF:
    `tax return export --return <id> --type pdf --template <blank TY2025 f1040.pdf> --out <file>`
-   (amount lines + filing status only; identity fields are reported as
-   skipped, never invented). MeF export returns `not_implemented` in
+   (amount lines, filing status, and the page-1 Dependents table for
+   stored dependents — names and credit checkboxes for the first four;
+   identity fields and dependent SSNs are reported as skipped, never
+   invented). MeF export returns `not_implemented` in
    v1 — report that plainly if asked; do not claim a file exists when
    none was produced.
 6. Present a closing summary: refund/owed line values (34/37) quoted from
@@ -39,13 +41,18 @@ not from your own calculation, not from a prior draft.
 ## Authority limits
 
 v1 computes a TY2025 Form 1040 slice from W-2, 1099-INT, 1099-DIV,
-1099-B, and 1099-NEC entries (see `docs/KNOWN_LIMITS.md`). Line 16 is
+1099-B, and 1099-NEC entries, plus stored dependents with the child
+credits (see `docs/KNOWN_LIMITS.md`). Line 16 is
 figured by the prescribed method — the QDCG worksheet, the Tax Table,
 or the Tax Computation Worksheet — and the engine reports which one as
 `line16_method`; name the method when presenting the tax. When 1099-NEC
 entries are present, present the side-income chain explicitly: Schedule
 C net profit (internal key `schc_net_profit`) on line 8, self-employment
 tax on line 23, its deductible half on line 10, and total tax on
-line 24 (= 16 + 23) — the amount owed/refunded (34/37) is figured
-against line 24, not line 16. Preparation is not filing: this skill
-never submits.
+line 24 (= line 22 + line 23) — the amount owed/refunded (34/37) is
+figured against line 24, not line 16. When dependents are present,
+present the credit chain explicitly: tentative credit (internal key
+`sched8812_tentative`), the nonrefundable part on lines 19/21, tax
+after credits on line 22, and any additional child tax credit on
+lines 28/32 feeding total payments on line 33. Preparation is not
+filing: this skill never submits.

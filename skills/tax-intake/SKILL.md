@@ -12,8 +12,14 @@ of (a) facts to provide and (b) documents to gather. No computation here.
 
 1. Run the router setup (`tax doctor`, `tax selftest`).
 2. Establish the basics with the user: tax year (v1: 2025 only), filing
-   status (single / mfj / hoh / mfs), and income sources present this year
-   (employment W-2s, bank interest, dividends, brokerage, other).
+   status (single / mfj / hoh / mfs), income sources present this year
+   (employment W-2s, bank interest, dividends, brokerage, other), and
+   **dependents**: for each person the user claims, ask their
+   relationship (child / stepchild / foster child / other), their age
+   on December 31 of the tax year, and how many months they lived with
+   the taxpayer — these drive the child tax credit / credit for other
+   dependents (simplified Schedule 8812). Do not ask for dependent
+   SSNs: they are not stored.
 3. Create the return:
    `tax return create --year 2025 --status <status>`
    Record the returned `returnId` and keep using exactly that id.
@@ -39,7 +45,10 @@ privacy warning before reading documents).
 ## Authority limits
 
 Scope is TY2025 Form 1040 with W-2 wages, interest/dividends/capital
-gains from 1099s, and 1099-NEC side income (simplified Schedule C/SE)
-at the engine level. If the user's situation needs anything in
-`docs/KNOWN_LIMITS.md` (Schedule E, credits, state returns…), say so
-now — before collecting documents — and stop that part.
+gains from 1099s, 1099-NEC side income (simplified Schedule C/SE), and
+dependents with the child tax credit / credit for other dependents /
+additional child tax credit (simplified Schedule 8812) at the engine
+level. If the user's situation needs anything in
+`docs/KNOWN_LIMITS.md` (Schedule E, other credits — the earned income
+credit is NOT implemented — state returns…), say so now — before
+collecting documents — and stop that part.

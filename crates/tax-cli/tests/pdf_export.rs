@@ -241,6 +241,7 @@ fn case002_input() -> Form1040Input {
             federal_withholding: Money::ZERO,
         }],
         f1099_necs: vec![],
+        dependents: vec![],
     }
 }
 
@@ -269,6 +270,7 @@ fn case005_input() -> Form1040Input {
             federal_withholding: Money::ZERO,
             expenses: Money::from_cents(200_000),
         }],
+        dependents: vec![],
     }
 }
 
@@ -304,6 +306,33 @@ fn builder_plus_backend_fill_synthetic_with_real_qnames() {
     assert_eq!(
         field_of("24").map(String::as_str),
         Some("topmostSubform[0].Page2[0].f2_16[0]")
+    );
+    // Family-credit lines (no dependents in case 002): 19/21/28/32 are
+    // complete zeros and filled as such; 22 = line 16 with no credits.
+    assert_eq!(by_line("19").map(String::as_str), Some("0.00"));
+    assert_eq!(by_line("21").map(String::as_str), Some("0.00"));
+    assert_eq!(by_line("22").map(String::as_str), Some("4163.00"));
+    assert_eq!(by_line("28").map(String::as_str), Some("0.00"));
+    assert_eq!(by_line("32").map(String::as_str), Some("0.00"));
+    assert_eq!(
+        field_of("19").map(String::as_str),
+        Some("topmostSubform[0].Page2[0].f2_11[0]")
+    );
+    assert_eq!(
+        field_of("21").map(String::as_str),
+        Some("topmostSubform[0].Page2[0].f2_13[0]")
+    );
+    assert_eq!(
+        field_of("22").map(String::as_str),
+        Some("topmostSubform[0].Page2[0].f2_14[0]")
+    );
+    assert_eq!(
+        field_of("28").map(String::as_str),
+        Some("topmostSubform[0].Page2[0].f2_24[0]")
+    );
+    assert_eq!(
+        field_of("32").map(String::as_str),
+        Some("topmostSubform[0].Page2[0].f2_28[0]")
     );
 
     // The synthetic carries only three of the mapped fields; fill just
