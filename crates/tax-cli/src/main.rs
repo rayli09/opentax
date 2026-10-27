@@ -19,6 +19,7 @@ use tax_forms::{
     validate_1099_div, validate_dependent, DependentInput, Form1040Input, I1099BInput,
     I1099DivInput, I1099IntInput, I1099NecInput, PersonIdentity, TaxpayerIdentity, W2Input,
 };
+use tax_forms::packet::{build_packet, schedules_view};
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
 // ---------------------------------------------------------------------------
@@ -149,8 +150,13 @@ enum ReturnAction {
     /// List stored returns (PII-free: id, year, status, completeness,
     /// whether identity is set).
     List,
-    /// Export a stored return. json and pdf work; mef reports not_implemented.
-    /// pdf requires --template (a blank TY2025 Form 1040 PDF) and --out.
+    /// Export a stored return. json, pdf and packet work; mef reports
+    /// not_implemented. pdf requires --template (a blank TY2025 Form 1040
+    /// PDF) and --out. packet requires --forms-dir (a directory holding
+    /// the blank TY2025 form PDFs under their canonical names —
+    /// f1040.pdf, f1040sd.pdf, f8949.pdf, f1040s1.pdf, f1040s2.pdf,
+    /// f1040sc.pdf, f1040sse.pdf, f10408812.pdf, f1040s1a.pdf) and
+    /// --out-dir (the packet is written there, with a manifest.json).
     Export {
         #[arg(long)]
         r#return: String,
@@ -160,6 +166,10 @@ enum ReturnAction {
         template: Option<PathBuf>,
         #[arg(long)]
         out: Option<PathBuf>,
+        #[arg(long)]
+        forms_dir: Option<PathBuf>,
+        #[arg(long)]
+        out_dir: Option<PathBuf>,
     },
 }
 
@@ -534,6 +544,10 @@ struct ComputedView {
     incomplete: Vec<String>,
     warnings: Vec<String>,
     line16_method: Option<String>,
+    /// The internal `schedules` view (packet derivations, integer
+    /// cents). Only the full-engine path can build it; the partial
+    /// views leave it `None` (serialized as null).
+    schedules: Option<Value>,
 }
 
 /// All line keys the current engine/view knows, in display order.
@@ -613,6 +627,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
             complete: false,
             warnings: vec!["no documents have been added to this return".to_string()],
             line16_method: None,
+            schedules: None,
         });
     }
 
@@ -632,12 +647,14 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
             };
             let computed = compute_1040(&input, params);
             warnings.extend(computed.notes.iter().cloned());
+            let schedules = schedules_view(&input, &computed, params);
             Ok(ComputedView {
                 incomplete: incomplete_lines(&computed.lines),
                 complete: computed.complete,
                 lines: computed.lines,
                 warnings,
                 line16_method: computed.line16_method.clone(),
+                schedules: Some(schedules),
             })
         }
         None => {
@@ -809,6 +826,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 complete: false,
                 warnings,
                 line16_method: None,
+                schedules: None,
             })
         }
     }
@@ -826,6 +844,7 @@ fn view_json(view: &ComputedView) -> Value {
         "incomplete": view.incomplete,
         "warnings": view.warnings,
         "line16_method": view.line16_method,
+        "schedules": view.schedules,
     })
 }
 
@@ -1228,7 +1247,7 @@ fn node_templates() -> Vec<(String, bool, Value)> {
         (
             "1099-b".to_string(),
             true,
-            json!({"payer_name": "", "transactions": [{"description": "", "proceeds": "0", "cost_basis": "0", "adjustment": "0", "term": "short"}], "federal_withholding": "0"}),
+            json!({"payer_name": "", "transactions": [{"description": "", "proceeds": "0", "cost_basis": "0", "adjustment": "0", "term": "short", "date_acquired": null, "date_sold": null, "adjustment_code": null}], "federal_withholding": "0"}),
         ),
         (
             "1099-nec".to_string(),
@@ -1570,6 +1589,8 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             export_type,
             template,
             out,
+            forms_dir,
+            out_dir,
         } => {
             let ret = load_return(&cli.store, &r#return)?;
             match export_type.as_str() {
@@ -1676,13 +1697,251 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                         ),
                     ))
                 }
+                "packet" => packet_export(&ret, &params, forms_dir.as_ref(), out_dir.as_ref()),
                 other => Err(CliErr::new(
                     "invalid_export_type",
-                    format!("unknown export type '{other}' (use json|mef|pdf)"),
+                    format!("unknown export type '{other}' (use json|mef|pdf|packet)"),
                 )),
             }
         }
     }
+}
+
+/// Rebuild the engine input for a stored return (the same construction
+/// the full compute view uses). Requires the direct interest/dividend
+/// amounts to have been recorded at creation time.
+fn form_input(ret: &StoredReturn) -> CResult<Form1040Input> {
+    let other = ret.other_income.as_ref().ok_or_else(|| {
+        CliErr::new(
+            "return_incomplete",
+            "interest_income and ordinary_dividends have not been recorded for this return \
+             (create it with --interest-cents/--dividends-cents); the packet cannot be built",
+        )
+    })?;
+    let status = FilingStatus::parse(&ret.status).map_err(|e| CliErr::new("invalid_status", e))?;
+    Ok(Form1040Input {
+        status,
+        w2s: stored_w2s(ret)?,
+        interest_income: other.interest,
+        ordinary_dividends: other.dividends,
+        f1099_ints: stored_ints(ret)?,
+        f1099_divs: stored_divs(ret)?,
+        f1099_bs: stored_bs(ret)?,
+        f1099_necs: stored_necs(ret)?,
+        dependents: stored_dependents(ret)?,
+        identity: ret.taxpayer.clone(),
+    })
+}
+
+/// `return export --type packet`: the full filing packet — the filled
+/// Form 1040 plus every applicable schedule, each filled from its
+/// geometrically verified field map, plus a `manifest.json` in the
+/// output directory reporting every form as filled / not_applicable /
+/// missing_template. A form whose inputs exist but whose template is
+/// absent from `--forms-dir` is a LOUD manifest entry, never a silent
+/// skip; an incomplete return is an error, like the pdf export.
+fn packet_export(
+    ret: &StoredReturn,
+    params: &TaxParams,
+    forms_dir: Option<&PathBuf>,
+    out_dir: Option<&PathBuf>,
+) -> CResult<Out> {
+    let forms_dir = forms_dir.ok_or_else(|| {
+        CliErr::new(
+            "missing_forms_dir",
+            "packet export requires --forms-dir <dir holding the blank TY2025 form PDFs>",
+        )
+    })?;
+    let out_dir = out_dir.ok_or_else(|| {
+        CliErr::new(
+            "missing_out_dir",
+            "packet export requires --out-dir <dir to write the packet into>",
+        )
+    })?;
+    let view = compute_view(ret, params)?;
+    if !view.complete {
+        return Err(CliErr::with_extra(
+            "return_incomplete",
+            format!(
+                "return {} is incomplete; lines missing or incomplete: {}",
+                ret.id,
+                view.incomplete.join(", ")
+            ),
+            json!({"incomplete_lines": view.incomplete}),
+        ));
+    }
+    let input = form_input(ret)?;
+    let status = input.status;
+    let computed = compute_1040(&input, params);
+    std::fs::create_dir_all(out_dir).map_err(io_err)?;
+
+    // One manifest entry per form, in filing order. The JSON output
+    // carries the same array plus per-form fill detail.
+    let mut manifest_forms: Vec<Value> = Vec::new();
+    let mut detail_forms: Vec<Value> = Vec::new();
+    let mut human_lines: Vec<String> = Vec::new();
+
+    let mut record = |manifest_entry: Value, detail_entry: Value, human: String| {
+        manifest_forms.push(manifest_entry);
+        detail_forms.push(detail_entry);
+        human_lines.push(human);
+    };
+
+    // Form 1040 — the existing fill path, with the packet's template
+    // convention (forms-dir/f1040.pdf).
+    {
+        let plan = build_fill_values_with_dependents(
+            &computed.lines,
+            status,
+            &input.dependents,
+            ret.taxpayer.as_ref(),
+            params,
+        )
+        .map_err(|incomplete| {
+            CliErr::with_extra(
+                "return_incomplete",
+                format!(
+                    "return {} is incomplete; mapped lines missing or incomplete: {}",
+                    ret.id,
+                    incomplete.join(", ")
+                ),
+                json!({"incomplete_lines": incomplete}),
+            )
+        })?;
+        let template = forms_dir.join("f1040.pdf");
+        if !template.exists() {
+            record(
+                json!({"form": "f1040", "label": "Form 1040", "status": "missing_template",
+                        "file": Value::Null,
+                        "notes": [format!("template not found: {} — supply the blank TY2025 Form 1040 PDF under this name in --forms-dir", template.display())]}),
+                json!({"form": "f1040", "status": "missing_template"}),
+                "f1040: MISSING TEMPLATE (f1040.pdf not in --forms-dir)".to_string(),
+            );
+        } else {
+            let values: std::collections::HashMap<String, String> = plan
+                .values
+                .iter()
+                .map(|v| (v.field.clone(), v.value.clone()))
+                .collect();
+            let out_path = out_dir.join("f1040.pdf");
+            let report: FillReport = PdferBackend
+                .fill_fields(&template, &values, &out_path)
+                .map_err(|e| CliErr::new("pdf_fill_failed", e.to_string()))?;
+            let filled: Vec<Value> = plan
+                .values
+                .iter()
+                .map(|v| {
+                    let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
+                    json!({"line": v.line, "field": v.field, "value": shown})
+                })
+                .collect();
+            let skipped: Vec<Value> = plan
+                .skipped
+                .iter()
+                .map(|s| json!({"field": s.field, "reason": s.reason}))
+                .collect();
+            record(
+                json!({"form": "f1040", "label": "Form 1040", "status": "filled",
+                        "file": "f1040.pdf", "notes": plan.warnings}),
+                json!({"form": "f1040", "status": "filled", "file": "f1040.pdf",
+                        "backend": report.backend, "filled": filled, "skipped": skipped,
+                        "warnings": report.warnings}),
+                format!(
+                    "f1040: filled -> f1040.pdf ({} fields)",
+                    report.changed_fields.len()
+                ),
+            );
+        }
+    }
+
+    // The schedules.
+    for form in build_packet(&input, &computed, params) {
+        if !form.applicable {
+            let reason = form.not_applicable_reason.clone().unwrap_or_default();
+            record(
+                json!({"form": form.form, "label": form.label, "status": "not_applicable",
+                        "file": Value::Null, "notes": [reason.clone()]}),
+                json!({"form": form.form, "status": "not_applicable"}),
+                format!("{}: not applicable ({})", form.form, reason),
+            );
+            continue;
+        }
+        // Template convention: the canonical packet file name — a
+        // single f1040sc.pdf template serves every Schedule C.
+        let template = forms_dir.join(format!("{}.pdf", form.form));
+        if !template.exists() {
+            let mut notes = form.notes.clone();
+            notes.insert(
+                0,
+                format!(
+                    "template not found: {} — supply the blank TY2025 {} PDF under this name in --forms-dir",
+                    template.display(),
+                    form.label
+                ),
+            );
+            record(
+                json!({"form": form.form, "label": form.label, "status": "missing_template",
+                        "file": Value::Null, "notes": notes}),
+                json!({"form": form.form, "status": "missing_template"}),
+                format!(
+                    "{}: MISSING TEMPLATE ({}.pdf not in --forms-dir)",
+                    form.form, form.form
+                ),
+            );
+            continue;
+        }
+        let values: std::collections::HashMap<String, String> = form
+            .values
+            .iter()
+            .map(|v| (v.field.clone(), v.value.clone()))
+            .collect();
+        let out_path = out_dir.join(&form.file_name);
+        let report: FillReport = PdferBackend
+            .fill_fields(&template, &values, &out_path)
+            .map_err(|e| CliErr::new("pdf_fill_failed", e.to_string()))?;
+        let filled: Vec<Value> = form
+            .values
+            .iter()
+            .map(|v| {
+                let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
+                json!({"line": v.line, "field": v.field, "value": shown})
+            })
+            .collect();
+        record(
+            json!({"form": form.form, "label": form.label, "status": "filled",
+                    "file": form.file_name, "notes": form.notes}),
+            json!({"form": form.form, "status": "filled", "file": form.file_name,
+                    "backend": report.backend, "filled": filled,
+                    "warnings": report.warnings}),
+            format!(
+                "{}: filled -> {} ({} fields)",
+                form.form,
+                form.file_name,
+                report.changed_fields.len()
+            ),
+        );
+    }
+
+    let manifest = json!({
+        "tax_year": ret.year,
+        "return_id": ret.id,
+        "forms": manifest_forms,
+    });
+    let manifest_path = out_dir.join("manifest.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).map_err(json_err)?,
+    )
+    .map_err(io_err)?;
+    human_lines.push(format!("manifest: {}", manifest_path.display()));
+    Ok(Out::ok(
+        json!({"success": true, "type": "packet",
+                "out_dir": out_dir.display().to_string(),
+                "manifest": manifest_path.display().to_string(),
+                "forms": detail_forms,
+                "schedules": schedules_view(&input, &computed, params)}),
+        human_lines.join("\n"),
+    ))
 }
 
 fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
@@ -2211,6 +2470,8 @@ fn cmd_return_ref(cli: &Cli, action: &ReturnAction) -> CResult<Out> {
             export_type,
             template,
             out,
+            forms_dir,
+            out_dir,
         } => cmd_return(
             cli,
             ReturnAction::Export {
@@ -2218,6 +2479,8 @@ fn cmd_return_ref(cli: &Cli, action: &ReturnAction) -> CResult<Out> {
                 export_type: export_type.clone(),
                 template: template.clone(),
                 out: out.clone(),
+                forms_dir: forms_dir.clone(),
+                out_dir: out_dir.clone(),
             },
         ),
     }
