@@ -123,7 +123,10 @@ fn build_pdf(path: &PathBuf, pages: Vec<Page>) -> Result<(), String> {
 
     let mut page_ids = Vec::new();
     for page in &pages {
-        let content_id = doc.add_object(Stream::new(Dictionary::new(), page.ops.clone().into_bytes()));
+        let content_id = doc.add_object(Stream::new(
+            Dictionary::new(),
+            page.ops.clone().into_bytes(),
+        ));
         let page_id = doc.new_object_id();
         let mut fonts = Dictionary::new();
         fonts.set("F1", Object::Reference(font1_id));
@@ -182,7 +185,13 @@ fn build_pdf(path: &PathBuf, pages: Vec<Page>) -> Result<(), String> {
 // ---------------------------------------------------------------------------
 
 fn w2_grid_copy(page: &mut Page, origin: f32, blank: &[&str]) {
-    page.text(36.0, origin + 18.0, "F2", 13.0, "Form W-2 Wage and Tax Statement 2025");
+    page.text(
+        36.0,
+        origin + 18.0,
+        "F2",
+        13.0,
+        "Form W-2 Wage and Tax Statement 2025",
+    );
     page.text(
         36.0,
         origin + 34.0,
@@ -191,13 +200,37 @@ fn w2_grid_copy(page: &mut Page, origin: f32, blank: &[&str]) {
         "Copy B - To Be Filed With Employee's FEDERAL Tax Return",
     );
     // Boxes a / b
-    page.text(36.0, origin + 56.0, "F1", 7.5, "a Employee's social security number");
-    page.text(330.0, origin + 56.0, "F1", 7.5, "b Employer identification number (EIN)");
+    page.text(
+        36.0,
+        origin + 56.0,
+        "F1",
+        7.5,
+        "a Employee's social security number",
+    );
+    page.text(
+        330.0,
+        origin + 56.0,
+        "F1",
+        7.5,
+        "b Employer identification number (EIN)",
+    );
     page.text(36.0, origin + 74.0, "F1", 10.0, "123-45-6789");
     page.text(330.0, origin + 74.0, "F1", 10.0, "12-3456789");
     // Boxes c / e
-    page.text(36.0, origin + 96.0, "F1", 7.5, "c Employer's name, address, and ZIP code");
-    page.text(330.0, origin + 96.0, "F1", 7.5, "e Employee's name, address, and ZIP code");
+    page.text(
+        36.0,
+        origin + 96.0,
+        "F1",
+        7.5,
+        "c Employer's name, address, and ZIP code",
+    );
+    page.text(
+        330.0,
+        origin + 96.0,
+        "F1",
+        7.5,
+        "e Employee's name, address, and ZIP code",
+    );
     page.text(36.0, origin + 114.0, "F2", 10.0, "Acme Widgets Inc");
     page.text(36.0, origin + 128.0, "F1", 9.0, "1200 Industrial Pkwy");
     page.text(36.0, origin + 142.0, "F1", 9.0, "Springfield, IL 62704");
@@ -229,12 +262,30 @@ fn w2_grid_copy(page: &mut Page, origin: f32, blank: &[&str]) {
 fn w2_adp() -> Page {
     let mut page = Page::new();
     page.text(48.0, 40.0, "F2", 14.0, "Form W-2 Wage and Tax Statement");
-    page.text(48.0, 58.0, "F1", 9.0, "2025 - Globex Corporation Payroll Services");
-    page.text(48.0, 88.0, "F1", 8.0, "Employer's name, address, and ZIP code");
+    page.text(
+        48.0,
+        58.0,
+        "F1",
+        9.0,
+        "2025 - Globex Corporation Payroll Services",
+    );
+    page.text(
+        48.0,
+        88.0,
+        "F1",
+        8.0,
+        "Employer's name, address, and ZIP code",
+    );
     page.text(48.0, 106.0, "F2", 10.5, "Globex Corporation");
     page.text(48.0, 120.0, "F1", 9.0, "9 Market Street");
     page.text(48.0, 134.0, "F1", 9.0, "San Francisco, CA 94103");
-    page.text(48.0, 160.0, "F1", 9.0, "Employer identification number (EIN)");
+    page.text(
+        48.0,
+        160.0,
+        "F1",
+        9.0,
+        "Employer identification number (EIN)",
+    );
     page.text(330.0, 160.0, "F1", 10.0, "47-2091853");
     page.text(48.0, 186.0, "F1", 9.0, "Employee's social security number:");
     page.text(280.0, 186.0, "F1", 10.0, "123-45-6789");
@@ -266,7 +317,13 @@ fn w2_adp() -> Page {
 }
 
 fn payer_block(page: &mut Page) {
-    page.text(36.0, 64.0, "F1", 7.5, "PAYER'S name, street address, city or town,");
+    page.text(
+        36.0,
+        64.0,
+        "F1",
+        7.5,
+        "PAYER'S name, street address, city or town,",
+    );
     page.text(
         36.0,
         76.0,
@@ -311,7 +368,13 @@ fn int_fixture() -> Page {
 
 fn div_fixture() -> Page {
     let mut page = Page::new();
-    page.text(36.0, 30.0, "F2", 13.0, "Form 1099-DIV Dividends and Distributions 2025");
+    page.text(
+        36.0,
+        30.0,
+        "F2",
+        13.0,
+        "Form 1099-DIV Dividends and Distributions 2025",
+    );
     page.text(36.0, 46.0, "F1", 8.0, "Copy B - For Recipient");
     payer_block(&mut page);
     page.text(36.0, 96.0, "F2", 10.5, "Test Brokerage LLC");
@@ -320,15 +383,31 @@ fn div_fixture() -> Page {
     page.text(36.0, 144.0, "F1", 8.0, "PAYER'S TIN");
     page.text(120.0, 144.0, "F1", 9.0, "47-8812093");
     recipient_block(&mut page, "Spike Tester");
-    box_row(&mut page, 64.0, "1a Total ordinary dividends", Some("2,500.00"));
+    box_row(
+        &mut page,
+        64.0,
+        "1a Total ordinary dividends",
+        Some("2,500.00"),
+    );
     box_row(&mut page, 112.0, "1b Qualified dividends", Some("2,100.25"));
-    box_row(&mut page, 160.0, "4 Federal income tax withheld", Some("125.00"));
+    box_row(
+        &mut page,
+        160.0,
+        "4 Federal income tax withheld",
+        Some("125.00"),
+    );
     page
 }
 
 fn nec_fixture() -> Page {
     let mut page = Page::new();
-    page.text(36.0, 30.0, "F2", 13.0, "Form 1099-NEC Nonemployee Compensation 2025");
+    page.text(
+        36.0,
+        30.0,
+        "F2",
+        13.0,
+        "Form 1099-NEC Nonemployee Compensation 2025",
+    );
     page.text(36.0, 46.0, "F1", 8.0, "Copy B - For Recipient");
     payer_block(&mut page);
     page.text(36.0, 96.0, "F2", 10.5, "Client Co LLC");
@@ -337,7 +416,12 @@ fn nec_fixture() -> Page {
     page.text(36.0, 144.0, "F1", 8.0, "PAYER'S TIN");
     page.text(120.0, 144.0, "F1", 9.0, "83-2910475");
     recipient_block(&mut page, "Spike Tester");
-    box_row(&mut page, 64.0, "1 Nonemployee compensation", Some("18,750.00"));
+    box_row(
+        &mut page,
+        64.0,
+        "1 Nonemployee compensation",
+        Some("18,750.00"),
+    );
     box_row(&mut page, 112.0, "4 Federal income tax withheld", None);
     page
 }
@@ -398,17 +482,69 @@ fn main() -> Result<(), String> {
     // 10. W-2 as an AcroForm (fillable-copy issuer style).
     {
         let mut page = Page::new();
-        page.text(36.0, 36.0, "F2", 13.0, "Form W-2 Wage and Tax Statement 2025");
-        page.text(36.0, 58.0, "F1", 9.0, "Fillable copy issued by Acme Payroll (values in form fields)");
+        page.text(
+            36.0,
+            36.0,
+            "F2",
+            13.0,
+            "Form W-2 Wage and Tax Statement 2025",
+        );
+        page.text(
+            36.0,
+            58.0,
+            "F1",
+            9.0,
+            "Fillable copy issued by Acme Payroll (values in form fields)",
+        );
         let fields: Vec<Field> = vec![
-            Field { name: "EmployerEIN", value: "12-3456789", x: 36.0, top: 90.0 },
-            Field { name: "EmployerName", value: "Acme Widgets Inc", x: 300.0, top: 90.0 },
-            Field { name: "WagesBox1", value: "52,340.75", x: 36.0, top: 130.0 },
-            Field { name: "FederalBox2", value: "4,825.50", x: 300.0, top: 130.0 },
-            Field { name: "SSWagesBox3", value: "55,000.00", x: 36.0, top: 170.0 },
-            Field { name: "SSTaxBox4", value: "3,410.00", x: 300.0, top: 170.0 },
-            Field { name: "MedWagesBox5", value: "55,000.00", x: 36.0, top: 210.0 },
-            Field { name: "MedTaxBox6", value: "797.50", x: 300.0, top: 210.0 },
+            Field {
+                name: "EmployerEIN",
+                value: "12-3456789",
+                x: 36.0,
+                top: 90.0,
+            },
+            Field {
+                name: "EmployerName",
+                value: "Acme Widgets Inc",
+                x: 300.0,
+                top: 90.0,
+            },
+            Field {
+                name: "WagesBox1",
+                value: "52,340.75",
+                x: 36.0,
+                top: 130.0,
+            },
+            Field {
+                name: "FederalBox2",
+                value: "4,825.50",
+                x: 300.0,
+                top: 130.0,
+            },
+            Field {
+                name: "SSWagesBox3",
+                value: "55,000.00",
+                x: 36.0,
+                top: 170.0,
+            },
+            Field {
+                name: "SSTaxBox4",
+                value: "3,410.00",
+                x: 300.0,
+                top: 170.0,
+            },
+            Field {
+                name: "MedWagesBox5",
+                value: "55,000.00",
+                x: 36.0,
+                top: 210.0,
+            },
+            Field {
+                name: "MedTaxBox6",
+                value: "797.50",
+                x: 300.0,
+                top: 210.0,
+            },
         ];
         build_pdf_acro(&at("w2-acroform.pdf"), page, &fields)?;
     }

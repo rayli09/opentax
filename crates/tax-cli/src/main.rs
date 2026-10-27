@@ -195,6 +195,12 @@ enum DocAction {
         #[arg(long)]
         file: PathBuf,
     },
+    /// Extract fields from a born-digital PDF (W-2, 1099-INT, 1099-DIV,
+    /// 1099-NEC) into a `form add`-ready node, deterministically.
+    Extract {
+        #[arg(long)]
+        file: PathBuf,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -2078,6 +2084,33 @@ fn cmd_doc(action: DocAction) -> CResult<Out> {
                 )),
             }
         }
+        DocAction::Extract { file } => {
+            let params = TaxParams::load_2025().map_err(json_err)?;
+            let report = tax_doc::extract_document(&file, &params)
+                .map_err(|e| CliErr::new("extract_error", e))?;
+            let mut value = serde_json::to_value(&report).map_err(json_err)?;
+            value["file"] = json!(file.display().to_string());
+            let status = value["status"].as_str().unwrap_or("").to_string();
+            let form = report.form.as_deref().unwrap_or("unrecognized document");
+            let human = match report.status {
+                tax_doc::ExtractStatus::Extracted | tax_doc::ExtractStatus::Partial => format!(
+                    "{}: {} — {} ({} fields extracted)",
+                    file.display(),
+                    form,
+                    status,
+                    report.fields.len()
+                ),
+                tax_doc::ExtractStatus::NeedsOcr => format!(
+                    "{}: needs_ocr — no usable text layer; route to the agent-vision path",
+                    file.display()
+                ),
+                tax_doc::ExtractStatus::Unrecognized => format!(
+                    "{}: unrecognized — not an extractable document type",
+                    file.display()
+                ),
+            };
+            Ok(Out::ok(value, human))
+        }
     }
 }
 
@@ -2401,6 +2434,7 @@ fn run(cli: &Cli) -> CResult<Out> {
         },
         Commands::Doc { action } => match action {
             DocAction::Classify { file } => cmd_doc(DocAction::Classify { file: file.clone() }),
+            DocAction::Extract { file } => cmd_doc(DocAction::Extract { file: file.clone() }),
         },
         Commands::Pdf { action } => match action {
             PdfAction::Inspect { file } => cmd_pdf(PdfAction::Inspect { file: file.clone() }),

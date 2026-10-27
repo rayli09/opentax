@@ -71,10 +71,7 @@ fn then(first: &Mat, second: &Mat) -> Mat {
 }
 
 fn apply(m: &Mat, x: f32, y: f32) -> (f32, f32) {
-    (
-        m[0] * x + m[2] * y + m[4],
-        m[1] * x + m[3] * y + m[5],
-    )
+    (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5])
 }
 
 fn translate(tx: f32, ty: f32) -> Mat {
@@ -527,9 +524,7 @@ fn glyph_name_to_unicode(name: &str) -> Option<String> {
 }
 
 fn hex_bytes_to_u32(bytes: &[u8]) -> u32 {
-    bytes
-        .iter()
-        .fold(0u32, |acc, b| (acc << 8) | (*b as u32))
+    bytes.iter().fold(0u32, |acc, b| (acc << 8) | (*b as u32))
 }
 
 /// Parse a /ToUnicode CMap stream: beginbfchar / beginbfrange sections.
@@ -584,7 +579,7 @@ fn parse_tounicode(content: &[u8]) -> HashMap<u32, String> {
         }
     }
     let utf16 = |raw: &[u8]| -> String {
-        if raw.len() >= 2 && raw.len() % 2 == 0 {
+        if raw.len() >= 2 && raw.len().is_multiple_of(2) {
             let units: Vec<u16> = raw
                 .as_chunks::<2>()
                 .0
@@ -625,9 +620,7 @@ fn parse_tounicode(content: &[u8]) -> HashMap<u32, String> {
                             for (off, code) in (lo_v..=hi_v).enumerate() {
                                 let v = base + off as u32;
                                 let raw: Vec<u8> = (0..nbytes)
-                                    .map(|bi| {
-                                        (v >> (8 * (nbytes - 1 - bi))) as u8
-                                    })
+                                    .map(|bi| (v >> (8 * (nbytes - 1 - bi))) as u8)
                                     .collect();
                                 map.insert(code, utf16(&raw));
                             }
@@ -656,10 +649,7 @@ fn parse_tounicode(content: &[u8]) -> HashMap<u32, String> {
 }
 
 fn dict_get<'a>(dict: &'a Dictionary, key: &[u8]) -> Option<&'a Object> {
-    match dict.get(key) {
-        Ok(obj) => Some(obj),
-        Err(_) => None,
-    }
+    dict.get(key).ok()
 }
 
 fn resolve<'a>(doc: &'a Document, obj: &'a Object) -> Option<&'a Object> {
@@ -674,7 +664,9 @@ fn as_dict<'a>(doc: &'a Document, obj: &'a Object) -> Option<&'a Dictionary> {
 }
 
 fn name_of(obj: &Object) -> Option<String> {
-    obj.as_name().ok().map(|n| String::from_utf8_lossy(n).into_owned())
+    obj.as_name()
+        .ok()
+        .map(|n| String::from_utf8_lossy(n).into_owned())
 }
 
 fn num_of(obj: &Object) -> Option<f32> {
@@ -688,10 +680,10 @@ fn num_of(obj: &Object) -> Option<f32> {
 /// Build the FontInfo for one font dictionary (simple or Type0).
 fn build_font(doc: &Document, font_dict: &Dictionary) -> FontInfo {
     let subtype = dict_get(font_dict, b"Subtype")
-        .and_then(|o| name_of(o))
+        .and_then(name_of)
         .unwrap_or_default();
     let base_font = dict_get(font_dict, b"BaseFont")
-        .and_then(|o| name_of(o))
+        .and_then(name_of)
         .unwrap_or_default();
     let (afm, courier) = crate::afm::table_for_base_font(&base_font);
     let mut info = FontInfo {
@@ -729,7 +721,9 @@ fn build_font(doc: &Document, font_dict: &Dictionary) -> FontInfo {
         // Descendant CIDFont: /W widths + /DW default.
         if let Some(Object::Array(descs)) = dict_get(font_dict, b"DescendantFonts") {
             for item in descs {
-                let Some(dd) = as_dict(doc, item) else { continue };
+                let Some(dd) = as_dict(doc, item) else {
+                    continue;
+                };
                 if let Some(dw) = dict_get(dd, b"DW").and_then(num_of) {
                     info.default_width = dw as u16;
                 }
@@ -992,14 +986,11 @@ impl<'a> TextMachine<'a> {
                             // next glyph back (subtracted from advance);
                             // a large displacement becomes a visible gap
                             // via the atom positions themselves.
-                            Tok::Num(n) => {
-                                if n != 0.0 {
-                                    // Fold the adjustment into the next
-                                    // glyph by shifting the text matrix.
-                                    let shift =
-                                        (-n / 1000.0) * self.font_size * (self.th / 100.0);
-                                    self.tm = then(&translate(shift, 0.0), &self.tm);
-                                }
+                            Tok::Num(n) if n != 0.0 => {
+                                // Fold the adjustment into the next
+                                // glyph by shifting the text matrix.
+                                let shift = (-n / 1000.0) * self.font_size * (self.th / 100.0);
+                                self.tm = then(&translate(shift, 0.0), &self.tm);
                             }
                             _ => {}
                         }
@@ -1462,12 +1453,7 @@ struct Collector {
 }
 
 impl Collector {
-    fn put_money(
-        &mut self,
-        key: &str,
-        cents: i64,
-        ev: Value,
-    ) {
+    fn put_money(&mut self, key: &str, cents: i64, ev: Value) {
         self.fields
             .insert(key.to_string(), Value::String(cents.to_string()));
         self.evidence.insert(key.to_string(), ev);
@@ -1516,7 +1502,12 @@ struct MoneySpec {
 /// box number ("1", "1a", "4")? Form titles also contain label phrases
 /// ("Form 1099-NEC — Nonemployee Compensation"); the real box carries
 /// its number, and hits with one are evaluated first.
-fn hit_has_box_number(words: &[Word], pages: &[Vec<Line>], hit: &LabelHit, box_label: &str) -> bool {
+fn hit_has_box_number(
+    words: &[Word],
+    pages: &[Vec<Line>],
+    hit: &LabelHit,
+    box_label: &str,
+) -> bool {
     let Some(lines) = pages
         .iter()
         .find(|ls| ls.first().map(|l| l.page) == Some(hit.page))
@@ -1528,9 +1519,9 @@ fn hit_has_box_number(words: &[Word], pages: &[Vec<Line>], hit: &LabelHit, box_l
     let prev = line
         .words
         .iter()
+        .rev()
         .map(|&wi| &words[wi])
-        .filter(|w| w.x1 <= hit.x0 + 0.5)
-        .last();
+        .find(|w| w.x1 <= hit.x0 + 0.5);
     match prev {
         Some(w) => {
             let n = norm(&w.text);
@@ -1542,12 +1533,7 @@ fn hit_has_box_number(words: &[Word], pages: &[Vec<Line>], hit: &LabelHit, box_l
 
 /// Extract one money field, evaluating label hits across all pages in
 /// reading order.
-fn extract_money_field(
-    col: &mut Collector,
-    words: &[Word],
-    pages: &[Vec<Line>],
-    spec: &MoneySpec,
-) {
+fn extract_money_field(col: &mut Collector, words: &[Word], pages: &[Vec<Line>], spec: &MoneySpec) {
     // Gather hits across pages in reading order, then stably sort so
     // hits carrying their box number are evaluated first.
     let mut hits: Vec<LabelHit> = Vec::new();
@@ -1665,10 +1651,7 @@ fn extract_name_block(
                 continue;
             }
             let joined_norm = line_norm_words(words, line).join("");
-            if continuation_markers
-                .iter()
-                .any(|m| joined_norm.contains(m))
-            {
+            if continuation_markers.iter().any(|m| joined_norm.contains(m)) {
                 continue;
             }
             // Take only this block's column: words starting near the
@@ -1776,11 +1759,7 @@ struct AcroSpec {
 
 /// Try AcroForm fields for the given specs. Returns the set of keys
 /// filled (and whether any field existed at all).
-fn acroform_pass(
-    path: &Path,
-    specs: &[AcroSpec],
-    col: &mut Collector,
-) -> bool {
+fn acroform_pass(path: &Path, specs: &[AcroSpec], col: &mut Collector) -> bool {
     let Ok(fields) = tax_pdf::inspect_fields(path) else {
         return false;
     };
@@ -1833,7 +1812,11 @@ fn acroform_pass(
 /// title (some issuers produce nearly text-free fillable copies).
 fn classify_acroform_names(path: &Path) -> Option<DocKind> {
     let fields = tax_pdf::inspect_fields(path).ok()?;
-    let joined: String = fields.iter().map(|f| norm(&f.name)).collect::<Vec<_>>().join(" ");
+    let joined: String = fields
+        .iter()
+        .map(|f| norm(&f.name))
+        .collect::<Vec<_>>()
+        .join(" ");
     if joined.contains("1099int") || joined.contains("int1099") {
         Some(DocKind::I1099Int)
     } else if joined.contains("1099div") || joined.contains("div1099") {
@@ -1937,26 +1920,94 @@ fn extract_w2(
 ) -> ExtractReport {
     let mut col = Collector::default();
     let acro_specs = [
-        AcroSpec { key: "social_security_wages", hints: &["box3", "socialsecuritywages", "sswages"], is_money: true },
-        AcroSpec { key: "social_security_tax", hints: &["box4", "socialsecuritytax", "sstax"], is_money: true },
-        AcroSpec { key: "medicare_wages", hints: &["box5", "medicarewages"], is_money: true },
-        AcroSpec { key: "medicare_tax", hints: &["box6", "medicaretax"], is_money: true },
-        AcroSpec { key: "wages", hints: &["box1", "wages"], is_money: true },
-        AcroSpec { key: "federal_withholding", hints: &["box2", "federal"], is_money: true },
-        AcroSpec { key: "employer_ein", hints: &["ein", "employeri"], is_money: false },
-        AcroSpec { key: "employer_name", hints: &["employername", "boxc"], is_money: false },
+        AcroSpec {
+            key: "social_security_wages",
+            hints: &["box3", "socialsecuritywages", "sswages"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "social_security_tax",
+            hints: &["box4", "socialsecuritytax", "sstax"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "medicare_wages",
+            hints: &["box5", "medicarewages"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "medicare_tax",
+            hints: &["box6", "medicaretax"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "wages",
+            hints: &["box1", "wages"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "federal_withholding",
+            hints: &["box2", "federal"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "employer_ein",
+            hints: &["ein", "employeri"],
+            is_money: false,
+        },
+        AcroSpec {
+            key: "employer_name",
+            hints: &["employername", "boxc"],
+            is_money: false,
+        },
     ];
     let acro_any = acroform_pass(path, &acro_specs, &mut col);
     let from_acro: Vec<String> = col.fields.keys().cloned().collect();
 
     // Text pass for whatever AcroForm did not provide.
     let money_specs = [
-        MoneySpec { key: "wages", phrases: &["wages", "tips", "other", "compensation"], box_label: "1", required: true, empty_means_zero: false },
-        MoneySpec { key: "federal_withholding", phrases: &["federal", "income", "tax", "withheld"], box_label: "2", required: true, empty_means_zero: false },
-        MoneySpec { key: "social_security_wages", phrases: &["social", "security", "wages"], box_label: "3", required: false, empty_means_zero: false },
-        MoneySpec { key: "social_security_tax", phrases: &["social", "security", "tax", "withheld"], box_label: "4", required: false, empty_means_zero: false },
-        MoneySpec { key: "medicare_wages", phrases: &["medicare", "wages", "and", "tips"], box_label: "5", required: false, empty_means_zero: false },
-        MoneySpec { key: "medicare_tax", phrases: &["medicare", "tax", "withheld"], box_label: "6", required: false, empty_means_zero: false },
+        MoneySpec {
+            key: "wages",
+            phrases: &["wages", "tips", "other", "compensation"],
+            box_label: "1",
+            required: true,
+            empty_means_zero: false,
+        },
+        MoneySpec {
+            key: "federal_withholding",
+            phrases: &["federal", "income", "tax", "withheld"],
+            box_label: "2",
+            required: true,
+            empty_means_zero: false,
+        },
+        MoneySpec {
+            key: "social_security_wages",
+            phrases: &["social", "security", "wages"],
+            box_label: "3",
+            required: false,
+            empty_means_zero: false,
+        },
+        MoneySpec {
+            key: "social_security_tax",
+            phrases: &["social", "security", "tax", "withheld"],
+            box_label: "4",
+            required: false,
+            empty_means_zero: false,
+        },
+        MoneySpec {
+            key: "medicare_wages",
+            phrases: &["medicare", "wages", "and", "tips"],
+            box_label: "5",
+            required: false,
+            empty_means_zero: false,
+        },
+        MoneySpec {
+            key: "medicare_tax",
+            phrases: &["medicare", "tax", "withheld"],
+            box_label: "6",
+            required: false,
+            empty_means_zero: false,
+        },
     ];
     for spec in &money_specs {
         if !col.fields.contains_key(spec.key) {
@@ -1993,7 +2044,9 @@ fn extract_w2(
     let mut checks = Vec::new();
     if let (Some(wages), Some(wh)) = (
         col.fields.get("wages").and_then(|v| v.as_str()),
-        col.fields.get("federal_withholding").and_then(|v| v.as_str()),
+        col.fields
+            .get("federal_withholding")
+            .and_then(|v| v.as_str()),
     ) {
         let money = |k: &str| {
             col.fields
@@ -2032,17 +2085,51 @@ fn extract_w2(
 fn extract_1099_int(path: &Path, words: &[Word], pages: &[Vec<Line>]) -> ExtractReport {
     let mut col = Collector::default();
     let acro_specs = [
-        AcroSpec { key: "interest_income", hints: &["box1", "interestincome"], is_money: true },
-        AcroSpec { key: "tax_exempt_interest", hints: &["box8", "taxexempt"], is_money: true },
-        AcroSpec { key: "federal_withholding", hints: &["box4", "federal"], is_money: true },
-        AcroSpec { key: "payer_name", hints: &["payername", "payer"], is_money: false },
+        AcroSpec {
+            key: "interest_income",
+            hints: &["box1", "interestincome"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "tax_exempt_interest",
+            hints: &["box8", "taxexempt"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "federal_withholding",
+            hints: &["box4", "federal"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "payer_name",
+            hints: &["payername", "payer"],
+            is_money: false,
+        },
     ];
     let acro_any = acroform_pass(path, &acro_specs, &mut col);
     let from_acro: Vec<String> = col.fields.keys().cloned().collect();
     let specs = [
-        MoneySpec { key: "interest_income", phrases: &["interest", "income"], box_label: "1", required: true, empty_means_zero: false },
-        MoneySpec { key: "tax_exempt_interest", phrases: &["tax-exempt", "interest"], box_label: "8", required: false, empty_means_zero: true },
-        MoneySpec { key: "federal_withholding", phrases: &["federal", "income", "tax", "withheld"], box_label: "4", required: false, empty_means_zero: true },
+        MoneySpec {
+            key: "interest_income",
+            phrases: &["interest", "income"],
+            box_label: "1",
+            required: true,
+            empty_means_zero: false,
+        },
+        MoneySpec {
+            key: "tax_exempt_interest",
+            phrases: &["tax-exempt", "interest"],
+            box_label: "8",
+            required: false,
+            empty_means_zero: true,
+        },
+        MoneySpec {
+            key: "federal_withholding",
+            phrases: &["federal", "income", "tax", "withheld"],
+            box_label: "4",
+            required: false,
+            empty_means_zero: true,
+        },
     ];
     for spec in &specs {
         if !col.fields.contains_key(spec.key) {
@@ -2050,30 +2137,78 @@ fn extract_1099_int(path: &Path, words: &[Word], pages: &[Vec<Line>]) -> Extract
         }
     }
     if !col.fields.contains_key("payer_name") {
-        extract_name_block(&mut col, words, pages, "payer_name", &["payers", "name"], NAME_CONTINUATION_MARKERS);
+        extract_name_block(
+            &mut col,
+            words,
+            pages,
+            "payer_name",
+            &["payers", "name"],
+            NAME_CONTINUATION_MARKERS,
+        );
     }
     if !col.fields.contains_key("payer_name") {
         col.missing_required.push("payer_name".to_string());
         col.warnings
             .push("could not locate the PAYER'S name block; field omitted".to_string());
     }
-    finish_report("form_1099_int", "1099-int", col, Vec::new(), acro_any, &from_acro)
+    finish_report(
+        "form_1099_int",
+        "1099-int",
+        col,
+        Vec::new(),
+        acro_any,
+        &from_acro,
+    )
 }
 
 fn extract_1099_div(path: &Path, words: &[Word], pages: &[Vec<Line>]) -> ExtractReport {
     let mut col = Collector::default();
     let acro_specs = [
-        AcroSpec { key: "total_ordinary_dividends", hints: &["box1a", "ordinary"], is_money: true },
-        AcroSpec { key: "qualified_dividends", hints: &["box1b", "qualified"], is_money: true },
-        AcroSpec { key: "federal_withholding", hints: &["box4", "federal"], is_money: true },
-        AcroSpec { key: "payer_name", hints: &["payername", "payer"], is_money: false },
+        AcroSpec {
+            key: "total_ordinary_dividends",
+            hints: &["box1a", "ordinary"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "qualified_dividends",
+            hints: &["box1b", "qualified"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "federal_withholding",
+            hints: &["box4", "federal"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "payer_name",
+            hints: &["payername", "payer"],
+            is_money: false,
+        },
     ];
     let acro_any = acroform_pass(path, &acro_specs, &mut col);
     let from_acro: Vec<String> = col.fields.keys().cloned().collect();
     let specs = [
-        MoneySpec { key: "total_ordinary_dividends", phrases: &["total", "ordinary", "dividends"], box_label: "1a", required: true, empty_means_zero: false },
-        MoneySpec { key: "qualified_dividends", phrases: &["qualified", "dividends"], box_label: "1b", required: false, empty_means_zero: true },
-        MoneySpec { key: "federal_withholding", phrases: &["federal", "income", "tax", "withheld"], box_label: "4", required: false, empty_means_zero: true },
+        MoneySpec {
+            key: "total_ordinary_dividends",
+            phrases: &["total", "ordinary", "dividends"],
+            box_label: "1a",
+            required: true,
+            empty_means_zero: false,
+        },
+        MoneySpec {
+            key: "qualified_dividends",
+            phrases: &["qualified", "dividends"],
+            box_label: "1b",
+            required: false,
+            empty_means_zero: true,
+        },
+        MoneySpec {
+            key: "federal_withholding",
+            phrases: &["federal", "income", "tax", "withheld"],
+            box_label: "4",
+            required: false,
+            empty_means_zero: true,
+        },
     ];
     for spec in &specs {
         if !col.fields.contains_key(spec.key) {
@@ -2081,7 +2216,14 @@ fn extract_1099_div(path: &Path, words: &[Word], pages: &[Vec<Line>]) -> Extract
         }
     }
     if !col.fields.contains_key("payer_name") {
-        extract_name_block(&mut col, words, pages, "payer_name", &["payers", "name"], NAME_CONTINUATION_MARKERS);
+        extract_name_block(
+            &mut col,
+            words,
+            pages,
+            "payer_name",
+            &["payers", "name"],
+            NAME_CONTINUATION_MARKERS,
+        );
     }
     if !col.fields.contains_key("payer_name") {
         col.missing_required.push("payer_name".to_string());
@@ -2113,22 +2255,57 @@ fn extract_1099_div(path: &Path, words: &[Word], pages: &[Vec<Line>]) -> Extract
             ));
         }
     }
-    finish_report("form_1099_div", "1099-div", col, checks, acro_any, &from_acro)
+    finish_report(
+        "form_1099_div",
+        "1099-div",
+        col,
+        checks,
+        acro_any,
+        &from_acro,
+    )
 }
 
 fn extract_1099_nec(path: &Path, words: &[Word], pages: &[Vec<Line>]) -> ExtractReport {
     let mut col = Collector::default();
     let acro_specs = [
-        AcroSpec { key: "nonemployee_compensation", hints: &["box1", "nonemployee"], is_money: true },
-        AcroSpec { key: "federal_withholding", hints: &["box4", "federal"], is_money: true },
-        AcroSpec { key: "payer_ein", hints: &["payerstin", "payerein", "tin"], is_money: false },
-        AcroSpec { key: "payer_name", hints: &["payername", "payer"], is_money: false },
+        AcroSpec {
+            key: "nonemployee_compensation",
+            hints: &["box1", "nonemployee"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "federal_withholding",
+            hints: &["box4", "federal"],
+            is_money: true,
+        },
+        AcroSpec {
+            key: "payer_ein",
+            hints: &["payerstin", "payerein", "tin"],
+            is_money: false,
+        },
+        AcroSpec {
+            key: "payer_name",
+            hints: &["payername", "payer"],
+            is_money: false,
+        },
     ];
     let acro_any = acroform_pass(path, &acro_specs, &mut col);
     let from_acro: Vec<String> = col.fields.keys().cloned().collect();
     let specs = [
-        MoneySpec { key: "nonemployee_compensation", phrases: &["nonemployee", "compensation"], box_label: "1", required: true, empty_means_zero: false },
-        MoneySpec { key: "federal_withholding", phrases: &["federal", "income", "tax", "withheld"], box_label: "4", required: false, empty_means_zero: true },
+        MoneySpec {
+            key: "nonemployee_compensation",
+            phrases: &["nonemployee", "compensation"],
+            box_label: "1",
+            required: true,
+            empty_means_zero: false,
+        },
+        MoneySpec {
+            key: "federal_withholding",
+            phrases: &["federal", "income", "tax", "withheld"],
+            box_label: "4",
+            required: false,
+            empty_means_zero: true,
+        },
     ];
     for spec in &specs {
         if !col.fields.contains_key(spec.key) {
@@ -2136,8 +2313,21 @@ fn extract_1099_nec(path: &Path, words: &[Word], pages: &[Vec<Line>]) -> Extract
         }
     }
     if !col.fields.contains_key("payer_ein") {
-        extract_ein_field(&mut col, words, pages, "payer_ein", &["payers", "tin"], "PAYER'S TIN", false);
-    } else if let Some(v) = col.fields.get("payer_ein").and_then(|v| v.as_str()).map(str::to_string) {
+        extract_ein_field(
+            &mut col,
+            words,
+            pages,
+            "payer_ein",
+            &["payers", "tin"],
+            "PAYER'S TIN",
+            false,
+        );
+    } else if let Some(v) = col
+        .fields
+        .get("payer_ein")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    {
         // An AcroForm-supplied TIN in SSN shape is a person's SSN in an
         // identification slot: refuse to carry it, like the text path.
         if is_ssn_token(&v) {
@@ -2150,7 +2340,14 @@ fn extract_1099_nec(path: &Path, words: &[Word], pages: &[Vec<Line>]) -> Extract
         }
     }
     if !col.fields.contains_key("payer_name") {
-        extract_name_block(&mut col, words, pages, "payer_name", &["payers", "name"], NAME_CONTINUATION_MARKERS);
+        extract_name_block(
+            &mut col,
+            words,
+            pages,
+            "payer_name",
+            &["payers", "name"],
+            NAME_CONTINUATION_MARKERS,
+        );
     }
     if !col.fields.contains_key("payer_name") {
         col.missing_required.push("payer_name".to_string());
@@ -2161,7 +2358,14 @@ fn extract_1099_nec(path: &Path, words: &[Word], pages: &[Vec<Line>]) -> Extract
         "the 1099-NEC entry's `expenses` field is not printed on the form and is never extracted — the filer supplies it from their records (tax-ingest skill)"
             .to_string(),
     );
-    finish_report("form_1099_nec", "1099-nec", col, Vec::new(), acro_any, &from_acro)
+    finish_report(
+        "form_1099_nec",
+        "1099-nec",
+        col,
+        Vec::new(),
+        acro_any,
+        &from_acro,
+    )
 }
 
 fn finish_report(

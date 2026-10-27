@@ -129,9 +129,7 @@ fn w2_partial_blank_required_box() {
     assert_eq!(field(&r, "medicare_tax"), None);
     assert_eq!(field(&r, "social_security_tax"), Some("341000"));
     assert!(
-        r.warnings
-            .iter()
-            .any(|w| w.contains("federal_withholding")),
+        r.warnings.iter().any(|w| w.contains("federal_withholding")),
         "warnings: {:?}",
         r.warnings
     );

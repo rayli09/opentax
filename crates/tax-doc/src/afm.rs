@@ -66,10 +66,7 @@ pub fn table_for_base_font(base_font: &str) -> (Option<&'static [u16; 95]>, bool
     } else if name.contains("times") || name.contains("serif") && !name.contains("sans") {
         (Some(if bold { &TIMES_BOLD } else { &TIMES }), false)
     } else if name.contains("helvetica") || name.contains("arial") || name.contains("sans") {
-        (
-            Some(if bold { &HELVETICA_BOLD } else { &HELVETICA }),
-            false,
-        )
+        (Some(if bold { &HELVETICA_BOLD } else { &HELVETICA }), false)
     } else {
         (None, false)
     }

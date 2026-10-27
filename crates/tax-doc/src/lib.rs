@@ -1,9 +1,10 @@
-//! tax-doc: document ingest skeleton.
+//! tax-doc: document ingest.
 //!
 //! Pipeline position (docs/ARCHITECTURE.md): classification and
 //! deterministic validation live here; OCR is a pluggable fallback trait,
-//! not v1 core; text extraction goes through tax-pdf's lopdf backend
-//! (crude, position-free — documented limit).
+//! not v1 core. Classification text comes from tax-pdf's lopdf backend
+//! (crude, position-free — documented limit); field extraction
+//! ([`extract`]) parses content streams itself for positioned words.
 
 use serde::Serialize;
 use std::path::Path;

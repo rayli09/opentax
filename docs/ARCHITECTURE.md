@@ -51,6 +51,10 @@ computation (like MeF business rules), so it runs on partial returns.
 - **L1 Born-digital text** (primary): extract text with positions; classify
   by printed form title; per-form, per-year positional templates anchored
   on box labels. Most W-2s/1099s from payroll/brokerages live here, exactly.
+  Shipped (`tax doc extract`, W-2 / 1099-INT / 1099-DIV / 1099-NEC):
+  label-anchored geometric rules rather than fixed per-issuer templates —
+  an AcroForm pass for fillable copies, then the text layer with
+  box-number-preferred label hits and bounded value-search regions.
 - **L2 OCR fallback** (pages with no usable text layer): pluggable
   `OcrBackend` trait in tax-doc. v1 ships `NoOcr` (reports unavailable);
   ocrs (pure Rust) / external Tesseract or PaddleOCR-ONNX slot in later.
