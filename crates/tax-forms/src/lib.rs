@@ -7,7 +7,13 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 pub use tax_core::FilingStatus;
-use tax_core::{bracket_tax, FactResult, Money, TaxParams};
+use tax_core::{FactResult, Money, TaxParams};
+
+pub mod worksheets;
+pub use worksheets::{
+    capital_loss_carryover, combine_schedule_d, line16_tax, qdcg_tax, tax_on_amount,
+    ScheduleDCombination,
+};
 
 /// One W-2 (Form W-2, Wage and Tax Statement). Money = cents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,10 +158,13 @@ pub struct Form1040Input {
 
 /// A computed return: line number (Form 1040 numbering) → fact result.
 ///
-/// In addition to numbered 1040 lines, the map carries two internal keys
-/// that feed a future Schedule D: `schd_net_short` and `schd_net_long`
+/// In addition to numbered 1040 lines, the map carries internal keys
+/// from the Schedule D combination: `schd_net_short` and `schd_net_long`
 /// (net short-term / long-term gain or loss aggregated from 1099-B
-/// transactions). They are not Form 1040 line numbers.
+/// transactions), `schd_net_capital_gain` (the QDCG worksheet's line 3
+/// input), and `schd_carryover_short` / `schd_carryover_long` (capital
+/// loss carryovers to the next year, as positive amounts). They are not
+/// Form 1040 line numbers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComputedReturn {
     pub lines: BTreeMap<String, FactResult<Money>>,
@@ -163,6 +172,10 @@ pub struct ComputedReturn {
     pub complete: bool,
     /// Human-readable simplifications that apply to this computation.
     pub notes: Vec<String>,
+    /// Which method figured line 16: `"qdcg"`, `"tax_table"`, or
+    /// `"tax_computation"`; `None` when line 16 is not computed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line16_method: Option<String>,
 }
 
 /// Add two money facts, propagating completeness (Fact Graph semantics).
@@ -210,25 +223,32 @@ pub fn validate_1099_div(div: &I1099DivInput) -> Vec<ConsistencyFinding> {
 /// 1a/1z total amount from Form W-2 (wages), 2a tax-exempt interest
 /// (Σ 1099-INT Box 8), 2b taxable interest (direct + Σ 1099-INT Box 1),
 /// 3a qualified dividends (Σ 1099-DIV Box 1b), 3b ordinary dividends
-/// (direct + Σ 1099-DIV Box 1a), 7 capital gain/loss (net short + net
-/// long from 1099-B transactions), 9 total income, 11 AGI, 12 standard
-/// deduction, 15 taxable income, 16 tax, 25a W-2 withholding, 25d total
-/// withheld (W-2 + 1099-INT/DIV/B Box 4), 33 total other payments and
-/// refundable credits (simplified: = 25d), 34 overpaid (refund) when
-/// payments exceed tax, 37 amount owed otherwise. Plus the internal
-/// `schd_net_short` / `schd_net_long` keys described on
+/// (direct + Σ 1099-DIV Box 1a), 7 capital gain/loss (the Schedule D
+/// combination of the 1099-B nets, with the IRC §1211(b) loss limit),
+/// 9 total income, 11 AGI, 12 standard deduction, 15 taxable income,
+/// 16 tax, 25a W-2 withholding, 25d total withheld (W-2 + 1099-INT/DIV/B
+/// Box 4), 33 total other payments and refundable credits (simplified:
+/// = 25d), 34 overpaid (refund) when payments exceed tax, 37 amount owed
+/// otherwise. Plus the internal `schd_*` keys described on
 /// [`ComputedReturn`].
 ///
+/// Line 16 is figured by the method the 1040 instructions prescribe
+/// (see [`worksheets::line16_tax`]): the Qualified Dividends and Capital
+/// Gain Tax Worksheet when there is preferential income, else the Tax
+/// Table below $100,000 of taxable income, else the Tax Computation
+/// Worksheet. Capital loss carryovers come from the Capital Loss
+/// Carryover Worksheet (Instructions for Schedule D).
+///
 /// Completeness: a 1099-B transaction missing proceeds or basis makes
-/// lines 7, 9, 11, 15, 16, 34, 37 (and both `schd_*` keys) `Incomplete`;
+/// lines 7, 9, 11, 15, 16, 34, 37 (and the `schd_*` keys) `Incomplete`;
 /// independent lines stay `Complete`.
 ///
 /// Simplifications (docs/KNOWN_LIMITS.md): no adjustments to income (AGI =
-/// total income), no itemizing, no credits, no Schedule D worksheet, and
-/// line 16 is *bracket tax* on taxable income for all amounts — the Tax
-/// Table (< $100k) and the Qualified Dividends and Capital Gain Tax
-/// Worksheet are out of scope v1, so qualified dividends and capital
-/// gains are taxed at ordinary rates here.
+/// total income), no itemizing, no credits. Schedule D is the simplified
+/// two-net combination (no K-1 / Forms 6252/4684 / capital gain
+/// distribution components, no 28%-rate or unrecaptured §1250 amounts),
+/// so the Schedule D Tax Worksheet is never triggered; NIIT (Form 8960)
+/// is not figured.
 pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn {
     let wages: Money = input.w2s.iter().map(|w| w.wages).sum();
     let w2_withholding: Money = input.w2s.iter().map(|w| w.federal_withholding).sum();
@@ -274,7 +294,26 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     } else {
         FactResult::Complete(net_long)
     };
-    let capital_gain_f = add_facts(net_short_f.clone(), net_long_f.clone());
+    // Schedule D combination: line 16 of Schedule D, the §1211(b)
+    // loss limit on line 7, and the QDCG worksheet's line 3 input.
+    let schd = if b_incomplete {
+        None
+    } else {
+        Some(combine_schedule_d(
+            net_short,
+            net_long,
+            input.status,
+            params,
+        ))
+    };
+    let capital_gain_f = match &schd {
+        Some(c) => FactResult::Complete(c.line7),
+        None => FactResult::Incomplete,
+    };
+    let schd_gain_f = match &schd {
+        Some(c) => FactResult::Complete(c.net_capital_gain),
+        None => FactResult::Incomplete,
+    };
 
     let line2b = input.interest_income + int_interest;
     let line3b = input.ordinary_dividends + div_ordinary;
@@ -290,9 +329,29 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     let taxable_f = agi_f
         .clone()
         .map(|agi| Money::from_cents((agi - deduction).cents().max(0)));
-    let tax_f = taxable_f
+    // Line 16 by the prescribed method (QDCG worksheet / Tax Table /
+    // Tax Computation Worksheet); the method travels with the result.
+    let schd_gain = schd
+        .as_ref()
+        .map(|c| c.net_capital_gain)
+        .unwrap_or(Money::ZERO);
+    let tax_pair_f = taxable_f
         .clone()
-        .map(|t| bracket_tax(t, &params.bracket_table(input.status)));
+        .map(|taxable| line16_tax(taxable, div_qualified, schd_gain, input.status, params));
+    let (tax_f, line16_method) = match tax_pair_f {
+        FactResult::Complete((t, m)) => (FactResult::Complete(t), Some(m.to_string())),
+        FactResult::Placeholder((t, m)) => (FactResult::Placeholder(t), Some(m.to_string())),
+        FactResult::Incomplete => (FactResult::Incomplete, None),
+    };
+    // Capital Loss Carryover Worksheet (needs the unfloored line 15:
+    // AGI minus deductions before the zero floor).
+    let (carry_short_f, carry_long_f) = match (&schd, agi_f.value()) {
+        (Some(c), Some(agi)) => {
+            let (cs, cl) = capital_loss_carryover(c, *agi - deduction);
+            (complete(cs), complete(cl))
+        }
+        _ => (FactResult::Incomplete, FactResult::Incomplete),
+    };
     let payments_f = complete(total_withholding);
     let (overpaid_f, owed_f) = match tax_f.clone() {
         FactResult::Complete(tax) | FactResult::Placeholder(tax) => {
@@ -319,6 +378,9 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     lines.insert("7".into(), capital_gain_f);
     lines.insert("schd_net_short".into(), net_short_f);
     lines.insert("schd_net_long".into(), net_long_f);
+    lines.insert("schd_net_capital_gain".into(), schd_gain_f);
+    lines.insert("schd_carryover_short".into(), carry_short_f);
+    lines.insert("schd_carryover_long".into(), carry_long_f);
     lines.insert("9".into(), total_income_f);
     lines.insert("11".into(), agi_f);
     lines.insert("12".into(), complete(deduction));
@@ -331,18 +393,30 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     lines.insert("37".into(), owed_f);
 
     let complete = lines.values().all(|f| f.is_complete());
+    let line16_note = match line16_method.as_deref() {
+        Some("qdcg") => "Line 16 was figured with the Qualified Dividends and \
+             Capital Gain Tax Worksheet: qualified dividends (line 3a) and the \
+             Schedule D capital gain are taxed at the 0%/15%/20% rates."
+            .to_string(),
+        Some("tax_table") => "Line 16 was figured with the TY2025 Tax Table \
+             (taxable income under $100,000)."
+            .to_string(),
+        Some("tax_computation") => "Line 16 was figured with the Tax \
+             Computation Worksheet (ordinary brackets; taxable income \
+             $100,000 or more)."
+            .to_string(),
+        _ => "Line 16 was not figured (the return is incomplete).".to_string(),
+    };
     ComputedReturn {
         complete,
         lines,
+        line16_method,
         notes: vec![
-            "Line 16 is bracket tax (ordinary brackets) on all taxable income, \
-             including qualified dividends (line 3a) and capital gains (line 7): \
-             the Qualified Dividends and Capital Gain Tax Worksheet and the Tax \
-             Table are out of scope in v1, so those amounts are taxed at \
-             ordinary rates here."
-                .to_string(),
-            "Line 7 is the direct net of 1099-B transactions; the Schedule D \
-             worksheet is not produced in v1."
+            line16_note,
+            "Line 7 is the Schedule D combination of the 1099-B nets; a net \
+             capital loss is limited to $3,000 ($1,500 if married filing \
+             separately) under IRC 1211(b), and the unused loss carries over \
+             (internal keys schd_carryover_short / schd_carryover_long)."
                 .to_string(),
             "AGI equals total income: no adjustments, credits, or itemized deductions in v1."
                 .to_string(),
@@ -565,10 +639,12 @@ mod tests {
         assert_eq!(line("11"), 5_000_000, "AGI $50,000");
         assert_eq!(line("12"), 1_575_000, "standard deduction $15,750");
         assert_eq!(line("15"), 3_425_000, "taxable $34,250");
-        // 11925*10% + (34250-11925)*12% = 1192.50 + 2679.00 = $3,871.50
-        assert_eq!(line("16"), 387_150, "tax $3,871.50");
+        // No preferential income and taxable < $100,000: the Tax Table
+        // applies — row 34,250-34,300, single column = $3,875.
+        assert_eq!(line("16"), 387_500, "tax $3,875 (Tax Table)");
+        assert_eq!(r.line16_method.as_deref(), Some("tax_table"));
         assert_eq!(line("25d"), 400_000);
-        assert_eq!(line("34"), 12_850, "refund $128.50");
+        assert_eq!(line("34"), 12_500, "refund $125.00");
         assert_eq!(line("37"), 0);
     }
 
@@ -591,7 +667,8 @@ mod tests {
         input.w2s[0].federal_withholding = Money::from_cents(300_000);
         let r = compute_1040(&input, &params);
         assert_eq!(r.lines["34"].value().copied().unwrap(), Money::ZERO);
-        assert_eq!(r.lines["37"].value().copied().unwrap().cents(), 87_150);
+        // Tax Table tax $3,875 - $3,000 withheld = $875 owed.
+        assert_eq!(r.lines["37"].value().copied().unwrap().cents(), 87_500);
     }
 
     fn case002_input() -> Form1040Input {
@@ -637,8 +714,12 @@ mod tests {
     /// Golden case 002 (benchmark/cases/f1040/2025/002-w2-1099s): W-2 plus
     /// one each of 1099-INT/DIV/B. All amounts verified by hand:
     /// total income 50000 + 500 + 1000 + (2000 − 500) = $53,000; taxable
-    /// 53000 − 15750 = $37,250; bracket tax 11925×10% + 25325×12%
-    /// = 1192.50 + 3039.00 = $4,231.50; owed 4231.50 − 4000 = $231.50.
+    /// 53000 − 15750 = $37,250. Line 16 by the QDCG worksheet: Schedule D
+    /// line 15 is a $500 loss, so the QDCG capital gain (line 3) is 0 and
+    /// the only preferential income is the $600 of qualified dividends,
+    /// taxed at 0% (taxable is under the $48,350 threshold); the tax is
+    /// the Tax Table on the $36,650 ordinary part = $4,163; owed
+    /// 4163 − 4000 = $163.
     #[test]
     fn golden_w2_with_1099s() {
         let params = TaxParams::load_2025().unwrap();
@@ -652,17 +733,128 @@ mod tests {
         assert_eq!(line("3b"), 100_000, "1099-DIV Box 1a $1,000");
         assert_eq!(line("schd_net_short"), 200_000, "ST gain $2,000");
         assert_eq!(line("schd_net_long"), -50_000, "LT loss −$500");
+        assert_eq!(line("schd_net_capital_gain"), 0, "Sch D line 15 is a loss");
+        assert_eq!(line("schd_carryover_short"), 0);
+        assert_eq!(line("schd_carryover_long"), 0);
         assert_eq!(line("7"), 150_000, "net capital gain $1,500");
         assert_eq!(line("9"), 5_300_000, "total income $53,000");
         assert_eq!(line("11"), 5_300_000, "AGI $53,000");
         assert_eq!(line("12"), 1_575_000);
         assert_eq!(line("15"), 3_725_000, "taxable $37,250");
-        assert_eq!(line("16"), 423_150, "tax $4,231.50");
+        assert_eq!(line("16"), 416_300, "tax $4,163.00 (QDCG worksheet)");
+        assert_eq!(r.line16_method.as_deref(), Some("qdcg"));
         assert_eq!(line("25a"), 400_000);
         assert_eq!(line("25d"), 400_000);
         assert_eq!(line("33"), 400_000);
         assert_eq!(line("34"), 0, "nothing overpaid");
-        assert_eq!(line("37"), 23_150, "amount owed $231.50");
+        assert_eq!(line("37"), 16_300, "amount owed $163.00");
+    }
+
+    fn case003_input() -> Form1040Input {
+        let mut input = golden_input();
+        input.w2s[0].wages = Money::from_cents(6_000_000);
+        input.w2s[0].federal_withholding = Money::from_cents(600_000);
+        input.f1099_bs = vec![I1099BInput {
+            payer_name: "Example Broker".into(),
+            payer_ein: None,
+            transactions: vec![
+                BrokerTxn {
+                    description: "100 sh EXAMPLE".into(),
+                    proceeds: Some(Money::from_cents(400_000)),
+                    cost_basis: Some(Money::from_cents(1_000_000)),
+                    adjustment: Money::ZERO,
+                    term: TxnTerm::Short,
+                },
+                BrokerTxn {
+                    description: "50 sh EXAMPLE".into(),
+                    proceeds: Some(Money::from_cents(600_000)),
+                    cost_basis: Some(Money::from_cents(1_000_000)),
+                    adjustment: Money::ZERO,
+                    term: TxnTerm::Long,
+                },
+            ],
+            federal_withholding: Money::ZERO,
+        }];
+        input
+    }
+
+    /// Golden case 003 (benchmark/cases/f1040/2025/003-capital-loss-limit):
+    /// ST loss −$6,000 and LT loss −$4,000 combine to −$10,000; line 7
+    /// takes only the $3,000 §1211(b) allowance; the Capital Loss
+    /// Carryover Worksheet consumes the allowance against the short-term
+    /// loss first, carrying ST $3,000 / LT $4,000. Taxable $41,250 →
+    /// Tax Table.
+    #[test]
+    fn golden_capital_loss_limit() {
+        let params = TaxParams::load_2025().unwrap();
+        let r = compute_1040(&case003_input(), &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("schd_net_short"), -600_000);
+        assert_eq!(line("schd_net_long"), -400_000);
+        assert_eq!(line("7"), -300_000, "loss limited to $3,000");
+        assert_eq!(line("schd_carryover_short"), 300_000);
+        assert_eq!(line("schd_carryover_long"), 400_000);
+        assert_eq!(line("9"), 5_700_000, "total income $57,000");
+        assert_eq!(line("11"), 5_700_000);
+        assert_eq!(line("15"), 4_125_000, "taxable $41,250");
+        // Tax Table row 41,250-41,300, single = $4,715 (asserted from
+        // the extracted table; see benchmark case 003 _sources).
+        assert_eq!(line("16"), 471_500, "tax $4,715 (Tax Table)");
+        assert_eq!(r.line16_method.as_deref(), Some("tax_table"));
+        assert_eq!(line("34"), 128_500, "refund $1,285");
+        assert_eq!(line("37"), 0);
+    }
+
+    fn case004_input() -> Form1040Input {
+        let mut input = golden_input();
+        input.w2s[0].wages = Money::from_cents(8_000_000);
+        input.w2s[0].federal_withholding = Money::from_cents(900_000);
+        input.f1099_divs = vec![I1099DivInput {
+            payer_name: "Example Fund".into(),
+            payer_ein: None,
+            total_ordinary_dividends: Money::from_cents(500_000),
+            qualified_dividends: Money::from_cents(500_000),
+            federal_withholding: Money::ZERO,
+        }];
+        input.f1099_bs = vec![I1099BInput {
+            payer_name: "Example Broker".into(),
+            payer_ein: None,
+            transactions: vec![BrokerTxn {
+                description: "100 sh EXAMPLE".into(),
+                proceeds: Some(Money::from_cents(1_600_000)),
+                cost_basis: Some(Money::from_cents(600_000)),
+                adjustment: Money::ZERO,
+                term: TxnTerm::Long,
+            }],
+            federal_withholding: Money::ZERO,
+        }];
+        input
+    }
+
+    /// Golden case 004 (benchmark/cases/f1040/2025/004-qdcg-showcase):
+    /// preferential income $15,000 ($5,000 qualified dividends + $10,000
+    /// LT gain) on taxable $79,250. Ordinary part $64,250 already exceeds
+    /// the $48,350 zero-rate threshold, so all $15,000 is taxed at 15%:
+    /// Tax Table on $64,250 ($9,055) + $2,250 = $11,305; owed $2,305.
+    #[test]
+    fn golden_qdcg_showcase() {
+        let params = TaxParams::load_2025().unwrap();
+        let r = compute_1040(&case004_input(), &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("3a"), 500_000);
+        assert_eq!(line("3b"), 500_000);
+        assert_eq!(line("schd_net_long"), 1_000_000);
+        assert_eq!(line("schd_net_capital_gain"), 1_000_000);
+        assert_eq!(line("7"), 1_000_000);
+        assert_eq!(line("9"), 9_500_000, "total income $95,000");
+        assert_eq!(line("11"), 9_500_000);
+        assert_eq!(line("15"), 7_925_000, "taxable $79,250");
+        assert_eq!(line("16"), 1_130_500, "tax $11,305.00 (QDCG worksheet)");
+        assert_eq!(r.line16_method.as_deref(), Some("qdcg"));
+        assert_eq!(line("34"), 0);
+        assert_eq!(line("37"), 230_500, "amount owed $2,305.00");
     }
 
     #[test]
@@ -711,6 +903,9 @@ mod tests {
             "7",
             "schd_net_short",
             "schd_net_long",
+            "schd_net_capital_gain",
+            "schd_carryover_short",
+            "schd_carryover_long",
             "9",
             "11",
             "15",

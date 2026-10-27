@@ -5,28 +5,56 @@ This list is the contract: anything not listed as working is not claimed.
 ## Compute (tax-forms)
 
 - Only Form 1040, only these lines: 1a, 1z, 2a, 2b, 3a, 3b, 7, 9, 11, 12,
-  15, 16, 25a, 25d, 33, 34, 37 — plus two internal keys in the computed
-  lines map, `schd_net_short` / `schd_net_long` (net short-/long-term
-  gain or loss from 1099-B), which feed a future Schedule D and are not
-  Form 1040 line numbers.
+  15, 16, 25a, 25d, 33, 34, 37 — plus five internal keys in the computed
+  lines map, which are not Form 1040 line numbers: `schd_net_short` /
+  `schd_net_long` (net short-/long-term gain or loss from 1099-B),
+  `schd_net_capital_gain` (the QDCG worksheet's capital-gain input), and
+  `schd_carryover_short` / `schd_carryover_long` (capital loss
+  carryovers to the next year, as positive amounts).
 - Income sources: W-2 wages; 1099-INT (Box 1 → line 2b, Box 8
   tax-exempt interest → line 2a, Box 4 withholding → line 25d);
   1099-DIV (Box 1a → line 3b, Box 1b qualified → line 3a, Box 4 →
   line 25d); 1099-B (per-transaction Box 1d proceeds − Box 1e basis +
-  Box 1g adjustment as reported, aggregated by term → line 7). A 1099-B
+  Box 1g adjustment as reported, aggregated by term). A 1099-B
   transaction missing proceeds or basis makes the capital-gain lines
-  (7, both `schd_*` keys, and everything downstream) Incomplete, never
+  (7, the `schd_*` keys, and everything downstream) Incomplete, never
   zero. Wash-sale and other adjustments are taken as reported in
-  Box 1g — they are not computed. No Schedule C/E, no K-1, no crypto,
-  and Schedule D itself is not produced: line 7 is the direct net of
-  the reported 1099-B transactions, with no Schedule D worksheet,
-  netting rules beyond the short/long split, or loss limits.
-- Line 16 is **bracket tax** on taxable income for all amounts, named
-  honestly: the IRS Tax Table (required below $100,000) and the Qualified
-  Dividends and Capital Gain Tax Worksheet are NOT implemented in v1, so
-  qualified dividends (line 3a) and capital gains (line 7) are taxed at
-  ordinary rates here, and line 16 differs from a filed return wherever
-  those would apply.
+  Box 1g — they are not computed. No Schedule C/E, no K-1, no crypto.
+- Schedule D is computed as the simplified two-net combination, not
+  produced as a form: line 7 = Schedule D line 16 when it is a gain;
+  when it is a loss, the Schedule D line 21 amount — the loss limited
+  to $3,000 ($1,500 MFS) by IRC §1211(b) — and the unused loss is
+  carried over per the Capital Loss Carryover Worksheet (Instructions
+  for Schedule D), exposed as `schd_carryover_short` /
+  `schd_carryover_long`. The other Schedule D components (K-1 amounts,
+  Forms 6252/4684, capital gain distributions from 1099-DIV Box 2a —
+  Box 2a is not ingested — and prior-year carryovers *in*) do not exist
+  in the v1 input set, so Schedule D lines 6/14 enter as zero.
+- Line 16 is figured by the method the 1040 instructions prescribe,
+  and the result names it (`line16_method` in the computed return, in
+  `return get`, and in `tax explain --line 16`):
+  - `qdcg` — the Qualified Dividends and Capital Gain Tax Worksheet
+    (Instructions for Form 1040), used when qualified dividends
+    (line 3a) were reported or Schedule D lines 15 and 16 are both
+    gains. Its capital-gain input is the smaller of Schedule D lines
+    15/16, floored at 0; the 0%/15% thresholds are Rev. Proc. 2024-40
+    §3.03 (params/2025.json).
+  - `tax_table` — the TY2025 Tax Table, used below $100,000 of taxable
+    income. The table ships as data (params/2025-tax-table.json),
+    extracted from the official Publication 1040 "Tax and Earned
+    Income Credit Tables" PDF — never synthesized from the brackets;
+    extraction was validated cell-by-cell (all 8,248 cells equal the
+    statutory tax at each range's midpoint, the table's construction).
+  - `tax_computation` — the Tax Computation Worksheet (ordinary
+    brackets) at $100,000 or more.
+  Still NOT implemented: the 28%-rate worksheet and the unrecaptured
+  §1250 worksheet (and therefore the full Schedule D Tax Worksheet —
+  its triggers cannot arise from v1 inputs), NIIT (Form 8960), the
+  Form 4952 / Form 2555 tax worksheets, and any credit-related tax
+  worksheets. Worksheets are figured in cents end-to-end; the paper
+  worksheets use whole dollars, and Tax Table rows are selected by the
+  floored dollar amount — a return whose lines carry cents can differ
+  from a whole-dollar paper filing by a dollar.
 - Line 12 is the standard deduction only; no itemizing, no additional
   amounts (age/blindness), no QBI deduction (line 13).
 - AGI = total income: no adjustments (student loan interest, HSA, SE tax…).
