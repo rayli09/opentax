@@ -1,0 +1,543 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns="http://www.irs.gov/efile" targetNamespace="http://www.irs.gov/efile" elementFormDefault="qualified" attributeFormDefault="unqualified" version="1.0">
+    <xsd:annotation>
+        <xsd:documentation>
+            <Description>IRS e-file Schema - Form 1040 Schedule 1-A - Additional Deductions</Description>
+            <TaxYear>2025</TaxYear>
+            <MaturityLevel>Final Release</MaturityLevel>
+            <ReleaseDate>February 19 2026</ReleaseDate>
+        </xsd:documentation>
+    </xsd:annotation>
+    
+    <xsd:include schemaLocation="../../../Common/efileTypes.xsd"/>
+    
+    <!-- ========================================================== -->
+    <!-- =============== IRS Form 1040 Schedule 1-A =============== -->
+    <!-- ========================================================== -->
+    
+    <xsd:element name="IRS1040Schedule1A">
+        <xsd:annotation>
+            <xsd:documentation>IRS Form 1040 Schedule 1-A - Additional Deductions</xsd:documentation>
+        </xsd:annotation>
+        
+        <xsd:complexType>
+            <xsd:complexContent>
+                <xsd:extension base="IRS1040Schedule1AType">
+                    <xsd:attributeGroup ref="DocumentAttributes">
+                        <xsd:annotation>
+                            <xsd:documentation>Common return document attributes</xsd:documentation>
+                        </xsd:annotation>
+                    </xsd:attributeGroup>
+                    
+                    <xsd:attribute name="documentName" type="TextType" fixed="IRS1040Schedule1A">
+                        <xsd:annotation>
+                            <xsd:documentation>IRS internal use only. To avoid errors within the return, do not include the attribute name or value.</xsd:documentation>
+                        </xsd:annotation>
+                    </xsd:attribute>
+                    
+                    <xsd:attribute name="referenceDocumentId" type="IdListType">
+                        <xsd:annotation>
+                            <xsd:documentation>List of document IDs of forms, schedules, supporting info. etc. attached to this form.</xsd:documentation>
+                        </xsd:annotation>
+                    </xsd:attribute>
+                    
+                    <xsd:attribute name="referenceDocumentName" type="TextType" fixed="GeneralDependencySmall"/>
+                </xsd:extension>
+            </xsd:complexContent>
+        </xsd:complexType>
+    </xsd:element>
+    
+    <xsd:complexType name="IRS1040Schedule1AType">
+        <xsd:sequence>
+            <!-- =============== Part I =============== -->
+            
+            <!-- Adjusted Gross Income -->
+            <xsd:element name="AdjustedGrossIncomeAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Adjusted Gross Income</Description>
+                        <LineNumber>1</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Excluded income from Puerto Rico -->
+            <xsd:element name="ExcldSect933PuertoRicoIncmAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Excluded income from Puerto Rico</Description>
+                        <LineNumber>2a</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Foreign earned income exclusion from Form 2555 -->
+            <xsd:element name="TotalIncomeExclusionAmt" type="USAmountPosType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Foreign earned income exclusion from Form 2555</Description>
+                        <LineNumber>2b</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Housing deduction from Form 2555 -->
+            <xsd:element name="HousingDeductionAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Housing deduction from Form 2555</Description>
+                        <LineNumber>2c</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Gross income exclusion amount from Form 4563 -->
+            <xsd:element name="GrossIncomeExclusionAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Gross income exclusion amount from Form 4563</Description>
+                        <LineNumber>2d</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Total exclusions and deduction -->
+            <xsd:element name="TotalExclusionsDeductionAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Total exclusions and deduction</Description>
+                        <LineNumber>2e</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Modified adjusted gross income -->
+            <xsd:element name="ModifiedAGIAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Modified adjusted gross income</Description>
+                        <LineNumber>3</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- =============== Part II =============== -->
+            
+            <!-- Qualified tips in wages -->
+            <xsd:element name="QualifiedTipsWagesAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Qualified tips in wages</Description>
+                        <LineNumber>4a</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Qualified tips of employee in Form 4137 -->
+            <xsd:element name="QualifiedTipsForm4137Amt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Qualified tips of employee in Form 4137</Description>
+                        <LineNumber>4b</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Qualified tips of employee -->
+            <xsd:element name="QualifiedTipsEmployeeAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Qualified tips of employee</Description>
+                        <LineNumber>4c</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Qualified tips received in the course of a trade or business -->
+            <xsd:element name="QualifiedTipsTradeOrBusAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Qualified tips received in the course of a trade or business</Description>
+                        <LineNumber>5</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Total qualified tips -->
+            <xsd:element name="TotalQualifiedTipsAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Total qualified tips</Description>
+                        <LineNumber>6</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Tentative tips deduction amount -->
+            <xsd:element name="SmallerTipsOrMaxDedAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Tentative tips deduction amount</Description>
+                        <LineNumber>7</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Line 8 - ModifiedAGIAmt - Use value from Part I Line 3 -->
+            
+            <!-- Filing status threshold -->
+            <xsd:element name="TipsFilingStatusThrshldAmt" type="USAmountPosType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Filing status threshold</Description>
+                        <LineNumber>9</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Difference between modified adjusted gross income and threshold limt -->
+            <xsd:element name="TipsMAGILessThrshldAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Difference between modified adjusted gross income and threshold limt</Description>
+                        <LineNumber>10</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Divide difference by specified amount -->
+            <xsd:element name="TipsMAGILessThrshldDivideNum" type="IntegerNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Divide difference by specified amount</Description>
+                        <LineNumber>11</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Multiply by specified amount -->
+            <xsd:element name="TipsMAGILessThrshldRedAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Multiply by specified amount</Description>
+                        <LineNumber>12</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Qualified tips deduction -->
+            <xsd:element name="QualifiedTipsDeductionAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Qualified tips deduction</Description>
+                        <LineNumber>13</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- =============== Part III =============== -->
+            
+            <!-- Qualified overtime compensation included in wages -->
+            <xsd:element name="QualifiedOvertimeWagesAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Qualified overtime compensation included in wages</Description>
+                        <LineNumber>14a</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Qualified overtime compensation in Forms 1099 -->
+            <xsd:element name="QualifiedOvertimeForm1099Amt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Qualified overtime compensation in Forms 1099</Description>
+                        <LineNumber>14b</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Total qualified overtime compensation -->
+            <xsd:element name="TotalQualifiedOvertimeAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Total qualified overtime compensation</Description>
+                        <LineNumber>14c</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Tentative overtime deduction amount -->
+            <xsd:element name="SmallerOvertimeOrMaxDedAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Tentative overtime deduction amount</Description>
+                        <LineNumber>15</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Line 16 - ModifiedAGIAmt - Use value from Part I Line 3 -->
+            
+            <!-- Filing status threshold -->
+            <xsd:element name="OvertimeFilingStatusThrshldAmt" type="USAmountPosType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Filing status threshold</Description>
+                        <LineNumber>17</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Difference between modified adjusted gross income and threshold limit -->
+            <xsd:element name="OtMAGILessThrshldAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Difference between modified adjusted gross income and threshold limit</Description>
+                        <LineNumber>18</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Divide difference by specified amount -->
+            <xsd:element name="OtMAGILessThrshldDivideNum" type="IntegerNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Divide difference by specified amount</Description>
+                        <LineNumber>19</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Multiply by specified amount -->
+            <xsd:element name="OtMAGILessThrshldRedAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Multiply by specified amount</Description>
+                        <LineNumber>20</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Qualified overtime compensation deduction -->
+            <xsd:element name="QualifiedOvertimeCompDedAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Qualified overtime compensation deduction</Description>
+                        <LineNumber>21</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- =============== Part IV =============== -->
+            
+            <!-- Qualified passenger vehicle loan interest group -->
+            <xsd:element name="QlfyPassengerVehicleLoanIntGrp" minOccurs="0" maxOccurs="50">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Qualified passenger vehicle loan interest group</Description>
+                        <LineNumber>22</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+                
+                <xsd:complexType>
+                    <xsd:sequence>
+                        <!-- Qualified vehicle identification number (VIN) -->
+                        <xsd:element name="VIN">
+                            <xsd:annotation>
+                                <xsd:documentation>
+                                    <Description>Qualified vehicle identification number (VIN)</Description>
+                                    <LineNumber>22(i)</LineNumber>
+                                </xsd:documentation>
+                            </xsd:annotation>
+                            
+                            <xsd:simpleType>
+                                <xsd:restriction base="TextType">
+                                    <xsd:pattern value="[A-Z0-9]{1,17}"/>
+                                </xsd:restriction>
+                            </xsd:simpleType>
+                        </xsd:element>
+                        
+                        <!-- Qualified car loan interest deducted on Schedule C, E, or F -->
+                        <xsd:element name="QualifiedCarLoanIntDedSchAmt" type="USAmountType" minOccurs="0">
+                            <xsd:annotation>
+                                <xsd:documentation>
+                                    <Description>Qualified car loan interest deducted on Schedule C, E, or F</Description>
+                                    <LineNumber>22(ii)</LineNumber>
+                                </xsd:documentation>
+                            </xsd:annotation>
+                        </xsd:element>
+                        
+                        <!-- Qualified car loan interest -->
+                        <xsd:element name="QualifiedCarLoanInterestAmt" type="USAmountType">
+                            <xsd:annotation>
+                                <xsd:documentation>
+                                    <Description>Qualified car loan interest</Description>
+                                    <LineNumber>22(iii)</LineNumber>
+                                </xsd:documentation>
+                            </xsd:annotation>
+                        </xsd:element>
+                    </xsd:sequence>
+                </xsd:complexType>
+            </xsd:element>
+            
+            <!-- Total qualified car loan interest -->
+            <xsd:element name="TotQualifiedCarLoanInterestAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Total qualified car loan interest</Description>
+                        <LineNumber>23</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Tentative car loan interest deduction amount -->
+            <xsd:element name="SmallerCarLoanIntOrMaxDedAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Tentative car loan interest deduction amount</Description>
+                        <LineNumber>24</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Line 25 - ModifiedAGIAmt - Use value from Part I Line 3 -->
+            
+            <!-- Filing status threshold -->
+            <xsd:element name="CarLnIntFilingStatusThrshldAmt" type="USAmountPosType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Filing status threshold</Description>
+                        <LineNumber>26</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Difference between modified adjusted gross income and threshold limit -->
+            <xsd:element name="CarLnIntMAGILessThrshldAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Difference between modified adjusted gross income and threshold limit</Description>
+                        <LineNumber>27</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Divide difference by specified amount -->
+            <xsd:element name="CarLnIntMAGILessThrshldDivNum" type="IntegerNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Divide difference by specified amount</Description>
+                        <LineNumber>28</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Multiply by specified amount -->
+            <xsd:element name="CarLnIntMAGILessThrshldRedAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Multiply by specified amount</Description>
+                        <LineNumber>29</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Qualified car loan interest deduction -->
+            <xsd:element name="QualifiedCarLoanInterestDedAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Qualified car loan interest deduction</Description>
+                        <LineNumber>30</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- =============== Part V =============== -->
+            
+            <!-- Line 31 - ModifiedAGIAmt - Use value from Part I Line 3 -->
+            
+            <!-- Filing status threshold -->
+            <xsd:element name="EnhncSrDedFSThrshldAmt" type="USAmountPosType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Filing status threshold</Description>
+                        <LineNumber>32</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Difference between modified adjusted gross income and threshold limit -->
+            <xsd:element name="EnhncSrDedMAGILessThrshldAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Difference between modified adjusted gross income and threshold limit</Description>
+                        <LineNumber>33</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Multiply by percent -->
+            <xsd:element name="EnhnSrDedMAGILessThrshldRedAmt" type="USAmountType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Multiply by percent</Description>
+                        <LineNumber>34</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Tentative enhanced senior deduction amount -->
+            <xsd:element name="SpecfiedDolLessThrshldRedAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Tentative enhanced senior deduction amount</Description>
+                        <LineNumber>35</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Primary enhanced senior deduction -->
+            <xsd:element name="PrimaryEnhancedSeniorDedAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Primary enhanced senior deduction</Description>
+                        <LineNumber>36a</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Spouse enhanced senior deduction -->
+            <xsd:element name="SpouseEnhancedSeniorDedAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Spouse enhanced senior deduction</Description>
+                        <LineNumber>36b</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- Enhanced deduction for seniors -->
+            <xsd:element name="EnhancedSeniorDeductionAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Enhanced deduction for seniors</Description>
+                        <LineNumber>37</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+            
+            <!-- =============== Part VI =============== -->
+            
+            <!-- Total additional deductions -->
+            <xsd:element name="TotalAdditionalDeductionsAmt" type="USAmountNNType" minOccurs="0">
+                <xsd:annotation>
+                    <xsd:documentation>
+                        <Description>Total additional deductions</Description>
+                        <LineNumber>38</LineNumber>
+                    </xsd:documentation>
+                </xsd:annotation>
+            </xsd:element>
+        </xsd:sequence>
+    </xsd:complexType>
+</xsd:schema>
