@@ -7,6 +7,11 @@ description = "PDF layer for tax: AcroForm inspection and filling on lopdf (pure
 
 [dependencies]
 lopdf = "0.46"
+# Default fill backend (regenerates /AP appearance streams). NOTE: pdfer_forms
+# 0.3.x depends on lopdf ^0.40 while this crate uses lopdf 0.46 — both versions
+# coexist in the tree BY DESIGN: PdferBackend works purely on file paths and
+# never shares lopdf Document objects across the boundary (see docs/KNOWN_LIMITS.md).
+pdfer_forms = "0.3.4"
 serde = { version = "1", features = ["derive"] }
 
 [lints]

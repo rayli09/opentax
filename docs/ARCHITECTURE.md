@@ -65,24 +65,42 @@ computation (like MeF business rules), so it runs on partial returns.
 - **L5 Review & export**: annotated pages, a ranked flag list, and export
   of the computed return (JSON today; filled PDF and MeF XML next).
 
-## PDF filling: the known weak link
+## PDF filling: spike verdict → implemented decision
 
 Reading IRS PDFs and inspecting AcroForm fields is solved in pure Rust on
-`lopdf`. **Filling** is not battle-tested in any pure-Rust crate: setting
-`/V` without regenerating the widget appearance stream (`/AP`) can produce
-forms that render blank in some viewers. Design response:
+`lopdf`. **Filling** was the weak link: setting `/V` without regenerating
+the widget appearance stream (`/AP`) produces forms that render blank in
+viewers that do not regenerate appearances.
 
-- Filling sits behind a `PdfBackend` trait; lopdf is the default backend.
-- Verification is an independent path: re-read `/V` values *and* render.
-- **Spike planned** before PDF export ships: fill the real TY2025
-  f1040.pdf / Schedule D / Form 8949 (~50 fields, SSN comb field,
-  checkboxes) with the lopdf backend, verify against PDFium rendering and
-  pdfcpu `form list` as ground truth. If pure Rust fails the spike, a
-  PDFium backend (bundled `libpdfium` sidecar) becomes the default filler
-  and lopdf becomes the fallback. `anydoc` (Firecrawl) was evaluated and
-  rejected as a core: it converts documents to Markdown with hosted-only
-  OCR and discards AcroForm structure and box geometry — the opposite of
-  what tax extraction needs.
+**The spike ran** (docs/PDF_SPIKE.md; real TY2025 f1040 / Schedule D /
+Form 8949, 57 target fields): the lopdf `/V`-only path failed twice —
+Designer UTF-16BE field names were decoded lossily (100% mangled,
+0/57 filled), and even with names worked around it created no `/AP`,
+wrote checkbox `/V` as a spec-invalid *string*, and poisoned other
+parsers. `NeedAppearances=true` changed nothing. pdfer_forms and pdfcpu
+both produced forms that read back AND render (57/57 + `/AP`).
+
+**Decision (implemented):**
+
+- **PDF string decoding fixed** in tax-pdf: `/T` and string `/V` decode
+  as PDF text strings (UTF-16BE/LE with BOM, else PDFDocEncoding); PDF
+  *name* objects decode through a separate helper. Inspect is exact on
+  real IRS forms again (199/55/202 terminal fields, clean names).
+- **`PdferBackend` is the default fill backend** behind `PdfBackend`
+  (lopdf stays the inspect default and an honest `/V`-only fallback).
+  Fills return an audited `FillReport`: pre-flight name resolution +
+  duplicate-leaf warnings, post-fill diff of every field's `/V` — any
+  unrequested change fails the fill and no output is written (this
+  catches pdfer_forms' leaf-name over-matching, e.g. Form 1040's two
+  `c1_8[0]` filing-status fields; those fills are blocked until an
+  id-based path exists — see KNOWN_LIMITS).
+- **XFA handling is explicit**: preserved as-is, with a warning in every
+  FillReport; never silently stripped (pdfcpu's choice) or updated.
+- Verification stays an independent path (independent readback + render),
+  and pdfcpu stays the external reference tool in the spike harness.
+- `anydoc` (Firecrawl) remains rejected as a core: it converts documents
+  to Markdown with hosted-only OCR and discards AcroForm structure and
+  box geometry — the opposite of what tax extraction needs.
 
 ## The MeF moat (why v1 exports, and does not transmit)
 

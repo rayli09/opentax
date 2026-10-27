@@ -48,6 +48,13 @@ tax node list
 tax node template --document w2
 tax doc classify --file some-document.pdf
 tax skills list
+
+# PDF form primitives (inspect any IRS form; fill it with an audited report)
+tax pdf inspect f1040.pdf
+cat > values.json <<'JSON'
+{"topmostSubform[0].Page1[0].f1_15[0]": "Tester"}
+JSON
+tax pdf fill f1040.pdf --out f1040-filled.pdf --data values.json   # default backend: pdfer
 ```
 
 Money in JSON is **integer cents as a string**: `"5000000"` is $50,000.00.
@@ -67,7 +74,8 @@ This case lives at `benchmark/cases/f1040/2025/001-single-w2-minimal/` and
 crates/tax-core   Money (integer cents), fact-completeness model, expression
                   graph, per-year parameters as DATA (params/2025.json)
 crates/tax-forms  Form 1040 TY2025 minimal slice + input types (W-2, 1099s)
-crates/tax-pdf    AcroForm inspect/fill on lopdf, behind a PdfBackend trait
+crates/tax-pdf    AcroForm inspect (lopdf) + audited fill (pdfer_forms),
+                  behind a PdfBackend trait
 crates/tax-doc    Document classification, W-2 cross-checks, OCR/text traits
 crates/tax-cli    The `tax` binary (clap; JSON on stdout when piped)
 skills/           Router + intake / ingest / preparer / reviewer / filing-guide
@@ -82,7 +90,8 @@ with IRS Fact Graph completeness semantics + hardcoded Rust modules for
 procedural worksheets. Layered document pipeline: born-digital text first,
 geometric templates second, agent vision as supervised fallback, OCR as a
 pluggable trait — with a deterministic validation layer as the trust moat.
-PDF form *filling* is the known weak link in pure Rust; a fill-and-verify
-spike against PDFium/pdfcpu is planned (see `docs/ARCHITECTURE.md`).
+PDF form *filling* was the known weak link in pure Rust; the fill spike
+(`docs/PDF_SPIKE.md`) settled it — pdfer_forms is the default fill backend,
+with a post-fill audit that fails any fill touching unrequested fields.
 
 License: MIT © 2026 Ray Li.

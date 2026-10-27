@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use tax_core::{FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::{compute_1040, Form1040Input, W2Input};
-use tax_pdf::{LopdfBackend, PdfBackend};
+use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
 // ---------------------------------------------------------------------------
 // CLI definition
@@ -72,6 +72,11 @@ enum Commands {
     Doc {
         #[command(subcommand)]
         action: DocAction,
+    },
+    /// PDF form primitives: inspect and fill AcroForm fields.
+    Pdf {
+        #[command(subcommand)]
+        action: PdfAction,
     },
     /// Explain how a line was derived.
     Explain {
@@ -156,6 +161,31 @@ enum DocAction {
     Classify {
         #[arg(long)]
         file: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum PdfAction {
+    /// List the AcroForm fields of a PDF (names decoded as PDF text strings).
+    Inspect {
+        /// PDF file to inspect.
+        file: PathBuf,
+    },
+    /// Fill fields from a flat JSON object {qualified_name: value}.
+    Fill {
+        /// Input PDF.
+        input: PathBuf,
+        /// Where to write the filled PDF (never written on audit failure).
+        #[arg(long)]
+        out: PathBuf,
+        /// JSON file with a flat {qualified_name: value} object of strings.
+        /// Button/checkbox values are the on-state name, e.g. "1".
+        #[arg(long)]
+        data: PathBuf,
+        /// Fill backend: pdfer (default, regenerates /AP, audited) or lopdf
+        /// (/V only, no appearances — see docs/PDF_SPIKE.md).
+        #[arg(long, default_value = "pdfer")]
+        backend: String,
     },
 }
 
@@ -442,14 +472,15 @@ fn cmd_doctor(cli: &Cli) -> CResult<Out> {
             "pick a writable --store directory",
         ),
     }
-    let backend = LopdfBackend;
     push(
         "pdf_backend",
         true,
         true,
         format!(
-            "{} (pure Rust; AcroForm /AP regeneration is a known limit)",
-            backend.name()
+            "inspect: {} (lopdf); fill: {} (pdfer_forms, regenerates /AP, audited) — \
+             see `tax pdf inspect|fill`",
+            LopdfBackend.name(),
+            PdferBackend.name()
         ),
         "",
     );
@@ -797,10 +828,15 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                         format!("exported JSON to {}", path.display()),
                     ))
                 }
-                "mef" | "pdf" => Ok(Out::ok(
+                "mef" => Ok(Out::ok(
                     json!({"status": "not_implemented", "format": export_type,
-                            "detail": "MeF XML and filled-PDF export are not implemented in v1; no file was produced. JSON export is the supported artifact."}),
-                    format!("{export_type} export: not implemented in v1 (no file produced)"),
+                            "detail": "MeF XML export is not implemented in v1; no file was produced. JSON export is the supported artifact."}),
+                    "mef export: not implemented in v1 (no file produced)".to_string(),
+                )),
+                "pdf" => Ok(Out::ok(
+                    json!({"status": "not_implemented", "format": export_type,
+                            "detail": "Filled-PDF export of a computed return is not implemented in v1: the 1040 line-to-field mapping is the next step. The fill primitive itself works — see `tax pdf fill` (pdfer_forms backend). No file was produced. JSON export is the supported artifact."}),
+                    "pdf export: not implemented in v1 (line-to-field mapping is the next step; no file produced)".to_string(),
                 )),
                 other => Err(CliErr::new(
                     "invalid_export_type",
@@ -880,6 +916,96 @@ fn cmd_doc(action: DocAction) -> CResult<Out> {
                     format!("{}: unknown document type", file.display()),
                 )),
             }
+        }
+    }
+}
+
+fn fill_report_json(report: &FillReport, output: &Path) -> Value {
+    json!({
+        "backend": report.backend,
+        "changed_fields": report.changed_fields,
+        "unintended_changes": report.unintended_changes,
+        "appearance_verified": report.appearance_verified,
+        "warnings": report.warnings,
+        "output": output.display().to_string(),
+        "output_written": true,
+    })
+}
+
+fn cmd_pdf(action: PdfAction) -> CResult<Out> {
+    match action {
+        PdfAction::Inspect { file } => {
+            let fields = LopdfBackend
+                .inspect_fields(&file)
+                .map_err(|e| CliErr::new("pdf_error", e.to_string()))?;
+            let field_json: Vec<Value> = fields
+                .iter()
+                .map(|f| json!({"name": f.name, "field_type": f.field_type, "value": f.value}))
+                .collect();
+            let human = {
+                let mut s = format!("{}: {} fields\n", file.display(), fields.len());
+                for f in &fields {
+                    s.push_str(&format!(
+                        "  {} [{}] = {}\n",
+                        f.name,
+                        f.field_type.as_deref().unwrap_or("?"),
+                        f.value.as_deref().unwrap_or("")
+                    ));
+                }
+                s.trim_end().to_string()
+            };
+            Ok(Out::ok(
+                json!({"file": file.display().to_string(), "count": fields.len(), "fields": field_json}),
+                human,
+            ))
+        }
+        PdfAction::Fill {
+            input,
+            out,
+            data,
+            backend,
+        } => {
+            let text = std::fs::read_to_string(&data).map_err(io_err)?;
+            let parsed: Value = serde_json::from_str(&text).map_err(json_err)?;
+            let Some(obj) = parsed.as_object() else {
+                return Err(CliErr::new(
+                    "invalid_json",
+                    "values file must be a flat JSON object {qualified_name: value}",
+                ));
+            };
+            let mut values: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            for (k, v) in obj {
+                let Some(s) = v.as_str() else {
+                    return Err(CliErr::new(
+                        "invalid_json",
+                        format!("value for '{k}' must be a string"),
+                    ));
+                };
+                values.insert(k.clone(), s.to_string());
+            }
+            let report = match backend.as_str() {
+                "pdfer" | "pdfer_forms" => PdferBackend
+                    .fill_fields(&input, &values, &out)
+                    .map_err(|e| CliErr::new("pdf_fill_error", e.to_string())),
+                "lopdf" => LopdfBackend
+                    .fill_fields(&input, &values, &out)
+                    .map_err(|e| CliErr::new("pdf_fill_error", e.to_string())),
+                other => Err(CliErr::new(
+                    "invalid_backend",
+                    format!("unknown pdf backend '{other}' (use pdfer|lopdf)"),
+                )),
+            }?;
+            let human = format!(
+                "filled {} via {}: {} field(s) changed, appearance verified on {}, \
+                 output written to {}",
+                input.display(),
+                report.backend,
+                report.changed_fields.len(),
+                report.appearance_verified,
+                out.display()
+            );
+            Ok(Out::ok(fill_report_json(&report, &out), human))
         }
     }
 }
@@ -1016,6 +1142,20 @@ fn run(cli: &Cli) -> CResult<Out> {
         },
         Commands::Doc { action } => match action {
             DocAction::Classify { file } => cmd_doc(DocAction::Classify { file: file.clone() }),
+        },
+        Commands::Pdf { action } => match action {
+            PdfAction::Inspect { file } => cmd_pdf(PdfAction::Inspect { file: file.clone() }),
+            PdfAction::Fill {
+                input,
+                out,
+                data,
+                backend,
+            } => cmd_pdf(PdfAction::Fill {
+                input: input.clone(),
+                out: out.clone(),
+                data: data.clone(),
+                backend: backend.clone(),
+            }),
         },
         Commands::Explain {
             r#return,
