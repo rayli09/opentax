@@ -57,11 +57,14 @@ of (a) facts to provide and (b) documents to gather. No computation here.
    childless EIC (validate reports `eic_childless_age_unknown`).
    Identity is stored locally only
    and every CLI output shows SSNs masked; say so once, plainly.
-5. If the user can state interest and dividend totals now, re-create is not
-   needed later only if they were passed at create time
-   (`--interest-cents`, `--dividends-cents`, integer cents). Otherwise note
-   them as outstanding — the return will honestly show dependent lines as
-   incomplete until they exist as documents or recorded facts.
+5. If the user can state interest and dividend totals now, pass them at
+   create time (`--interest-cents`, `--dividends-cents`, integer cents).
+   If the return already exists without them, record the amounts with
+   `tax return set-other-income --return <id> --interest-cents <n>
+   --dividends-cents <n>` — the return cannot complete until they are
+   recorded, even as 0. Otherwise note them as outstanding — the return
+   will honestly show dependent lines as incomplete until they exist as
+   documents or recorded facts.
 6. Hand the user a document checklist derived from their income sources:
    one W-2 per job; 1099-INT per bank; 1099-DIV per fund/broker;
    1099-B for brokerage sales; 1099-NEC per side-income payer **plus

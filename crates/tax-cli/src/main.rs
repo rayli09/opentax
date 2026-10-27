@@ -148,6 +148,22 @@ enum ReturnAction {
         #[arg(long)]
         file: PathBuf,
     },
+    /// Record the direct-entry interest/dividend totals on an existing
+    /// return (the post-creation counterpart of create's
+    /// --interest-cents/--dividends-cents). The return cannot complete
+    /// until these are recorded — even as 0 — so an unrecorded amount
+    /// is never silently treated as zero. Re-running replaces the
+    /// recorded totals.
+    SetOtherIncome {
+        #[arg(long)]
+        r#return: String,
+        /// Taxable interest, integer cents (e.g. 12500 = $125.00).
+        #[arg(long)]
+        interest_cents: i64,
+        /// Ordinary dividends, integer cents.
+        #[arg(long)]
+        dividends_cents: i64,
+    },
     /// List stored returns (PII-free: id, year, status, completeness,
     /// whether identity is set).
     List,
@@ -357,6 +373,34 @@ fn load_return(store: &Path, id: &str) -> CResult<StoredReturn> {
         )
     })?;
     serde_json::from_str(&text).map_err(json_err)
+}
+
+/// Record (or replace) the direct-entry interest/dividend totals on a
+/// stored return — the post-creation path for what `return create`
+/// takes as --interest-cents/--dividends-cents. Returns the updated
+/// return and whether a previously recorded block was replaced.
+/// Negative amounts are rejected: directly entered interest and
+/// dividends cannot be negative (a loss is not interest income).
+fn set_other_income(
+    store: &Path,
+    id: &str,
+    interest_cents: i64,
+    dividends_cents: i64,
+) -> CResult<(StoredReturn, bool)> {
+    if interest_cents < 0 || dividends_cents < 0 {
+        return Err(CliErr::new(
+            "invalid_input",
+            "interest and dividend amounts cannot be negative",
+        ));
+    }
+    let mut ret = load_return(store, id)?;
+    let replaced = ret.other_income.is_some();
+    ret.other_income = Some(OtherIncome {
+        interest: Money::from_cents(interest_cents),
+        dividends: Money::from_cents(dividends_cents),
+    });
+    save_return(store, &ret)?;
+    Ok((ret, replaced))
 }
 
 /// Render one person's identity as JSON with the SSN MASKED
@@ -828,8 +872,9 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
             }
             warnings.push(
                 "interest_income and ordinary_dividends have not been recorded for this \
-                 return (create it with --interest-cents/--dividends-cents, or supply the \
-                 full Form1040Input to the engine); dependent lines are incomplete, not zero"
+                 return (create it with --interest-cents/--dividends-cents, record them \
+                 with `return set-other-income`, or supply the full Form1040Input to \
+                 the engine); dependent lines are incomplete, not zero"
                     .to_string(),
             );
             Ok(ComputedView {
@@ -1575,6 +1620,34 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 human,
             ))
         }
+        ReturnAction::SetOtherIncome {
+            r#return,
+            interest_cents,
+            dividends_cents,
+        } => {
+            let (ret, replaced) =
+                set_other_income(&cli.store, &r#return, interest_cents, dividends_cents)?;
+            let other = ret.other_income.as_ref().expect("just stored");
+            let mut value = json!({
+                "returnId": ret.id,
+                "other_income": serde_json::to_value(other).map_err(json_err)?,
+            });
+            if replaced {
+                value["replaced"] = json!(true);
+            }
+            let human = format!(
+                "recorded direct interest {} / dividends {} on return {}{}",
+                other.interest,
+                other.dividends,
+                ret.id,
+                if replaced {
+                    " (replaced previous totals)"
+                } else {
+                    ""
+                },
+            );
+            Ok(Out::ok(value, human))
+        }
         ReturnAction::List => {
             let rows = list_returns(&cli.store, &params);
             let human = if rows.is_empty() {
@@ -1717,13 +1790,15 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
 
 /// Rebuild the engine input for a stored return (the same construction
 /// the full compute view uses). Requires the direct interest/dividend
-/// amounts to have been recorded at creation time.
+/// amounts to have been recorded — at creation time, or afterwards
+/// with `return set-other-income`.
 fn form_input(ret: &StoredReturn) -> CResult<Form1040Input> {
     let other = ret.other_income.as_ref().ok_or_else(|| {
         CliErr::new(
             "return_incomplete",
             "interest_income and ordinary_dividends have not been recorded for this return \
-             (create it with --interest-cents/--dividends-cents); the packet cannot be built",
+             (create it with --interest-cents/--dividends-cents, or record them with \
+             `return set-other-income`); the packet cannot be built",
         )
     })?;
     let status = FilingStatus::parse(&ret.status).map_err(|e| CliErr::new("invalid_status", e))?;
@@ -2511,6 +2586,7 @@ fn run(cli: &Cli) -> CResult<Out> {
             | ReturnAction::Get { .. }
             | ReturnAction::Validate { .. }
             | ReturnAction::SetIdentity { .. }
+            | ReturnAction::SetOtherIncome { .. }
             | ReturnAction::List
             | ReturnAction::Export { .. } => {
                 // Re-dispatch with ownership-free copies: simplest is to call a
@@ -2586,6 +2662,18 @@ fn cmd_return_ref(cli: &Cli, action: &ReturnAction) -> CResult<Out> {
             ReturnAction::SetIdentity {
                 r#return: r#return.clone(),
                 file: file.clone(),
+            },
+        ),
+        ReturnAction::SetOtherIncome {
+            r#return,
+            interest_cents,
+            dividends_cents,
+        } => cmd_return(
+            cli,
+            ReturnAction::SetOtherIncome {
+                r#return: r#return.clone(),
+                interest_cents: *interest_cents,
+                dividends_cents: *dividends_cents,
             },
         ),
         ReturnAction::List => cmd_return(cli, ReturnAction::List),
@@ -2765,6 +2853,111 @@ mod tests {
         let rendered = serde_json::to_string(&rows).unwrap();
         assert!(!rendered.contains("Tester"), "last name leaked: {rendered}");
         assert!(!rendered.contains("123456789"), "SSN leaked: {rendered}");
+        let _ = std::fs::remove_dir_all(&store);
+    }
+
+    #[test]
+    fn set_other_income_completes_return_created_without_flags() {
+        let store =
+            std::env::temp_dir().join(format!("opentax-otherinc-done-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let params = TaxParams::load_2025().unwrap();
+        // A return as `return create` stores it when neither
+        // --interest-cents nor --dividends-cents was passed.
+        let ret = StoredReturn {
+            id: "r2025-300-3".to_string(),
+            year: 2025,
+            status: "single".to_string(),
+            entries: Vec::new(),
+            other_income: None,
+            taxpayer: None,
+        };
+        assert!(save_return(&store, &ret).is_ok());
+        // Before: the direct amounts are unrecorded, so the view stays
+        // on the partial path — lines 2b/3b Incomplete, never zero.
+        // (`.ok().expect(..)` because CliErr has no Debug for unwrap.)
+        let before = compute_view(&ret, &params).ok().expect("compute before");
+        assert!(!before.complete);
+        assert!(matches!(
+            before.lines.get("2b"),
+            Some(FactResult::Incomplete)
+        ));
+        assert!(matches!(
+            before.lines.get("3b"),
+            Some(FactResult::Incomplete)
+        ));
+        // Record the amounts (0/0) after creation:
+        let (stored, replaced) = set_other_income(&store, &ret.id, 0, 0)
+            .ok()
+            .expect("set other income");
+        assert!(!replaced);
+        // After: the same stored return computes complete.
+        let after = compute_view(&stored, &params).ok().expect("compute after");
+        assert!(after.complete, "still incomplete: {:?}", after.incomplete);
+        assert!(matches!(
+            after.lines.get("2b"),
+            Some(FactResult::Complete(m)) if *m == Money::ZERO
+        ));
+        // And the recording persisted to disk.
+        assert!(load_return(&store, &ret.id)
+            .ok()
+            .expect("reload")
+            .other_income
+            .is_some());
+        let _ = std::fs::remove_dir_all(&store);
+    }
+
+    #[test]
+    fn set_other_income_overwrite_reports_replaced() {
+        let store =
+            std::env::temp_dir().join(format!("opentax-otherinc-over-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let ret = StoredReturn {
+            id: "r2025-400-4".to_string(),
+            year: 2025,
+            status: "single".to_string(),
+            entries: Vec::new(),
+            other_income: None,
+            taxpayer: None,
+        };
+        assert!(save_return(&store, &ret).is_ok());
+        let (_, replaced) = set_other_income(&store, &ret.id, 10_000, 20_000)
+            .ok()
+            .expect("first set");
+        assert!(!replaced);
+        let (stored, replaced) = set_other_income(&store, &ret.id, 30_000, 40_000)
+            .ok()
+            .expect("overwrite set");
+        assert!(replaced);
+        let other = stored.other_income.unwrap();
+        assert_eq!(other.interest, Money::from_cents(30_000));
+        assert_eq!(other.dividends, Money::from_cents(40_000));
+        let _ = std::fs::remove_dir_all(&store);
+    }
+
+    #[test]
+    fn set_other_income_rejects_negative_amounts() {
+        let store =
+            std::env::temp_dir().join(format!("opentax-otherinc-neg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let ret = StoredReturn {
+            id: "r2025-500-5".to_string(),
+            year: 2025,
+            status: "single".to_string(),
+            entries: Vec::new(),
+            other_income: None,
+            taxpayer: None,
+        };
+        assert!(save_return(&store, &ret).is_ok());
+        let err = set_other_income(&store, &ret.id, -1, 0).unwrap_err();
+        assert_eq!(err.code, "invalid_input");
+        assert!(set_other_income(&store, &ret.id, 0, -10_000).is_err());
+        // The rejected calls recorded nothing.
+        assert!(load_return(&store, &ret.id)
+            .ok()
+            .expect("reload")
+            .other_income
+            .is_none());
         let _ = std::fs::remove_dir_all(&store);
     }
 }
