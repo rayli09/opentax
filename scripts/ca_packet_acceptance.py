@@ -193,7 +193,7 @@ def export_packet(bin_path, store, rid, forms_dir, out_dir):
 
 
 MFJ_ON_STATE = (
-    "/2. Married/R D P filing jointly (even if only one spouse / R D P "
+    "/2 . Married/R D P filing jointly (even if only one spouse / R D P "
     "had income). See instructions."
 )
 

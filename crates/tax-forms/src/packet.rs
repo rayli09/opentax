@@ -1641,7 +1641,7 @@ mod tests {
             .iter()
             .find(|v| v.line == "filing_status")
             .unwrap();
-        assert_eq!(status.value, "1. Single.");
+        assert_eq!(status.value, "1 . Single.");
         assert_eq!(status.field, "540_form_1036 RB");
         // Identity: names split, DOB reformatted, SSN full in the fill
         // value but masked in the report value.
