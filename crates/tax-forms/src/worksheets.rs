@@ -26,9 +26,9 @@
 //! selects Tax Table rows by the floored dollar amount (see
 //! docs/KNOWN_LIMITS.md).
 
-use tax_core::{bracket_tax, FilingStatus, Money, TaxParams, TaxTable};
+use tax_core::{bracket_tax, EicTable, FilingStatus, Money, TaxParams, TaxTable};
 
-use crate::{DependentInput, DependentRelationship};
+use crate::{DependentInput, DependentRelationship, TaxpayerIdentity};
 
 /// The Schedule D combination of the two 8949 nets, in Schedule D's own
 /// line numbering (our simplified Schedule D: line 7 = net short-term
@@ -475,6 +475,177 @@ pub fn schedule_8812(
     }
 }
 
+/// The EIC age test for one dependent (Instructions for Form 1040
+/// (2025), line 27, Step 3): under 19 at the end of 2025, or under 24
+/// and a full-time student, or permanently and totally disabled at any
+/// age.
+pub fn eic_age_test(dep: &DependentInput) -> bool {
+    dep.age < 19 || (dep.full_time_student && dep.age < 24) || dep.permanently_disabled
+}
+
+/// Whether one stored dependent is a qualifying child for the earned
+/// income credit under the tests v1 models (Instructions for Form
+/// 1040 (2025), line 27, Steps 1 and 3):
+/// - relationship: child, stepchild, or foster child. The printed test
+///   also covers siblings, half/step siblings, and descendants of any
+///   of them; the v1 dependent entry does not distinguish those from
+///   other relatives, so `"other"` never counts in v1
+///   (docs/KNOWN_LIMITS.md);
+/// - age: [`eic_age_test`];
+/// - residency: lived with the taxpayer more than half the year
+///   (months > 6, the same modeling as Schedule 8812);
+/// - the child has an SSN stored (the EIC requires a valid SSN; the
+///   SSN-issued-by-the-due-date timing rule is not modeled);
+/// - the joint-return test and the "younger than the taxpayer" test
+///   are not modeled (v1 stores neither fact).
+pub fn classify_eic_child(dep: &DependentInput) -> bool {
+    let child_type = matches!(
+        dep.relationship,
+        DependentRelationship::Child
+            | DependentRelationship::Stepchild
+            | DependentRelationship::FosterChild
+    );
+    child_type
+        && dep.months_lived_with_taxpayer > 6
+        && dep.ssn.as_deref().and_then(crate::normalize_ssn).is_some()
+        && eic_age_test(dep)
+}
+
+/// The number of stored dependents who are EIC qualifying children.
+pub fn eic_qualifying_children(dependents: &[DependentInput]) -> u32 {
+    dependents.iter().filter(|d| classify_eic_child(d)).count() as u32
+}
+
+/// The no-children EIC age test outcome (Instructions for Form 1040
+/// (2025), line 27, Step 4, question 2): `Some(true)` when a date of
+/// birth on file falls in the eligible range (at least 25 but under
+/// 65 at the end of 2025 — born after 1960-12-31 and before
+/// 2001-01-02), `Some(false)` when every date of birth on file is
+/// outside it, and `None` when no usable date of birth is stored. On a
+/// joint return either spouse meeting the test suffices.
+pub fn eic_childless_age_outcome(
+    identity: Option<&TaxpayerIdentity>,
+    status: FilingStatus,
+    params: &TaxParams,
+) -> Option<bool> {
+    let in_range = |dob: &str| {
+        crate::valid_iso_date(dob)
+            && dob > params.eic_childless_born_after.as_str()
+            && dob < params.eic_childless_born_before.as_str()
+    };
+    let identity = identity?;
+    let taxpayer = identity.person.date_of_birth.as_deref().map(in_range);
+    if status != FilingStatus::Mfj {
+        return taxpayer;
+    }
+    let spouse = identity
+        .spouse
+        .as_ref()
+        .and_then(|s| s.date_of_birth.as_deref())
+        .map(in_range);
+    match (taxpayer, spouse) {
+        (Some(a), Some(b)) => Some(a || b),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+/// The earned income credit computation (Form 1040 line 27), following
+/// EIC Worksheets A and B of the Instructions for Form 1040 (2025).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EarnedIncomeCredit {
+    /// Qualifying children counted (EIC tests, see
+    /// [`classify_eic_child`]).
+    pub qualifying_children: u32,
+    /// Earned income as figured by the caller (Worksheet A: the Step 5
+    /// amount = Form 1040 line 1z; Worksheet B: wages plus Schedule SE
+    /// line 3 net earnings minus the Schedule SE line 13 deductible
+    /// part of SE tax).
+    pub earned_income: Money,
+    /// Investment income as figured by the caller (v1 scope: lines
+    /// 2a + 2b + 3b plus the positive part of line 7).
+    pub investment_income: Money,
+    /// The credit for Form 1040 line 27 (zero when disqualified).
+    pub credit: Money,
+    /// Why the credit is zero, when a disqualifier decided it:
+    /// `"mfs"`, `"investment_income_limit"`, `"no_earned_income"`,
+    /// `"over_completed_phaseout"`, `"childless_age_not_met"`, or
+    /// `"childless_age_unknown"` (the no-children age test cannot be
+    /// determined because no date of birth is stored — v1 takes no
+    /// credit rather than guessing; docs/KNOWN_LIMITS.md). `None` when
+    /// the table lookup produced the amount.
+    pub disqualifier: Option<&'static str>,
+}
+
+/// Figure the earned income credit.
+///
+/// `earned_income` and `agi` feed the worksheets' two table lookups
+/// (Worksheets A and B, Parts 2/3 and 5/6, transcribed literally):
+/// look the credit up on earned income; when AGI differs from earned
+/// income, also look it up on AGI — but only when AGI is at or above
+/// the filing-status phaseout threshold for the child count — and
+/// take the smaller amount. Before any lookup, the worksheet gates
+/// apply (Steps 1, 2, 4, 5 and Worksheet B line 5): married filing
+/// separately takes no credit in v1 (the separated-spouse exception
+/// is not modeled); investment income over the IRC §32(i) limit
+/// disqualifies; AGI or earned income at or above the Rev. Proc.
+/// 2024-40 completed phaseout amount for the child count yields zero;
+/// and with no qualifying children the age-25-to-64 test must be met
+/// by a stored date of birth.
+pub fn earned_income_credit(
+    dependents: &[DependentInput],
+    status: FilingStatus,
+    identity: Option<&TaxpayerIdentity>,
+    earned_income: Money,
+    agi: Money,
+    investment_income: Money,
+    params: &TaxParams,
+) -> EarnedIncomeCredit {
+    let children = eic_qualifying_children(dependents);
+    let done = |credit: Money, disqualifier: Option<&'static str>| EarnedIncomeCredit {
+        qualifying_children: children,
+        earned_income,
+        investment_income,
+        credit,
+        disqualifier,
+    };
+    if status == FilingStatus::Mfs {
+        return done(Money::ZERO, Some("mfs"));
+    }
+    if investment_income.cents() > params.eic_investment_income_limit_cents {
+        return done(Money::ZERO, Some("investment_income_limit"));
+    }
+    if earned_income.cents() <= 0 {
+        return done(Money::ZERO, Some("no_earned_income"));
+    }
+    let completed = params.eic_completed_phaseout(status, children);
+    if agi.cents() >= completed.cents() || earned_income.cents() >= completed.cents() {
+        return done(Money::ZERO, Some("over_completed_phaseout"));
+    }
+    if children == 0 {
+        match eic_childless_age_outcome(identity, status, params) {
+            Some(true) => {}
+            Some(false) => return done(Money::ZERO, Some("childless_age_not_met")),
+            None => return done(Money::ZERO, Some("childless_age_unknown")),
+        }
+    }
+    let table = EicTable::load_2025();
+    let mfj = status == FilingStatus::Mfj;
+    let on_earned = table.credit(mfj, children, earned_income);
+    // Worksheet lines 5-6 / 10-11: when AGI equals earned income, or
+    // AGI is below the phaseout threshold, the earned-income lookup IS
+    // the credit (no second lookup); otherwise take the smaller of
+    // the two lookups.
+    let credit = if agi == earned_income || agi < params.eic_phaseout_threshold(status, children) {
+        on_earned
+    } else {
+        let on_agi = table.credit(mfj, children, agi);
+        Money::from_cents(on_earned.cents().min(on_agi.cents()))
+    };
+    done(credit, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -760,6 +931,26 @@ mod tests {
             relationship,
             age,
             months_lived_with_taxpayer: months,
+            full_time_student: false,
+            permanently_disabled: false,
+        }
+    }
+
+    fn dep_ssn(relationship: DependentRelationship, age: u32, months: u32) -> DependentInput {
+        let mut d = dep(relationship, age, months);
+        d.ssn = Some("123456789".to_string());
+        d
+    }
+
+    fn identity_with_dobs(taxpayer: Option<&str>, spouse: Option<&str>) -> TaxpayerIdentity {
+        let person = |dob: Option<&str>| crate::PersonIdentity {
+            date_of_birth: dob.map(str::to_string),
+            ..Default::default()
+        };
+        TaxpayerIdentity {
+            person: person(taxpayer),
+            spouse: spouse.map(|dob| person(Some(dob))),
+            ..Default::default()
         }
     }
 
@@ -937,6 +1128,281 @@ mod tests {
         assert_eq!(s.tentative_credit, m(1_000), "2 x $500 ODC");
         assert_eq!(s.nonrefundable_credit, Money::ZERO);
         assert_eq!(s.additional_child_tax_credit, Money::ZERO);
+    }
+
+    // -- Earned income credit -----------------------------------------
+
+    #[test]
+    fn eic_classify_age_and_relationship_tests() {
+        use DependentRelationship::*;
+        // Under 19 at year-end counts; 19 does not (unless student).
+        assert!(classify_eic_child(&dep_ssn(Child, 18, 12)));
+        assert!(!classify_eic_child(&dep_ssn(Child, 19, 12)));
+        // A 20-year-old full-time student counts; a 24-year-old does
+        // not (the test is under 24).
+        let mut student = dep_ssn(Child, 20, 12);
+        student.full_time_student = true;
+        assert!(classify_eic_child(&student));
+        let mut student24 = dep_ssn(Child, 24, 12);
+        student24.full_time_student = true;
+        assert!(!classify_eic_child(&student24));
+        // Permanently and totally disabled: any age.
+        let mut disabled = dep_ssn(Child, 30, 12);
+        disabled.permanently_disabled = true;
+        assert!(classify_eic_child(&disabled));
+        // Stepchildren / foster children count; "other" never does in
+        // v1; residency (more than half the year) and the SSN are both
+        // required.
+        assert!(classify_eic_child(&dep_ssn(Stepchild, 10, 12)));
+        assert!(classify_eic_child(&dep_ssn(FosterChild, 10, 12)));
+        assert!(!classify_eic_child(&dep_ssn(Other, 10, 12)));
+        assert!(!classify_eic_child(&dep_ssn(Child, 10, 6)));
+        assert!(!classify_eic_child(&dep(Child, 10, 12)), "no SSN stored");
+    }
+
+    #[test]
+    fn eic_golden_case_007_shape() {
+        let p = params();
+        // HoH, one child age 5 with an SSN, earned income = AGI =
+        // $30,000, no investment income: EIC Table row 30,000-30,050,
+        // 1 child, single/head-of-household columns = $3,261.
+        let deps = vec![dep_ssn(DependentRelationship::Child, 5, 12)];
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Hoh,
+            None,
+            m(30_000),
+            m(30_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.qualifying_children, 1);
+        assert_eq!(e.credit, m(3_261));
+        assert_eq!(e.disqualifier, None);
+    }
+
+    #[test]
+    fn eic_two_kids_and_mfj_column_difference() {
+        let p = params();
+        let deps = vec![
+            dep_ssn(DependentRelationship::Child, 9, 12),
+            dep_ssn(DependentRelationship::Child, 6, 12),
+        ];
+        // Golden case 009: single, earned = AGI = $38,000, 2 children
+        // -> $4,061 (EIC Table row 38,000-38,050).
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Single,
+            None,
+            m(38_000),
+            m(38_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.qualifying_children, 2);
+        assert_eq!(e.credit, m(4_061));
+        // Same income filing jointly: the MFJ phaseout threshold is
+        // $30,470 instead of $23,350, so the credit is $5,561.
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Mfj,
+            None,
+            m(38_000),
+            m(38_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.credit, m(5_561));
+    }
+
+    #[test]
+    fn eic_agi_lookup_min_rule() {
+        let p = params();
+        let deps = vec![dep_ssn(DependentRelationship::Child, 5, 12)];
+        // Earned income $30,000 (credit on EI = $3,261) but AGI is
+        // $40,000 because of $10,000 of interest: AGI is at/above the
+        // $23,350 threshold, so the credit is the smaller of the two
+        // lookups; the $40,000 lookup (row 40,000-40,050, 1 child,
+        // single columns) is $1,663.
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Hoh,
+            None,
+            m(30_000),
+            m(40_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.credit, m(1_663));
+        // But when AGI is below the phaseout threshold, the AGI lookup
+        // is NOT taken (Worksheet A, Part 3): earned income $5,000,
+        // AGI $2,000 (a capital loss) — the credit stays the earned
+        // income lookup, $1,709 (row 5,000-5,050, 1 child).
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Single,
+            None,
+            m(5_000),
+            m(2_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.credit, m(1_709));
+    }
+
+    #[test]
+    fn eic_disqualifiers() {
+        let p = params();
+        let deps = vec![dep_ssn(DependentRelationship::Child, 5, 12)];
+        // MFS: no credit in v1.
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Mfs,
+            None,
+            m(30_000),
+            m(30_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.credit, Money::ZERO);
+        assert_eq!(e.disqualifier, Some("mfs"));
+        // Investment income $11,951 (one dollar over the section 32(i)
+        // limit) disqualifies entirely; $11,950 does not. (The $638
+        // here is because at $11,950 of interest the AGI lookup —
+        // AGI $41,950, row 41,950-42,000, 1 child — controls.)
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Hoh,
+            None,
+            m(30_000),
+            m(41_951),
+            m(11_951),
+            &p,
+        );
+        assert_eq!(e.credit, Money::ZERO);
+        assert_eq!(e.disqualifier, Some("investment_income_limit"));
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Hoh,
+            None,
+            m(30_000),
+            m(41_950),
+            m(11_950),
+            &p,
+        );
+        assert!(e.credit.cents() > 0);
+        assert_eq!(e.disqualifier, None);
+        // AGI at the completed phaseout amount ($50,434, 1 child,
+        // non-MFJ) yields zero even with low earned income.
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Single,
+            None,
+            m(10_000),
+            m(50_434),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.credit, Money::ZERO);
+        assert_eq!(e.disqualifier, Some("over_completed_phaseout"));
+        // No earned income: no credit.
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Single,
+            None,
+            Money::ZERO,
+            m(5_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.disqualifier, Some("no_earned_income"));
+        // Golden case 006 shape: MFJ AGI $90,000 is over the completed
+        // phaseout amount whatever the child count.
+        let e = earned_income_credit(
+            &deps,
+            FilingStatus::Mfj,
+            None,
+            m(90_000),
+            m(90_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.credit, Money::ZERO);
+    }
+
+    #[test]
+    fn eic_childless_age_test() {
+        let p = params();
+        // Single, no children, earned = AGI = $10,000: the maximum
+        // no-children credit, $649 (EIC Table plateau) — when a date
+        // of birth in the 25-64 range is stored (born 1990-06-15).
+        let id = identity_with_dobs(Some("1990-06-15"), None);
+        let e = earned_income_credit(
+            &[],
+            FilingStatus::Single,
+            Some(&id),
+            m(10_000),
+            m(10_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.qualifying_children, 0);
+        assert_eq!(e.credit, m(649));
+        // Born 1958 (age 67 at year-end): outside the range.
+        let id = identity_with_dobs(Some("1958-03-01"), None);
+        let e = earned_income_credit(
+            &[],
+            FilingStatus::Single,
+            Some(&id),
+            m(10_000),
+            m(10_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.credit, Money::ZERO);
+        assert_eq!(e.disqualifier, Some("childless_age_not_met"));
+        // No identity/DOB stored: v1 takes no credit rather than
+        // guessing (documented modeling choice).
+        let e = earned_income_credit(
+            &[],
+            FilingStatus::Single,
+            None,
+            m(10_000),
+            m(10_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.credit, Money::ZERO);
+        assert_eq!(e.disqualifier, Some("childless_age_unknown"));
+        // Joint return: either spouse in range suffices (taxpayer
+        // born 1950, spouse born 1995).
+        let id = identity_with_dobs(Some("1950-01-01"), Some("1995-05-05"));
+        let e = earned_income_credit(
+            &[],
+            FilingStatus::Mfj,
+            Some(&id),
+            m(10_000),
+            m(10_000),
+            Money::ZERO,
+            &p,
+        );
+        assert_eq!(e.credit, m(649));
+        // Boundaries from the instructions: born 1961-01-01 (64) is
+        // in; born 1960-12-31 (65) is out; born 2001-01-01 is in
+        // (treated as 25); born 2001-01-02 (24) is out.
+        for (dob, ok) in [
+            ("1961-01-01", true),
+            ("1960-12-31", false),
+            ("2001-01-01", true),
+            ("2001-01-02", false),
+        ] {
+            let id = identity_with_dobs(Some(dob), None);
+            assert_eq!(
+                eic_childless_age_outcome(Some(&id), FilingStatus::Single, &p),
+                Some(ok),
+                "DOB {dob}"
+            );
+        }
     }
 
     #[test]

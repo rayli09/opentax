@@ -390,6 +390,20 @@ fn default_age_65_born_before() -> String {
     // Deduction; the date is printed on the form).
     "1961-01-02".to_string()
 }
+fn default_eic_investment_income_limit_cents() -> i64 {
+    // IRC §32(i), TY2025 amount per Rev. Proc. 2024-40, §3.01(2).
+    1_195_000
+}
+fn default_eic_childless_born_after() -> String {
+    // Instructions for Form 1040 (2025), line 27, Step 4, question 2:
+    // at least age 25 at the end of 2025 = born after December 31, 1960.
+    "1960-12-31".to_string()
+}
+fn default_eic_childless_born_before() -> String {
+    // Under age 65 at the end of 2025 = born before January 2, 2001
+    // (same source as above).
+    "2001-01-02".to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bracket {
@@ -473,6 +487,36 @@ pub struct TaxParams {
     /// ACTC earned-income rate (Schedule 8812, line 20: 15%).
     #[serde(default = "default_actc_rate_bp")]
     pub actc_rate_bp: u32,
+    /// Earned income credit: the aggregate investment income above
+    /// which no credit is allowed (IRC §32(i); TY2025 $11,950 per
+    /// Rev. Proc. 2024-40, §3.01(2)).
+    #[serde(default = "default_eic_investment_income_limit_cents")]
+    pub eic_investment_income_limit_cents: i64,
+    /// EIC phaseout threshold amounts by filing status, then by number
+    /// of qualifying children ("0".."3", where "3" is three or more):
+    /// the AGI at which the phaseout of the credit begins (Rev. Proc.
+    /// 2024-40, §3.01). The EIC Worksheets compare AGI against this
+    /// amount to decide whether an AGI table lookup is needed.
+    #[serde(default)]
+    pub eic_phaseout_threshold_cents: HashMap<String, HashMap<String, i64>>,
+    /// EIC completed phaseout amounts by filing status, then by number
+    /// of qualifying children ("0".."3"): the AGI (or earned income) at
+    /// or above which the credit is fully phased out (Rev. Proc.
+    /// 2024-40, §3.01). The EIC Worksheet flow (Steps 1 and 5 / Part 5)
+    /// stops before the table lookup at these amounts.
+    #[serde(default)]
+    pub eic_completed_phaseout_cents: HashMap<String, HashMap<String, i64>>,
+    /// No-children EIC age test, lower bound (exclusive): the taxpayer
+    /// (or, on a joint return, the spouse) must be born AFTER this ISO
+    /// date — TY2025: after 1960-12-31, i.e. at least 25 at year-end
+    /// (Instructions for Form 1040 (2025), line 27, Step 4).
+    #[serde(default = "default_eic_childless_born_after")]
+    pub eic_childless_born_after: String,
+    /// No-children EIC age test, upper bound (exclusive): born BEFORE
+    /// this ISO date — TY2025: before 2001-01-02, i.e. under 65 at
+    /// year-end (same source).
+    #[serde(default = "default_eic_childless_born_before")]
+    pub eic_childless_born_before: String,
 }
 
 impl TaxParams {
@@ -550,6 +594,84 @@ impl TaxParams {
                 .get(status.as_str())
                 .unwrap_or(&fallback),
         )
+    }
+
+    /// EIC phaseout threshold (AGI where the phaseout begins) for the
+    /// status and number of qualifying children (3 = three or more);
+    /// Rev. Proc. 2024-40, §3.01.
+    pub fn eic_phaseout_threshold(&self, status: FilingStatus, children: u32) -> Money {
+        self.eic_amount(&self.eic_phaseout_threshold_cents, status, children, false)
+    }
+
+    /// EIC completed phaseout amount for the status and number of
+    /// qualifying children (3 = three or more): at or above it, the
+    /// credit is zero (Rev. Proc. 2024-40, §3.01).
+    pub fn eic_completed_phaseout(&self, status: FilingStatus, children: u32) -> Money {
+        self.eic_amount(&self.eic_completed_phaseout_cents, status, children, true)
+    }
+
+    fn eic_amount(
+        &self,
+        table: &HashMap<String, HashMap<String, i64>>,
+        status: FilingStatus,
+        children: u32,
+        completed: bool,
+    ) -> Money {
+        let key = children.min(3).to_string();
+        if let Some(v) = table
+            .get(status.as_str())
+            .and_then(|by_kids| by_kids.get(&key))
+        {
+            return Money::from_cents(*v);
+        }
+        // Fallbacks (Rev. Proc. 2024-40, §3.01 TY2025 values), used
+        // only if a params file omits the tables.
+        let mfj = status == FilingStatus::Mfj;
+        let cents = match (completed, children.min(3)) {
+            (false, 0) => {
+                if mfj {
+                    1_773_000
+                } else {
+                    1_062_000
+                }
+            }
+            (false, _) => {
+                if mfj {
+                    3_047_000
+                } else {
+                    2_335_000
+                }
+            }
+            (true, 0) => {
+                if mfj {
+                    2_621_400
+                } else {
+                    1_910_400
+                }
+            }
+            (true, 1) => {
+                if mfj {
+                    5_755_400
+                } else {
+                    5_043_400
+                }
+            }
+            (true, 2) => {
+                if mfj {
+                    6_443_000
+                } else {
+                    5_731_000
+                }
+            }
+            (true, _) => {
+                if mfj {
+                    6_867_500
+                } else {
+                    6_155_500
+                }
+            }
+        };
+        Money::from_cents(cents)
     }
 
     /// Bracket table in [`Op::BracketTax`] / [`bracket_tax`] form.
@@ -669,6 +791,111 @@ impl TaxTable {
             Some(Money::from_cents(row.tax(status) * 100))
         } else {
             None
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TY2025 Earned Income Credit Table (DATA: extracted from the official
+// IRS table, never synthesized from the section 3.01 formulas — see the
+// file's `source` field)
+// ---------------------------------------------------------------------------
+
+/// One row of the EIC Table: for an amount in `[from_dollars,
+/// to_dollars)` the credit is the whole-dollar amount in the column for
+/// the filer's status group and number of qualifying children (index
+/// 0..=3, where 3 means three or more). The "single" columns are the
+/// printed "single, head of household, or qualifying surviving spouse"
+/// columns; the EIC Worksheets route married-filing-separately filers
+/// away from the table (v1 allows no MFS credit at all).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EicTableRow {
+    pub from_dollars: i64,
+    pub to_dollars: i64,
+    pub single: [i64; 4],
+    pub mfj: [i64; 4],
+}
+
+impl EicTableRow {
+    /// The table's credit (whole dollars) for a status group (`mfj` =
+    /// married filing jointly columns, otherwise the single / head of
+    /// household / qualifying surviving spouse columns) and a number
+    /// of qualifying children (3 = three or more).
+    pub fn credit(&self, mfj: bool, children: u32) -> i64 {
+        let idx = children.min(3) as usize;
+        if mfj {
+            self.mfj[idx]
+        } else {
+            self.single[idx]
+        }
+    }
+}
+
+/// The TY2025 Earned Income Credit Table, embedded from
+/// `params/2025-eic-table.json`.
+#[derive(Debug, Clone)]
+pub struct EicTable {
+    pub year: u32,
+    pub source: String,
+    pub rows: Vec<EicTableRow>,
+}
+
+#[derive(Deserialize)]
+struct EicTableFile {
+    year: u32,
+    source: String,
+    #[allow(dead_code)]
+    unit: String,
+    #[allow(dead_code)]
+    columns: Vec<String>,
+    rows: Vec<[i64; 10]>,
+}
+
+impl EicTable {
+    /// The embedded TY2025 table (parsed once; the rows are immutable
+    /// process-lifetime data).
+    pub fn load_2025() -> &'static EicTable {
+        static TABLE: std::sync::OnceLock<EicTable> = std::sync::OnceLock::new();
+        TABLE.get_or_init(|| {
+            let file: EicTableFile =
+                serde_json::from_str(include_str!("../params/2025-eic-table.json"))
+                    .expect("bundled 2025-eic-table.json must parse");
+            EicTable {
+                year: file.year,
+                source: file.source,
+                rows: file
+                    .rows
+                    .iter()
+                    .map(|r| EicTableRow {
+                        from_dollars: r[0],
+                        to_dollars: r[1],
+                        single: [r[2], r[3], r[4], r[5]],
+                        mfj: [r[6], r[7], r[8], r[9]],
+                    })
+                    .collect(),
+            }
+        })
+    }
+
+    /// EIC Table lookup for an amount (earned income or AGI, per the
+    /// EIC Worksheets). The row is selected by the whole dollars of
+    /// the amount (floored — the worksheets are figured in whole
+    /// dollars). Amounts below $1 and amounts at or above the table's
+    /// last row ($68,700) find no row: the credit is zero, which is
+    /// what the worksheets produce there (their Step 1 / Step 5 gates
+    /// stop the filer first; the engine applies the same gates from
+    /// the Rev. Proc. 2024-40 completed phaseout amounts).
+    pub fn credit(&self, mfj: bool, children: u32, amount: Money) -> Money {
+        if amount.cents() < 100 {
+            return Money::ZERO;
+        }
+        let dollars = amount.cents().div_euclid(100);
+        let idx = self.rows.partition_point(|r| r.to_dollars <= dollars);
+        match self.rows.get(idx) {
+            Some(row) if row.from_dollars <= dollars && dollars < row.to_dollars => {
+                Money::from_cents(row.credit(mfj, children) * 100)
+            }
+            _ => Money::ZERO,
         }
     }
 }
@@ -878,6 +1105,166 @@ mod tests {
                 assert!(row.tax(s) >= prev.tax(s), "column {s:?} must not decrease");
             }
         }
+    }
+
+    #[test]
+    fn params_2025_eic() {
+        let p = TaxParams::load_2025().unwrap();
+        // IRC 32(i) investment income limit, TY2025 (Rev. Proc.
+        // 2024-40, section 3.01(2)): $11,950.
+        assert_eq!(p.eic_investment_income_limit_cents, 1_195_000);
+        // Phaseout thresholds (section 3.01): $23,350 with children /
+        // $10,620 without, for non-MFJ; $30,470 / $17,730 for MFJ.
+        assert_eq!(
+            p.eic_phaseout_threshold(FilingStatus::Single, 1).cents(),
+            2_335_000
+        );
+        assert_eq!(
+            p.eic_phaseout_threshold(FilingStatus::Hoh, 3).cents(),
+            2_335_000
+        );
+        assert_eq!(
+            p.eic_phaseout_threshold(FilingStatus::Single, 0).cents(),
+            1_062_000
+        );
+        assert_eq!(
+            p.eic_phaseout_threshold(FilingStatus::Mfj, 2).cents(),
+            3_047_000
+        );
+        assert_eq!(
+            p.eic_phaseout_threshold(FilingStatus::Mfj, 0).cents(),
+            1_773_000
+        );
+        // Completed phaseout amounts (section 3.01).
+        assert_eq!(
+            p.eic_completed_phaseout(FilingStatus::Single, 0).cents(),
+            1_910_400
+        );
+        assert_eq!(
+            p.eic_completed_phaseout(FilingStatus::Single, 1).cents(),
+            5_043_400
+        );
+        assert_eq!(
+            p.eic_completed_phaseout(FilingStatus::Single, 2).cents(),
+            5_731_000
+        );
+        assert_eq!(
+            p.eic_completed_phaseout(FilingStatus::Single, 3).cents(),
+            6_155_500
+        );
+        assert_eq!(
+            p.eic_completed_phaseout(FilingStatus::Mfj, 1).cents(),
+            5_755_400
+        );
+        assert_eq!(
+            p.eic_completed_phaseout(FilingStatus::Mfj, 2).cents(),
+            6_443_000
+        );
+        assert_eq!(
+            p.eic_completed_phaseout(FilingStatus::Mfj, 3).cents(),
+            6_867_500
+        );
+        // Children above 3 clamp to the three-or-more bucket.
+        assert_eq!(
+            p.eic_completed_phaseout(FilingStatus::Single, 7),
+            p.eic_completed_phaseout(FilingStatus::Single, 3)
+        );
+        // No-children age-test bounds (line 27 instructions, Step 4).
+        assert_eq!(p.eic_childless_born_after, "1960-12-31");
+        assert_eq!(p.eic_childless_born_before, "2001-01-02");
+        assert!(p.source.contains("section 3.01"));
+    }
+
+    #[test]
+    fn eic_table_structure_and_maxima() {
+        let table = EicTable::load_2025();
+        assert_eq!(table.year, 2025);
+        // The official table has 1,374 rows tiling [1, 68700) in $50
+        // steps (the first printed row is "at least 1 but less than
+        // 50").
+        assert_eq!(table.rows.len(), 1374);
+        let mut expect = 1;
+        for row in &table.rows {
+            assert_eq!(row.from_dollars, expect, "rows must tile [1, 68700)");
+            expect = row.to_dollars;
+        }
+        assert_eq!(expect, 68_700);
+        // Column maxima equal the Rev. Proc. 2024-40 section 3.01
+        // maximum credits: $649 / $4,328 / $7,152 / $8,046.
+        for (kids, max) in [(0, 649), (1, 4_328), (2, 7_152), (3, 8_046)] {
+            assert_eq!(
+                table.rows.iter().map(|r| r.credit(false, kids)).max(),
+                Some(max),
+                "single/head-of-household column, {kids} children"
+            );
+            assert_eq!(
+                table.rows.iter().map(|r| r.credit(true, kids)).max(),
+                Some(max),
+                "MFJ column, {kids} children"
+            );
+        }
+        // Each column is unimodal: non-decreasing through the phase-in
+        // and plateau, then non-increasing through the phaseout.
+        for mfj in [false, true] {
+            for kids in 0..=3u32 {
+                let vals: Vec<i64> = table.rows.iter().map(|r| r.credit(mfj, kids)).collect();
+                let peak = vals
+                    .iter()
+                    .position(|v| *v == vals.iter().max().copied().unwrap());
+                let peak = peak.unwrap();
+                assert!(
+                    vals[..peak].windows(2).all(|w| w[0] <= w[1]),
+                    "phase-in must not decrease (mfj={mfj}, kids={kids})"
+                );
+                assert!(
+                    vals[peak..].windows(2).all(|w| w[0] >= w[1]),
+                    "phaseout must not increase (mfj={mfj}, kids={kids})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn eic_table_lookup_spot_cells() {
+        let table = EicTable::load_2025();
+        let credit = |mfj: bool, kids: u32, dollars: i64| {
+            table.credit(mfj, kids, Money::from_cents(dollars * 100))
+        };
+        // The worked example printed in the instructions (Publication
+        // 1040, EIC Table introduction): single, 1 child, looking up
+        // $2,455 -> $842.
+        assert_eq!(
+            credit(false, 1, 2_455),
+            Money::from_cents(84_200),
+            "printed worked example"
+        );
+        // Row 5,600-5,650, read off the PDF page visually: single
+        // columns 430 / 1,913 / 2,250 / 2,531.
+        assert_eq!(credit(false, 0, 5_600), Money::from_cents(43_000));
+        assert_eq!(credit(false, 1, 5_600), Money::from_cents(191_300));
+        assert_eq!(credit(false, 2, 5_600), Money::from_cents(225_000));
+        assert_eq!(credit(false, 3, 5_600), Money::from_cents(253_100));
+        // Golden case 007: HoH (single columns), 1 child, $30,000.
+        assert_eq!(credit(false, 1, 30_000), Money::from_cents(326_100));
+        // Golden case 009: single, 2 children, $38,000; the MFJ column
+        // at the same income is higher (later phaseout threshold).
+        assert_eq!(credit(false, 2, 38_000), Money::from_cents(406_100));
+        assert_eq!(credit(true, 2, 38_000), Money::from_cents(556_100));
+        // Kink row: the earned income amount ($12,730) falls inside
+        // row 12,700-12,750; the printed value is the $4,328 maximum.
+        assert_eq!(credit(false, 1, 12_720), Money::from_cents(432_800));
+        // Footnoted boundary cell: MFJ, 3+ children, row 68,650-68,700
+        // carries the footnote's $3 (for amounts under $68,675).
+        assert_eq!(credit(true, 3, 68_660), Money::from_cents(300));
+        // Below $1 and at/above the table top: no row, zero credit.
+        assert_eq!(credit(false, 1, 0), Money::ZERO);
+        assert_eq!(credit(false, 1, 68_700), Money::ZERO);
+        assert_eq!(credit(true, 3, 100_000), Money::ZERO);
+        // Cents floor to dollars for row selection.
+        assert_eq!(
+            table.credit(false, 1, Money::from_cents(3_000_099)),
+            Money::from_cents(326_100)
+        );
     }
 
     #[test]

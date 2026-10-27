@@ -14,9 +14,10 @@ use tax_core::{FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::{
     additional_standard_deduction, build_fill_values_with_dependents, compute_1040,
-    deductible_part_of_se_tax, mask_ssn, normalize_ssn, schedule_c_net_profit, schedule_se_tax,
-    validate_1099_div, validate_dependent, DependentInput, Form1040Input, I1099BInput,
-    I1099DivInput, I1099IntInput, I1099NecInput, PersonIdentity, TaxpayerIdentity, W2Input,
+    deductible_part_of_se_tax, eic_childless_age_outcome, eic_qualifying_children, mask_ssn,
+    normalize_ssn, schedule_c_net_profit, schedule_se_tax, validate_1099_div, validate_dependent,
+    DependentInput, Form1040Input, I1099BInput, I1099DivInput, I1099IntInput, I1099NecInput,
+    PersonIdentity, TaxpayerIdentity, W2Input,
 };
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
@@ -569,6 +570,10 @@ const ALL_LINES: &[&str] = &[
     "24",
     "25a",
     "25d",
+    "27",
+    "eic_earned_income",
+    "eic_qualifying_children",
+    "eic_investment_income",
     "28",
     "32",
     "33",
@@ -661,6 +666,31 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 "sched8812_earned_income".into(),
                 FactResult::Complete(earned_income),
             );
+            // The EIC earned-income and qualifying-children keys also
+            // depend only on stored W-2 / 1099-NEC / dependent
+            // entries, so they are computable here exactly as the
+            // engine computes them (EIC Worksheet B: wages + Schedule
+            // C net − the deductible part of SE tax).
+            let schc_net_all = schedule_c_net_profit(&necs);
+            let se_all = schedule_se_tax(schc_net_all, wages, params);
+            let eic_earned = wages + schc_net_all - deductible_part_of_se_tax(se_all.tax);
+            lines.insert("eic_earned_income".into(), FactResult::Complete(eic_earned));
+            let eic_children = eic_qualifying_children(&deps);
+            lines.insert(
+                "eic_qualifying_children".into(),
+                FactResult::Complete(Money::from_cents(i64::from(eic_children) * 100)),
+            );
+            // With no EIC qualifying children, the childless credit
+            // could still apply when a date of birth on file passes
+            // the age-25-to-64 test: lines 27/32 (and 33 through 32)
+            // then depend on AGI, which the partial view does not
+            // determine — they stay Incomplete rather than stated
+            // zeros. Otherwise line 27 is a stated zero (the engine's
+            // childless rule: an undeterminable age test takes no
+            // credit).
+            let childless_possible = deps.is_empty()
+                && status != FilingStatus::Mfs
+                && eic_childless_age_outcome(ret.taxpayer.as_ref(), status, params) == Some(true);
             if deps.is_empty() {
                 // No dependents stored: the tentative credit is zero
                 // whatever the income, so these credit lines are stated
@@ -672,9 +702,12 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                     "19",
                     "21",
                     "28",
-                    "32",
                 ] {
                     lines.insert(l.into(), FactResult::Complete(Money::ZERO));
+                }
+                if !childless_possible {
+                    lines.insert("27".into(), FactResult::Complete(Money::ZERO));
+                    lines.insert("32".into(), FactResult::Complete(Money::ZERO));
                 }
             }
             if !ints.is_empty() {
@@ -723,7 +756,9 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 let div_wh: Money = divs.iter().map(|f| f.federal_withholding).sum();
                 let total_wh = w2_withholding + int_wh + div_wh + b_withholding + nec_withholding;
                 lines.insert("25d".into(), FactResult::Complete(total_wh));
-                lines.insert("33".into(), FactResult::Complete(total_wh));
+                if !childless_possible {
+                    lines.insert("33".into(), FactResult::Complete(total_wh));
+                }
             }
             if !deps.is_empty() {
                 // Dependents are stored, but the credits need AGI and
@@ -736,6 +771,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                     "19",
                     "21",
                     "22",
+                    "27",
                     "28",
                     "32",
                     "33",
@@ -916,6 +952,10 @@ const CASE008_INPUT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/008-identity-65plus/input.json");
 const CASE008_CORRECT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/008-identity-65plus/correct.json");
+const CASE009_INPUT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/009-eic-two-kids/input.json");
+const CASE009_CORRECT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/009-eic-two-kids/correct.json");
 
 /// (case directory name, embedded input.json, embedded correct.json).
 const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
@@ -927,6 +967,7 @@ const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
     ("006-family-mfj", CASE006_INPUT, CASE006_CORRECT),
     ("007-actc-hoh", CASE007_INPUT, CASE007_CORRECT),
     ("008-identity-65plus", CASE008_INPUT, CASE008_CORRECT),
+    ("009-eic-two-kids", CASE009_INPUT, CASE009_CORRECT),
 ];
 
 fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String>)> {
@@ -1091,10 +1132,12 @@ fn schema_json() -> Value {
             },
             "DependentInput": {
                 "name": {"type": "string", "note": "full name as it should print in the Form 1040 Dependents table"},
-                "ssn": {"type": "string", "optional": true, "note": "9 digits, dashed or not; stored normalized, shown masked; the child tax credit requires the child to have an SSN (v1 warns, does not deny)"},
-                "relationship": {"type": "enum", "values": ["child", "stepchild", "foster_child", "other"], "note": "child/stepchild/foster_child can qualify for the child tax credit; other takes the credit-for-other-dependents path only"},
-                "age": {"type": "integer", "note": "age on December 31 of the tax year; the child tax credit requires under 17"},
-                "months_lived_with_taxpayer": {"type": "integer", "minimum": 0, "maximum": 12, "default": 12, "note": "v1 models the residency test as more than half the year (> 6 months)"}
+                "ssn": {"type": "string", "optional": true, "note": "9 digits, dashed or not; stored normalized, shown masked; the child tax credit requires the child to have an SSN (v1 warns, does not deny); the earned income credit requires one too — in v1 a child without a stored SSN does not count as an EIC qualifying child at all"},
+                "relationship": {"type": "enum", "values": ["child", "stepchild", "foster_child", "other"], "note": "child/stepchild/foster_child can qualify for the child tax credit and the earned income credit; other takes the credit-for-other-dependents path only (v1 does not classify 'other' for the EIC, even for siblings/descendants)"},
+                "age": {"type": "integer", "note": "age on December 31 of the tax year; the child tax credit requires under 17; the earned income credit requires under 19 (or under 24 if a full-time student, any age if permanently and totally disabled)"},
+                "months_lived_with_taxpayer": {"type": "integer", "minimum": 0, "maximum": 12, "default": 12, "note": "v1 models the residency test as more than half the year (> 6 months)"},
+                "full_time_student": {"type": "boolean", "default": false, "note": "full-time student during some part of each of 5 calendar months; used only by the earned income credit age test (counts until age 24)"},
+                "permanently_disabled": {"type": "boolean", "default": false, "note": "permanently and totally disabled at any time during the year; used only by the earned income credit age test (counts at any age)"}
             },
             "W2Input": {
                 "employer_ein": {"type": "string", "example": "12-3456789"},
@@ -1175,7 +1218,7 @@ fn node_templates() -> Vec<(String, bool, Value)> {
         (
             "dependent".to_string(),
             true,
-            json!({"name": "", "ssn": null, "relationship": "child", "age": 0, "months_lived_with_taxpayer": 12}),
+            json!({"name": "", "ssn": null, "relationship": "child", "age": 0, "months_lived_with_taxpayer": 12, "full_time_student": false, "permanently_disabled": false}),
         ),
     ]
 }
@@ -1323,6 +1366,52 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     if identity.can_be_claimed_as_dependent {
                         findings.push(json!({"code": "dependent_filer_std_ded_not_computed", "severity": "warning",
                             "message": "can_be_claimed_as_dependent is set: the dependent-filer standard deduction limitation (greater of $1,350 or earned income + $450, capped at the regular standard deduction) is not computed in v1 — line 12 does not apply it",
+                            "field": null, "entry": null}));
+                    }
+                }
+            }
+            // Earned income credit findings (v1 scope). The per-
+            // dependent EIC SSN warning flows in below via
+            // validate_dependent.
+            let vdeps = stored_dependents(&ret)?;
+            if ret.status == "mfs" && !vdeps.is_empty() {
+                findings.push(json!({"code": "eic_mfs", "severity": "warning",
+                    "message": "filing status is married filing separately: v1 allows no earned income credit for MFS (the separated-spouse exception is not modeled) — line 27 is 0",
+                    "field": null, "entry": null}));
+            }
+            if vdeps.is_empty()
+                && ret
+                    .taxpayer
+                    .as_ref()
+                    .and_then(|t| t.person.date_of_birth.as_deref())
+                    .is_none()
+            {
+                findings.push(json!({"code": "eic_childless_age_unknown", "severity": "info",
+                    "message": "no dependents are stored and no taxpayer date of birth is set: the no-children earned income credit (age 25-64 test) cannot be determined, so line 27 is 0 — set the taxpayer date of birth with `tax return set-identity` if the childless credit may apply",
+                    "field": null, "entry": null}));
+            }
+            if let Some(other) = &ret.other_income {
+                // The investment-income total is exact only when the
+                // full engine path runs (other_income recorded).
+                let vbs = stored_bs(&ret)?;
+                let vints = stored_ints(&ret)?;
+                let vdivs = stored_divs(&ret)?;
+                let vstatus = FilingStatus::parse(&ret.status).unwrap_or(FilingStatus::Single);
+                let exempt: i64 = vints.iter().map(|f| f.tax_exempt_interest.cents()).sum();
+                let line2b = other.interest.cents()
+                    + vints.iter().map(|f| f.interest_income.cents()).sum::<i64>();
+                let line3b = other.dividends.cents()
+                    + vdivs
+                        .iter()
+                        .map(|f| f.total_ordinary_dividends.cents())
+                        .sum::<i64>();
+                let (_, _, line7f, _, _) = partial_b_nets(&vbs, vstatus, &params);
+                // Skip the finding when line 7 is not even computable.
+                if let Some(gain) = line7f.value() {
+                    let inv = exempt + line2b + line3b + gain.cents().max(0);
+                    if inv > params.eic_investment_income_limit_cents {
+                        findings.push(json!({"code": "eic_investment_income_limit", "severity": "info",
+                            "message": "investment income (lines 2a + 2b + 3b + the positive part of line 7) exceeds the TY2025 limit of $11,950 (IRC 32(i)): no earned income credit is allowed — line 27 is 0",
                             "field": null, "entry": null}));
                     }
                 }
@@ -1815,6 +1904,11 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
         ("se_tax", "23"),
         ("net_se_earnings", "schedse_net_earnings"),
         ("total_tax", "24"),
+        ("earned_income_credit", "27"),
+        ("eic", "27"),
+        ("eic_earned_income", "eic_earned_income"),
+        ("eic_qualifying_children", "eic_qualifying_children"),
+        ("eic_investment_income", "eic_investment_income"),
         ("additional_child_tax_credit", "28"),
         ("actc", "28"),
         ("refundable_credits", "32"),
@@ -1893,7 +1987,11 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
         "22" => ("line 16 minus line 21, floored at zero (nonrefundable credits cannot make the tax negative or offset line 23 taxes)".to_string(), "Form 1040, line 22".to_string()),
         "24" => ("line 22 plus line 23".to_string(), "Form 1040, line 24".to_string()),
         "28" => ("the additional child tax credit from Schedule 8812 Part II-A (line 27): the smallest of the credit left unused by line 19 (Schedule 8812 line 12 minus line 14), $1,700 per qualifying child, or 15% of earned income (internal key sched8812_earned_income) over $2,500; the Part II-B formula for three or more qualifying children is not implemented in v1".to_string(), "Form 1040, line 28; Schedule 8812, Part II-A".to_string()),
-        "32" => ("total other payments and refundable credits: line 28 in v1 (lines 27a/29/30/31 — EIC, American opportunity, adoption, Schedule 3 line 15 — are not implemented)".to_string(), "Form 1040, line 32".to_string()),
+        "27" => ("the earned income credit (EIC), figured by EIC Worksheets A and B: count the qualifying children (internal key eic_qualifying_children; child/stepchild/foster child with an SSN stored, lived with the taxpayer more than half the year, under 19 — or under 24 if a full-time student — or permanently and totally disabled), take the TY2025 EIC Table credit for earned income (internal key eic_earned_income: wages plus Schedule SE line 3 net earnings minus the deductible part of SE tax); when AGI differs from earned income and is at or above the phaseout threshold, take the smaller of the earned-income and AGI table amounts. Zero when: filing status is MFS (the separated-spouse exception is not modeled), investment income (internal key eic_investment_income: lines 2a + 2b + 3b + the positive part of line 7) exceeds $11,950 (IRC 32(i)), AGI or earned income reaches the completed phaseout amount, earned income is not positive, or — with no qualifying children — no date of birth on file passes the age-25-to-64 test (v1 takes no credit rather than guessing)".to_string(), "Form 1040, line 27 (printed as 27a); Instructions for Form 1040 (2025), line 27, EIC Worksheets A and B; Rev. Proc. 2024-40, section 3.01".to_string()),
+        "eic_earned_income" => ("earned income for the earned income credit (EIC Worksheets A and B): Form 1040 line 1z wages plus, for a self-employed filer, Schedule SE line 3 net earnings (the Schedule C net profit, NOT reduced by the 92.35% Schedule SE factor, which applies only to the SE tax) minus Schedule SE line 13, the deductible part of SE tax (line 10)".to_string(), "EIC Worksheets A and B (Instructions for Form 1040 (2025), line 27); Pub 596 (2025), chapter 3".to_string()),
+        "eic_qualifying_children" => ("the number of stored dependents who are qualifying children for the earned income credit (relationship child/stepchild/foster child, SSN stored, lived with the taxpayer more than half the year, age under 19 — or under 24 if a full-time student — or permanently and totally disabled); expressed in the lines map as count x $1.00, not an amount of money".to_string(), "Instructions for Form 1040 (2025), line 27, Step 3".to_string()),
+        "eic_investment_income" => ("investment income for the IRC 32(i) limit, scoped to the lines this engine computes: line 2a (tax-exempt interest counts) + line 2b + line 3b + the positive part of line 7 (capital gain net income); rental, royalty and passive-activity amounts do not exist among v1 inputs. Over $11,950 in TY2025, no earned income credit is allowed".to_string(), "IRC 32(i); Pub 596 (2025), chapter 2; Rev. Proc. 2024-40, section 3.01".to_string()),
+        "32" => ("total other payments and refundable credits: line 27 (earned income credit) + line 28 (additional child tax credit) in v1 (lines 29/30/31 — American opportunity, premium tax credit, Schedule 3 line 15 — are not implemented)".to_string(), "Form 1040, line 32".to_string()),
         "33" => ("line 25d (total withheld) plus line 32 (refundable credits)".to_string(), "Form 1040, line 33".to_string()),
         "schd_net_capital_gain" => ("the QDCG worksheet's capital-gain input: the smaller of Schedule D lines 15 and 16 when both are gains, else 0".to_string(), "Qualified Dividends and Capital Gain Tax Worksheet, line 3 (Instructions for Form 1040)".to_string()),
         "schd_carryover_short" => ("short-term capital loss carried to next year per the Capital Loss Carryover Worksheet (the $3,000/$1,500 allowance is absorbed against short-term losses first)".to_string(), "Instructions for Schedule D, Capital Loss Carryover Worksheet".to_string()),

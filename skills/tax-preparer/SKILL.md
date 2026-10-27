@@ -46,7 +46,8 @@ not from your own calculation, not from a prior draft.
 
 v1 computes a TY2025 Form 1040 slice from W-2, 1099-INT, 1099-DIV,
 1099-B, and 1099-NEC entries, plus stored dependents with the child
-credits (see `docs/KNOWN_LIMITS.md`). Line 16 is
+credits and the earned income credit (see `docs/KNOWN_LIMITS.md`).
+Line 16 is
 figured by the prescribed method — the QDCG worksheet, the Tax Table,
 or the Tax Computation Worksheet — and the engine reports which one as
 `line16_method`; name the method when presenting the tax. When 1099-NEC
@@ -58,5 +59,21 @@ figured against line 24, not line 16. When dependents are present,
 present the credit chain explicitly: tentative credit (internal key
 `sched8812_tentative`), the nonrefundable part on lines 19/21, tax
 after credits on line 22, and any additional child tax credit on
-lines 28/32 feeding total payments on line 33. Preparation is not
+line 28. Present the earned income credit chain on every return, not
+just ones with dependents: the EIC qualifying-child count (internal
+key `eic_qualifying_children` — a count, shown as count × $1.00), the
+EIC earned income (internal key `eic_earned_income` — wages plus
+Schedule SE line 3 net earnings minus the deductible part of SE tax;
+note this differs from the Schedule 8812 earned-income key, which
+does not subtract SE tax), the investment-income figure (internal
+key `eic_investment_income`; over $11,950 in TY2025 the credit is
+zero by IRC §32(i)), and line 27 itself. Line 32 = line 27 + line 28
+feeds total payments on line 33. When line 27 is zero, say which
+reason the engine reports (its compute notes name it: MFS, investment
+income over the limit, no positive earned income, phaseout complete,
+the childless age test unmet, or the childless age test
+undeterminable because no date of birth is stored) — and surface the
+matching validate findings (`eic_mfs`, `eic_childless_age_unknown`,
+`eic_investment_income_limit`, `dependent_eic_ssn`) rather than
+letting a zero pass silently. Preparation is not
 filing: this skill never submits.

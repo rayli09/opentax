@@ -11,8 +11,9 @@ with its source recorded.
 
 > **Status: scaffold.** A working vertical slice (TY2025 Form 1040 with
 > W-2 income, bank/broker 1099s, 1099-NEC side income with Schedule
-> C / Schedule SE, and dependents with the child tax credits via a
-> simplified Schedule 8812), not a finished tax product. See
+> C / Schedule SE, dependents with the child tax credits via a
+> simplified Schedule 8812, and the earned income credit via the EIC
+> Worksheets and the official EIC Table), not a finished tax product. See
 > `docs/KNOWN_LIMITS.md` for exactly what is missing. JSON export and
 > filled-PDF export (amounts, filing status, and the Dependents table
 > onto a user-supplied TY2025 1040 template) work; MeF e-file does not

@@ -314,6 +314,14 @@ fn builder_plus_backend_fill_synthetic_with_real_qnames() {
     assert_eq!(by_line("19").map(String::as_str), Some("0.00"));
     assert_eq!(by_line("21").map(String::as_str), Some("0.00"));
     assert_eq!(by_line("22").map(String::as_str), Some("4163.00"));
+    // Line 27 (earned income credit): no dependents and no identity
+    // DOBs in case 002, so it is a stated zero — and line 32's total is
+    // unchanged by its arrival (27 + 28 = 0).
+    assert_eq!(by_line("27").map(String::as_str), Some("0.00"));
+    assert_eq!(
+        field_of("27").map(String::as_str),
+        Some("topmostSubform[0].Page2[0].f2_23[0]")
+    );
     assert_eq!(by_line("28").map(String::as_str), Some("0.00"));
     assert_eq!(by_line("32").map(String::as_str), Some("0.00"));
     assert_eq!(

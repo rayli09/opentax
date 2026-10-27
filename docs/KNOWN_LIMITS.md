@@ -134,11 +134,94 @@ This list is the contract: anything not listed as working is not claimed.
     SSN-issued-by-the-due-date timing rule and taxpayer ITIN rules
     are not modeled at all.
   - The earned income credit (EIC / EITC, Form 1040 line 27) is a
-    **different credit and is NOT implemented** — nothing in v1 claims
-    it. The child and dependent care credit (Schedule 3 / Form 2441)
-    is likewise not implemented.
+    different credit — implemented in its own section below. The
+    child and dependent care credit (Schedule 3 / Form 2441) is not
+    implemented.
   - With no dependents stored, lines 19/21/28/32 are stated Complete
     zeros and 22/24/33 reduce to the pre-8812 arithmetic.
+- Earned income credit (Form 1040 line 27; EIC Worksheets A and B of
+  the Instructions for Form 1040 (2025); TY2025 parameters from Rev.
+  Proc. 2024-40, §3.01; credit amounts read from the official EIC
+  Table extracted into `params/2025-eic-table.json` — 1,374 rows
+  tiling $1–$68,700 in $50 steps, 8 columns: single/head-of-household
+  and MFJ × 0/1/2/3+ qualifying children; the table is DATA, never
+  synthesized from the §3.01 formulas):
+  - Qualifying children are counted from the stored dependents under
+    the tests v1 models: relationship child / stepchild / foster
+    child; lived with the taxpayer more than half the year (months
+    > 6); an **SSN stored** (a child without one does not count at
+    all in v1 — `tax return validate` warns via `dependent_eic_ssn`);
+    and the age test — under 19 at year-end, or under 24 and a
+    full-time student (dependent flag `full_time_student`), or
+    permanently and totally disabled at any age (flag
+    `permanently_disabled`). NOT modeled: siblings / step- and
+    half-siblings / descendants of any of them (the printed test
+    covers them, but a `relationship: "other"` entry cannot be
+    distinguished from an unrelated person, so it never counts); the
+    "younger than the taxpayer (and spouse)" component of the age
+    test (the dependent's date of birth is not stored); the child's
+    joint-return test; the tie-breaker rules when two filers could
+    claim the same child; the SSN-valid-for-employment and
+    issued-by-the-due-date rules (only presence is checked); and the
+    taxpayer's / spouse's own SSN validity.
+  - Earned income follows the worksheets exactly: Form 1040 line 1z
+    wages (Worksheet A, Step 5; Worksheet B, Part 4) plus, for the
+    self-employed, Worksheet B Part 1 — Schedule SE **line 3** net
+    earnings (= the Schedule C net profit, NOT reduced by the 92.35%
+    factor of Schedule SE line 2, which applies only to figuring the
+    SE tax on line 4a) **minus Schedule SE line 13**, the deductible
+    part of SE tax (Form 1040 line 10). Pub 596 (2025), chapter 3:
+    net earnings from self-employment are "reduced by the deduction
+    for one-half of your SE tax". Not modeled: the optional-methods
+    add-back (Worksheet B Part 3), the Worksheet B Part 2 path for net
+    earnings under $400 with no Schedule SE filed (the engine always
+    figures SE tax on a positive net), combat-pay election, clergy /
+    church-employee / statutory-employee special rules, and Form 2555
+    foreign earned income (any foreign exclusion zeroes the credit by
+    law; v1 has no such inputs).
+  - Investment income (IRC §32(i)) is scoped to the lines this engine
+    computes: line 2a (tax-exempt interest counts) + line 2b + line
+    3b + the positive part of line 7 (capital gain net income — line 7
+    equals Schedule D line 16 whenever it is positive). Rental,
+    royalty, and passive-activity amounts do not exist among v1
+    inputs, so they cannot be counted. Over the TY2025 limit of
+    $11,950 the credit is zero (`eic_investment_income_limit` validate
+    finding, info severity).
+  - The credit lookup is the worksheets' two-amount flow: look up
+    earned income in the EIC Table; when AGI differs and is at or
+    above the Rev. Proc. §3.01 phaseout threshold for the child count
+    ($23,350 with children / $10,620 without, non-MFJ; $30,470 /
+    $17,730 MFJ), also look up AGI and take the smaller. AGI or
+    earned income at or above the completed phaseout amount ($19,104 /
+    $50,434 / $57,310 / $61,555 non-MFJ; $26,214 / $57,554 / $64,430 /
+    $68,675 MFJ, by 0/1/2/3+ children) yields zero before any lookup.
+    The engine figures in cents; the paper worksheets figure in whole
+    dollars (the table lookup floors to whole dollars), so a paper
+    filing can differ by a dollar.
+  - **Married filing separately takes no credit in v1.** The §32(d)
+    separated-spouse exception (lived apart for the last 6 months with
+    a qualifying child) is NOT modeled; `tax return validate` warns
+    (`eic_mfs`) when an MFS return stores dependents.
+  - **No-children credit and the DOB judgment call:** with no
+    qualifying children, the age-25-to-64 test (born after 1960-12-31
+    and before 2001-01-02; either spouse suffices on a joint return)
+    is applied to the stored identity dates of birth. When no usable
+    DOB is stored, the test is **undeterminable and v1 takes no
+    credit**: line 27 is a stated Complete 0 (never Incomplete solely
+    for this) and `tax return validate` raises the info finding
+    `eic_childless_age_unknown`. This is a deliberate modeling choice
+    — the alternative (an Incomplete line 27 on every dependent-free
+    return without identity) would poison lines 32/33 for most
+    returns; the finding tells the agent exactly what fact is missing.
+    The same stated-zero rule applies when AGI itself is Incomplete
+    but the credit is zero under every AGI (MFS, no positive earned
+    income, or the childless age test unmet/undeterminable).
+  - Not modeled at all: EIC recapture and the 2-/10-year bans (Form
+    8862), due-diligence recordkeeping (Form 8867), the advance EIC,
+    state EICs, and the rule that a taxpayer who is another filer's
+    qualifying child cannot claim the credit.
+  - Line 32 is now line 27 + line 28; line 33 follows. With no EIC
+    (credit zero), lines 32/33/34 are exactly the pre-EIC amounts.
 - Schedule C / Schedule SE (simplified, for 1099-NEC side income):
   - One `expenses` total per 1099-NEC engagement stands in for the whole
     Schedule C expense section — no per-category expenses, no cost of
