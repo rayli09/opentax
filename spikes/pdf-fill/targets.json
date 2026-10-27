@@ -1,0 +1,406 @@
+[
+ {
+  "form": "f1040",
+  "semantic": "taxpayer first name and middle initial",
+  "qname": "topmostSubform[0].Page1[0].f1_14[0]",
+  "kind": "text",
+  "value": "Spike T"
+ },
+ {
+  "form": "f1040",
+  "semantic": "taxpayer last name",
+  "qname": "topmostSubform[0].Page1[0].f1_15[0]",
+  "kind": "text",
+  "value": "Tester"
+ },
+ {
+  "form": "f1040",
+  "semantic": "taxpayer SSN (comb, 9 cells)",
+  "qname": "topmostSubform[0].Page1[0].f1_16[0]",
+  "kind": "comb",
+  "value": "123456789"
+ },
+ {
+  "form": "f1040",
+  "semantic": "spouse first name and middle initial",
+  "qname": "topmostSubform[0].Page1[0].f1_17[0]",
+  "kind": "text",
+  "value": "Partner"
+ },
+ {
+  "form": "f1040",
+  "semantic": "spouse last name",
+  "qname": "topmostSubform[0].Page1[0].f1_18[0]",
+  "kind": "text",
+  "value": "Tester"
+ },
+ {
+  "form": "f1040",
+  "semantic": "spouse SSN (comb, 9 cells)",
+  "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+  "kind": "comb",
+  "value": "987654321"
+ },
+ {
+  "form": "f1040",
+  "semantic": "home address",
+  "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_20[0]",
+  "kind": "text",
+  "value": "123 Main St"
+ },
+ {
+  "form": "f1040",
+  "semantic": "apartment no.",
+  "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_21[0]",
+  "kind": "text",
+  "value": "4B"
+ },
+ {
+  "form": "f1040",
+  "semantic": "city",
+  "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_22[0]",
+  "kind": "text",
+  "value": "Springfield"
+ },
+ {
+  "form": "f1040",
+  "semantic": "state",
+  "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_23[0]",
+  "kind": "text",
+  "value": "IL"
+ },
+ {
+  "form": "f1040",
+  "semantic": "ZIP code",
+  "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_24[0]",
+  "kind": "text",
+  "value": "62704"
+ },
+ {
+  "form": "f1040",
+  "semantic": "filing status = Single",
+  "qname": "topmostSubform[0].Page1[0].Checkbox_ReadOrder[0].c1_8[0]",
+  "kind": "checkbox",
+  "value": "/1",
+  "on_state": "/1",
+  "note": "radio-style Btn field with 5 widgets; states /1..../5 in printed order Single/MFJ/MFS/HOH/QSS"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 1a",
+  "qname": "topmostSubform[0].Page1[0].f1_47[0]",
+  "kind": "text",
+  "value": "50000"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 1z",
+  "qname": "topmostSubform[0].Page1[0].f1_57[0]",
+  "kind": "text",
+  "value": "50000"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 2b",
+  "qname": "topmostSubform[0].Page1[0].f1_59[0]",
+  "kind": "text",
+  "value": "100"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 3b",
+  "qname": "topmostSubform[0].Page1[0].f1_61[0]",
+  "kind": "text",
+  "value": "200"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 9",
+  "qname": "topmostSubform[0].Page1[0].f1_73[0]",
+  "kind": "text",
+  "value": "50300"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 11a",
+  "qname": "topmostSubform[0].Page1[0].f1_75[0]",
+  "kind": "text",
+  "value": "50300"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 11b",
+  "qname": "topmostSubform[0].Page2[0].f2_01[0]",
+  "kind": "text",
+  "value": "50300"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 12e",
+  "qname": "topmostSubform[0].Page2[0].f2_02[0]",
+  "kind": "text",
+  "value": "15750"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 15",
+  "qname": "topmostSubform[0].Page2[0].f2_06[0]",
+  "kind": "text",
+  "value": "34550"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 16",
+  "qname": "topmostSubform[0].Page2[0].f2_08[0]",
+  "kind": "text",
+  "value": "3900"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 24",
+  "qname": "topmostSubform[0].Page2[0].f2_16[0]",
+  "kind": "text",
+  "value": "3900"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 25a",
+  "qname": "topmostSubform[0].Page2[0].f2_17[0]",
+  "kind": "text",
+  "value": "4000"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 25d",
+  "qname": "topmostSubform[0].Page2[0].f2_20[0]",
+  "kind": "text",
+  "value": "4000"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 33",
+  "qname": "topmostSubform[0].Page2[0].f2_29[0]",
+  "kind": "text",
+  "value": "4000"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 34",
+  "qname": "topmostSubform[0].Page2[0].f2_30[0]",
+  "kind": "text",
+  "value": "100"
+ },
+ {
+  "form": "f1040",
+  "semantic": "line 35a",
+  "qname": "topmostSubform[0].Page2[0].f2_31[0]",
+  "kind": "text",
+  "value": "100"
+ },
+ {
+  "form": "f1040",
+  "semantic": "routing number (comb, 9 cells)",
+  "qname": "topmostSubform[0].Page2[0].RoutingNo[0].f2_32[0]",
+  "kind": "comb",
+  "value": "123456789"
+ },
+ {
+  "form": "f1040",
+  "semantic": "account number (comb, 17 cells)",
+  "qname": "topmostSubform[0].Page2[0].AccountNo[0].f2_33[0]",
+  "kind": "comb",
+  "value": "12345678901234567"
+ },
+ {
+  "form": "f1040",
+  "semantic": "taxpayer occupation",
+  "qname": "topmostSubform[0].Page2[0].f2_40[0]",
+  "kind": "text",
+  "value": "Engineer"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "name(s) shown on return",
+  "qname": "topmostSubform[0].Page1[0].f1_1[0]",
+  "kind": "text",
+  "value": "Spike Tester"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "SSN",
+  "qname": "topmostSubform[0].Page1[0].f1_2[0]",
+  "kind": "text",
+  "value": "123456789"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "qualified opportunity fund question = No",
+  "qname": "topmostSubform[0].Page1[0].c1_1[1]",
+  "kind": "checkbox",
+  "value": "/2",
+  "on_state": "/2"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "line 4",
+  "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+  "kind": "text",
+  "value": "1000"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "line 5",
+  "qname": "topmostSubform[0].Page1[0].f1_20[0]",
+  "kind": "text",
+  "value": "2000"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "line 7",
+  "qname": "topmostSubform[0].Page1[0].f1_22[0]",
+  "kind": "text",
+  "value": "3000"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "line 11",
+  "qname": "topmostSubform[0].Page1[0].f1_39[0]",
+  "kind": "text",
+  "value": "4000"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "line 15",
+  "qname": "topmostSubform[0].Page1[0].f1_43[0]",
+  "kind": "text",
+  "value": "5000"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "line 16",
+  "qname": "topmostSubform[0].Page2[0].f2_1[0]",
+  "kind": "text",
+  "value": "3900"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "line 18",
+  "qname": "topmostSubform[0].Page2[0].f2_2[0]",
+  "kind": "text",
+  "value": "100"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "line 17 (both gains) = Yes",
+  "qname": "topmostSubform[0].Page2[0].c2_1[0]",
+  "kind": "checkbox",
+  "value": "/1",
+  "on_state": "/1"
+ },
+ {
+  "form": "f1040sd",
+  "semantic": "Part I row 1a totals, column (h)",
+  "qname": "topmostSubform[0].Page1[0].Table_PartI[0].Row1a[0].f1_6[0]",
+  "kind": "text",
+  "value": "6000"
+ },
+ {
+  "form": "f8949",
+  "semantic": "name(s) shown on return",
+  "qname": "topmostSubform[0].Page1[0].f1_01[0]",
+  "kind": "text",
+  "value": "Spike Tester"
+ },
+ {
+  "form": "f8949",
+  "semantic": "SSN/TIN",
+  "qname": "topmostSubform[0].Page1[0].f1_02[0]",
+  "kind": "text",
+  "value": "123456789"
+ },
+ {
+  "form": "f8949",
+  "semantic": "Part I Box A (basis reported to IRS)",
+  "qname": "topmostSubform[0].Page1[0].c1_1[0]",
+  "kind": "checkbox",
+  "value": "/1",
+  "on_state": "/1"
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 1 column (a)",
+  "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_03[0]",
+  "kind": "text",
+  "value": "100 sh. XYZ Co."
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 1 column (b)",
+  "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_04[0]",
+  "kind": "text",
+  "value": "01/15/2025"
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 1 column (c)",
+  "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_05[0]",
+  "kind": "text",
+  "value": "06/15/2025"
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 1 column (d)",
+  "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_06[0]",
+  "kind": "text",
+  "value": "10000"
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 1 column (e)",
+  "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_07[0]",
+  "kind": "text",
+  "value": "7000"
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 1 column (g)",
+  "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_09[0]",
+  "kind": "text",
+  "value": "500"
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 1 column (h)",
+  "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_10[0]",
+  "kind": "text",
+  "value": "3500"
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 2 totals, column (d) proceeds",
+  "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_14[0]",
+  "kind": "text",
+  "value": "10000"
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 2 totals, column (h) gain/loss",
+  "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_18[0]",
+  "kind": "text",
+  "value": "3500"
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 2 totals, column (d) proceeds",
+  "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_14[0]",
+  "kind": "text",
+  "value": "10000"
+ },
+ {
+  "form": "f8949",
+  "semantic": "row 2 totals, column (h) gain/loss",
+  "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_18[0]",
+  "kind": "text",
+  "value": "3500"
+ }
+]

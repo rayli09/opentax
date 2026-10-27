@@ -1,0 +1,5840 @@
+{
+ "f1040": {
+  "A": {
+   "doc": {
+    "need_appearances": "None",
+    "xfa_present": true,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "taxpayer first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_14[0]",
+     "kind": "text",
+     "expected": "Spike T",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer last name",
+     "qname": "topmostSubform[0].Page1[0].f1_15[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_16[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "spouse first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_17[0]",
+     "kind": "text",
+     "expected": "Partner",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "spouse last name",
+     "qname": "topmostSubform[0].Page1[0].f1_18[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "spouse SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "comb",
+     "expected": "987654321",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "home address",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_20[0]",
+     "kind": "text",
+     "expected": "123 Main St",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "apartment no.",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_21[0]",
+     "kind": "text",
+     "expected": "4B",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "city",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_22[0]",
+     "kind": "text",
+     "expected": "Springfield",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "state",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_23[0]",
+     "kind": "text",
+     "expected": "IL",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "ZIP code",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_24[0]",
+     "kind": "text",
+     "expected": "62704",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "filing status = Single",
+     "qname": "topmostSubform[0].Page1[0].Checkbox_ReadOrder[0].c1_8[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/Off",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 1a",
+     "qname": "topmostSubform[0].Page1[0].f1_47[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 1z",
+     "qname": "topmostSubform[0].Page1[0].f1_57[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 2b",
+     "qname": "topmostSubform[0].Page1[0].f1_59[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 3b",
+     "qname": "topmostSubform[0].Page1[0].f1_61[0]",
+     "kind": "text",
+     "expected": "200",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 9",
+     "qname": "topmostSubform[0].Page1[0].f1_73[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 11a",
+     "qname": "topmostSubform[0].Page1[0].f1_75[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 11b",
+     "qname": "topmostSubform[0].Page2[0].f2_01[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 12e",
+     "qname": "topmostSubform[0].Page2[0].f2_02[0]",
+     "kind": "text",
+     "expected": "15750",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page2[0].f2_06[0]",
+     "kind": "text",
+     "expected": "34550",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_08[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 24",
+     "qname": "topmostSubform[0].Page2[0].f2_16[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 25a",
+     "qname": "topmostSubform[0].Page2[0].f2_17[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 25d",
+     "qname": "topmostSubform[0].Page2[0].f2_20[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 33",
+     "qname": "topmostSubform[0].Page2[0].f2_29[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 34",
+     "qname": "topmostSubform[0].Page2[0].f2_30[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 35a",
+     "qname": "topmostSubform[0].Page2[0].f2_31[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "routing number (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page2[0].RoutingNo[0].f2_32[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "account number (comb, 17 cells)",
+     "qname": "topmostSubform[0].Page2[0].AccountNo[0].f2_33[0]",
+     "kind": "comb",
+     "expected": "12345678901234567",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer occupation",
+     "qname": "topmostSubform[0].Page2[0].f2_40[0]",
+     "kind": "text",
+     "expected": "Engineer",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    }
+   ]
+  },
+  "A1": {
+   "doc": {
+    "need_appearances": "None",
+    "xfa_present": true,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "taxpayer first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_14[0]",
+     "kind": "text",
+     "expected": "Spike T",
+     "pypdf_V": "Spike T",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer last name",
+     "qname": "topmostSubform[0].Page1[0].f1_15[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": "Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_16[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "spouse first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_17[0]",
+     "kind": "text",
+     "expected": "Partner",
+     "pypdf_V": "Partner",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "spouse last name",
+     "qname": "topmostSubform[0].Page1[0].f1_18[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": "Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "spouse SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "comb",
+     "expected": "987654321",
+     "pypdf_V": "987654321",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "home address",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_20[0]",
+     "kind": "text",
+     "expected": "123 Main St",
+     "pypdf_V": "123 Main St",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "apartment no.",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_21[0]",
+     "kind": "text",
+     "expected": "4B",
+     "pypdf_V": "4B",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "city",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_22[0]",
+     "kind": "text",
+     "expected": "Springfield",
+     "pypdf_V": "Springfield",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "state",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_23[0]",
+     "kind": "text",
+     "expected": "IL",
+     "pypdf_V": "IL",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "ZIP code",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_24[0]",
+     "kind": "text",
+     "expected": "62704",
+     "pypdf_V": "62704",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "filing status = Single",
+     "qname": "topmostSubform[0].Page1[0].Checkbox_ReadOrder[0].c1_8[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 1a",
+     "qname": "topmostSubform[0].Page1[0].f1_47[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": "50000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 1z",
+     "qname": "topmostSubform[0].Page1[0].f1_57[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": "50000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 2b",
+     "qname": "topmostSubform[0].Page1[0].f1_59[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 3b",
+     "qname": "topmostSubform[0].Page1[0].f1_61[0]",
+     "kind": "text",
+     "expected": "200",
+     "pypdf_V": "200",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 9",
+     "qname": "topmostSubform[0].Page1[0].f1_73[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 11a",
+     "qname": "topmostSubform[0].Page1[0].f1_75[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 11b",
+     "qname": "topmostSubform[0].Page2[0].f2_01[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 12e",
+     "qname": "topmostSubform[0].Page2[0].f2_02[0]",
+     "kind": "text",
+     "expected": "15750",
+     "pypdf_V": "15750",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page2[0].f2_06[0]",
+     "kind": "text",
+     "expected": "34550",
+     "pypdf_V": "34550",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_08[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 24",
+     "qname": "topmostSubform[0].Page2[0].f2_16[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 25a",
+     "qname": "topmostSubform[0].Page2[0].f2_17[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 25d",
+     "qname": "topmostSubform[0].Page2[0].f2_20[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 33",
+     "qname": "topmostSubform[0].Page2[0].f2_29[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 34",
+     "qname": "topmostSubform[0].Page2[0].f2_30[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 35a",
+     "qname": "topmostSubform[0].Page2[0].f2_31[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "routing number (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page2[0].RoutingNo[0].f2_32[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "account number (comb, 17 cells)",
+     "qname": "topmostSubform[0].Page2[0].AccountNo[0].f2_33[0]",
+     "kind": "comb",
+     "expected": "12345678901234567",
+     "pypdf_V": "12345678901234567",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer occupation",
+     "qname": "topmostSubform[0].Page2[0].f2_40[0]",
+     "kind": "text",
+     "expected": "Engineer",
+     "pypdf_V": "Engineer",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    }
+   ]
+  },
+  "A2": {
+   "doc": {
+    "need_appearances": "True",
+    "xfa_present": true,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "taxpayer first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_14[0]",
+     "kind": "text",
+     "expected": "Spike T",
+     "pypdf_V": "Spike T",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer last name",
+     "qname": "topmostSubform[0].Page1[0].f1_15[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": "Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_16[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "spouse first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_17[0]",
+     "kind": "text",
+     "expected": "Partner",
+     "pypdf_V": "Partner",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "spouse last name",
+     "qname": "topmostSubform[0].Page1[0].f1_18[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": "Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "spouse SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "comb",
+     "expected": "987654321",
+     "pypdf_V": "987654321",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "home address",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_20[0]",
+     "kind": "text",
+     "expected": "123 Main St",
+     "pypdf_V": "123 Main St",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "apartment no.",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_21[0]",
+     "kind": "text",
+     "expected": "4B",
+     "pypdf_V": "4B",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "city",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_22[0]",
+     "kind": "text",
+     "expected": "Springfield",
+     "pypdf_V": "Springfield",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "state",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_23[0]",
+     "kind": "text",
+     "expected": "IL",
+     "pypdf_V": "IL",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "ZIP code",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_24[0]",
+     "kind": "text",
+     "expected": "62704",
+     "pypdf_V": "62704",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "filing status = Single",
+     "qname": "topmostSubform[0].Page1[0].Checkbox_ReadOrder[0].c1_8[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 1a",
+     "qname": "topmostSubform[0].Page1[0].f1_47[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": "50000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 1z",
+     "qname": "topmostSubform[0].Page1[0].f1_57[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": "50000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 2b",
+     "qname": "topmostSubform[0].Page1[0].f1_59[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 3b",
+     "qname": "topmostSubform[0].Page1[0].f1_61[0]",
+     "kind": "text",
+     "expected": "200",
+     "pypdf_V": "200",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 9",
+     "qname": "topmostSubform[0].Page1[0].f1_73[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 11a",
+     "qname": "topmostSubform[0].Page1[0].f1_75[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 11b",
+     "qname": "topmostSubform[0].Page2[0].f2_01[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 12e",
+     "qname": "topmostSubform[0].Page2[0].f2_02[0]",
+     "kind": "text",
+     "expected": "15750",
+     "pypdf_V": "15750",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page2[0].f2_06[0]",
+     "kind": "text",
+     "expected": "34550",
+     "pypdf_V": "34550",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_08[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 24",
+     "qname": "topmostSubform[0].Page2[0].f2_16[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 25a",
+     "qname": "topmostSubform[0].Page2[0].f2_17[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 25d",
+     "qname": "topmostSubform[0].Page2[0].f2_20[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 33",
+     "qname": "topmostSubform[0].Page2[0].f2_29[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 34",
+     "qname": "topmostSubform[0].Page2[0].f2_30[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 35a",
+     "qname": "topmostSubform[0].Page2[0].f2_31[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "routing number (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page2[0].RoutingNo[0].f2_32[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "account number (comb, 17 cells)",
+     "qname": "topmostSubform[0].Page2[0].AccountNo[0].f2_33[0]",
+     "kind": "comb",
+     "expected": "12345678901234567",
+     "pypdf_V": "12345678901234567",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer occupation",
+     "qname": "topmostSubform[0].Page2[0].f2_40[0]",
+     "kind": "text",
+     "expected": "Engineer",
+     "pypdf_V": "Engineer",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    }
+   ]
+  },
+  "B": {
+   "doc": {
+    "need_appearances": "False",
+    "xfa_present": true,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "taxpayer first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_14[0]",
+     "kind": "text",
+     "expected": "Spike T",
+     "pypdf_V": "Spike T",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 64
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer last name",
+     "qname": "topmostSubform[0].Page1[0].f1_15[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": "Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 63
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_16[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 66
+      }
+     ]
+    },
+    {
+     "semantic": "spouse first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_17[0]",
+     "kind": "text",
+     "expected": "Partner",
+     "pypdf_V": "Partner",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 64
+      }
+     ]
+    },
+    {
+     "semantic": "spouse last name",
+     "qname": "topmostSubform[0].Page1[0].f1_18[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": "Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 63
+      }
+     ]
+    },
+    {
+     "semantic": "spouse SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "comb",
+     "expected": "987654321",
+     "pypdf_V": "987654321",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 66
+      }
+     ]
+    },
+    {
+     "semantic": "home address",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_20[0]",
+     "kind": "text",
+     "expected": "123 Main St",
+     "pypdf_V": "123 Main St",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 68
+      }
+     ]
+    },
+    {
+     "semantic": "apartment no.",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_21[0]",
+     "kind": "text",
+     "expected": "4B",
+     "pypdf_V": "4B",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 59
+      }
+     ]
+    },
+    {
+     "semantic": "city",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_22[0]",
+     "kind": "text",
+     "expected": "Springfield",
+     "pypdf_V": "Springfield",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 68
+      }
+     ]
+    },
+    {
+     "semantic": "state",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_23[0]",
+     "kind": "text",
+     "expected": "IL",
+     "pypdf_V": "IL",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 59
+      }
+     ]
+    },
+    {
+     "semantic": "ZIP code",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_24[0]",
+     "kind": "text",
+     "expected": "62704",
+     "pypdf_V": "62704",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "filing status = Single",
+     "qname": "topmostSubform[0].Page1[0].Checkbox_ReadOrder[0].c1_8[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/1",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 1a",
+     "qname": "topmostSubform[0].Page1[0].f1_47[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": "50000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 1z",
+     "qname": "topmostSubform[0].Page1[0].f1_57[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": "50000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 2b",
+     "qname": "topmostSubform[0].Page1[0].f1_59[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 60
+      }
+     ]
+    },
+    {
+     "semantic": "line 3b",
+     "qname": "topmostSubform[0].Page1[0].f1_61[0]",
+     "kind": "text",
+     "expected": "200",
+     "pypdf_V": "200",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 60
+      }
+     ]
+    },
+    {
+     "semantic": "line 9",
+     "qname": "topmostSubform[0].Page1[0].f1_73[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 11a",
+     "qname": "topmostSubform[0].Page1[0].f1_75[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 11b",
+     "qname": "topmostSubform[0].Page2[0].f2_01[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 12e",
+     "qname": "topmostSubform[0].Page2[0].f2_02[0]",
+     "kind": "text",
+     "expected": "15750",
+     "pypdf_V": "15750",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page2[0].f2_06[0]",
+     "kind": "text",
+     "expected": "34550",
+     "pypdf_V": "34550",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_08[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 24",
+     "qname": "topmostSubform[0].Page2[0].f2_16[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 25a",
+     "qname": "topmostSubform[0].Page2[0].f2_17[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 25d",
+     "qname": "topmostSubform[0].Page2[0].f2_20[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 33",
+     "qname": "topmostSubform[0].Page2[0].f2_29[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 34",
+     "qname": "topmostSubform[0].Page2[0].f2_30[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 60
+      }
+     ]
+    },
+    {
+     "semantic": "line 35a",
+     "qname": "topmostSubform[0].Page2[0].f2_31[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 60
+      }
+     ]
+    },
+    {
+     "semantic": "routing number (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page2[0].RoutingNo[0].f2_32[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 66
+      }
+     ]
+    },
+    {
+     "semantic": "account number (comb, 17 cells)",
+     "qname": "topmostSubform[0].Page2[0].AccountNo[0].f2_33[0]",
+     "kind": "comb",
+     "expected": "12345678901234567",
+     "pypdf_V": "12345678901234567",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 74
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer occupation",
+     "qname": "topmostSubform[0].Page2[0].f2_40[0]",
+     "kind": "text",
+     "expected": "Engineer",
+     "pypdf_V": "Engineer",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 65
+      }
+     ]
+    }
+   ]
+  },
+  "C": {
+   "doc": {
+    "need_appearances": "None",
+    "xfa_present": false,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "taxpayer first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_14[0]",
+     "kind": "text",
+     "expected": "Spike T",
+     "pypdf_V": "Spike T",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 132
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer last name",
+     "qname": "topmostSubform[0].Page1[0].f1_15[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": "Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 131
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_16[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 294
+      }
+     ]
+    },
+    {
+     "semantic": "spouse first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_17[0]",
+     "kind": "text",
+     "expected": "Partner",
+     "pypdf_V": "Partner",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 132
+      }
+     ]
+    },
+    {
+     "semantic": "spouse last name",
+     "qname": "topmostSubform[0].Page1[0].f1_18[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": "Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 131
+      }
+     ]
+    },
+    {
+     "semantic": "spouse SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "comb",
+     "expected": "987654321",
+     "pypdf_V": "987654321",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 294
+      }
+     ]
+    },
+    {
+     "semantic": "home address",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_20[0]",
+     "kind": "text",
+     "expected": "123 Main St",
+     "pypdf_V": "123 Main St",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 136
+      }
+     ]
+    },
+    {
+     "semantic": "apartment no.",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_21[0]",
+     "kind": "text",
+     "expected": "4B",
+     "pypdf_V": "4B",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 127
+      }
+     ]
+    },
+    {
+     "semantic": "city",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_22[0]",
+     "kind": "text",
+     "expected": "Springfield",
+     "pypdf_V": "Springfield",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 136
+      }
+     ]
+    },
+    {
+     "semantic": "state",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_23[0]",
+     "kind": "text",
+     "expected": "IL",
+     "pypdf_V": "IL",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 127
+      }
+     ]
+    },
+    {
+     "semantic": "ZIP code",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_24[0]",
+     "kind": "text",
+     "expected": "62704",
+     "pypdf_V": "62704",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "filing status = Single",
+     "qname": "topmostSubform[0].Page1[0].Checkbox_ReadOrder[0].c1_8[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/1",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 1a",
+     "qname": "topmostSubform[0].Page1[0].f1_47[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": "50000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "line 1z",
+     "qname": "topmostSubform[0].Page1[0].f1_57[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": "50000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "line 2b",
+     "qname": "topmostSubform[0].Page1[0].f1_59[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 128
+      }
+     ]
+    },
+    {
+     "semantic": "line 3b",
+     "qname": "topmostSubform[0].Page1[0].f1_61[0]",
+     "kind": "text",
+     "expected": "200",
+     "pypdf_V": "200",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 128
+      }
+     ]
+    },
+    {
+     "semantic": "line 9",
+     "qname": "topmostSubform[0].Page1[0].f1_73[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "line 11a",
+     "qname": "topmostSubform[0].Page1[0].f1_75[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "line 11b",
+     "qname": "topmostSubform[0].Page2[0].f2_01[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "line 12e",
+     "qname": "topmostSubform[0].Page2[0].f2_02[0]",
+     "kind": "text",
+     "expected": "15750",
+     "pypdf_V": "15750",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page2[0].f2_06[0]",
+     "kind": "text",
+     "expected": "34550",
+     "pypdf_V": "34550",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_08[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 24",
+     "qname": "topmostSubform[0].Page2[0].f2_16[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 25a",
+     "qname": "topmostSubform[0].Page2[0].f2_17[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 25d",
+     "qname": "topmostSubform[0].Page2[0].f2_20[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 33",
+     "qname": "topmostSubform[0].Page2[0].f2_29[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 34",
+     "qname": "topmostSubform[0].Page2[0].f2_30[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 128
+      }
+     ]
+    },
+    {
+     "semantic": "line 35a",
+     "qname": "topmostSubform[0].Page2[0].f2_31[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 128
+      }
+     ]
+    },
+    {
+     "semantic": "routing number (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page2[0].RoutingNo[0].f2_32[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 293
+      }
+     ]
+    },
+    {
+     "semantic": "account number (comb, 17 cells)",
+     "qname": "topmostSubform[0].Page2[0].AccountNo[0].f2_33[0]",
+     "kind": "comb",
+     "expected": "12345678901234567",
+     "pypdf_V": "12345678901234567",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 461
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer occupation",
+     "qname": "topmostSubform[0].Page2[0].f2_40[0]",
+     "kind": "text",
+     "expected": "Engineer",
+     "pypdf_V": "Engineer",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 133
+      }
+     ]
+    }
+   ]
+  },
+  "Bflat": {
+   "doc": {
+    "need_appearances": "False",
+    "xfa_present": true,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "taxpayer first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_14[0]",
+     "kind": "text",
+     "expected": "Spike T",
+     "pypdf_V": "Spike T",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 64
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer last name",
+     "qname": "topmostSubform[0].Page1[0].f1_15[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": "Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 63
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_16[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 66
+      }
+     ]
+    },
+    {
+     "semantic": "spouse first name and middle initial",
+     "qname": "topmostSubform[0].Page1[0].f1_17[0]",
+     "kind": "text",
+     "expected": "Partner",
+     "pypdf_V": "Partner",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 64
+      }
+     ]
+    },
+    {
+     "semantic": "spouse last name",
+     "qname": "topmostSubform[0].Page1[0].f1_18[0]",
+     "kind": "text",
+     "expected": "Tester",
+     "pypdf_V": "Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 63
+      }
+     ]
+    },
+    {
+     "semantic": "spouse SSN (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "comb",
+     "expected": "987654321",
+     "pypdf_V": "987654321",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 66
+      }
+     ]
+    },
+    {
+     "semantic": "home address",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_20[0]",
+     "kind": "text",
+     "expected": "123 Main St",
+     "pypdf_V": "123 Main St",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 68
+      }
+     ]
+    },
+    {
+     "semantic": "apartment no.",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_21[0]",
+     "kind": "text",
+     "expected": "4B",
+     "pypdf_V": "4B",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 59
+      }
+     ]
+    },
+    {
+     "semantic": "city",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_22[0]",
+     "kind": "text",
+     "expected": "Springfield",
+     "pypdf_V": "Springfield",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 68
+      }
+     ]
+    },
+    {
+     "semantic": "state",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_23[0]",
+     "kind": "text",
+     "expected": "IL",
+     "pypdf_V": "IL",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 59
+      }
+     ]
+    },
+    {
+     "semantic": "ZIP code",
+     "qname": "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_24[0]",
+     "kind": "text",
+     "expected": "62704",
+     "pypdf_V": "62704",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "filing status = Single",
+     "qname": "topmostSubform[0].Page1[0].Checkbox_ReadOrder[0].c1_8[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/1",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 1a",
+     "qname": "topmostSubform[0].Page1[0].f1_47[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": "50000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 1z",
+     "qname": "topmostSubform[0].Page1[0].f1_57[0]",
+     "kind": "text",
+     "expected": "50000",
+     "pypdf_V": "50000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 2b",
+     "qname": "topmostSubform[0].Page1[0].f1_59[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 60
+      }
+     ]
+    },
+    {
+     "semantic": "line 3b",
+     "qname": "topmostSubform[0].Page1[0].f1_61[0]",
+     "kind": "text",
+     "expected": "200",
+     "pypdf_V": "200",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 60
+      }
+     ]
+    },
+    {
+     "semantic": "line 9",
+     "qname": "topmostSubform[0].Page1[0].f1_73[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 11a",
+     "qname": "topmostSubform[0].Page1[0].f1_75[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 11b",
+     "qname": "topmostSubform[0].Page2[0].f2_01[0]",
+     "kind": "text",
+     "expected": "50300",
+     "pypdf_V": "50300",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 12e",
+     "qname": "topmostSubform[0].Page2[0].f2_02[0]",
+     "kind": "text",
+     "expected": "15750",
+     "pypdf_V": "15750",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page2[0].f2_06[0]",
+     "kind": "text",
+     "expected": "34550",
+     "pypdf_V": "34550",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_08[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 24",
+     "qname": "topmostSubform[0].Page2[0].f2_16[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 25a",
+     "qname": "topmostSubform[0].Page2[0].f2_17[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 25d",
+     "qname": "topmostSubform[0].Page2[0].f2_20[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 33",
+     "qname": "topmostSubform[0].Page2[0].f2_29[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 34",
+     "qname": "topmostSubform[0].Page2[0].f2_30[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 60
+      }
+     ]
+    },
+    {
+     "semantic": "line 35a",
+     "qname": "topmostSubform[0].Page2[0].f2_31[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 60
+      }
+     ]
+    },
+    {
+     "semantic": "routing number (comb, 9 cells)",
+     "qname": "topmostSubform[0].Page2[0].RoutingNo[0].f2_32[0]",
+     "kind": "comb",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 66
+      }
+     ]
+    },
+    {
+     "semantic": "account number (comb, 17 cells)",
+     "qname": "topmostSubform[0].Page2[0].AccountNo[0].f2_33[0]",
+     "kind": "comb",
+     "expected": "12345678901234567",
+     "pypdf_V": "12345678901234567",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 74
+      }
+     ]
+    },
+    {
+     "semantic": "taxpayer occupation",
+     "qname": "topmostSubform[0].Page2[0].f2_40[0]",
+     "kind": "text",
+     "expected": "Engineer",
+     "pypdf_V": "Engineer",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 65
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "f1040sd": {
+  "A": {
+   "doc": {
+    "need_appearances": "None",
+    "xfa_present": true,
+    "field_count_pypdf": 68
+   },
+   "rows": [
+    {
+     "semantic": "name(s) shown on return",
+     "qname": "topmostSubform[0].Page1[0].f1_1[0]",
+     "kind": "text",
+     "expected": "Spike Tester",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "SSN",
+     "qname": "topmostSubform[0].Page1[0].f1_2[0]",
+     "kind": "text",
+     "expected": "123456789",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "qualified opportunity fund question = No",
+     "qname": "topmostSubform[0].Page1[0].c1_1[1]",
+     "kind": "checkbox",
+     "expected": "/2",
+     "pypdf_V": "/Off",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 4",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "text",
+     "expected": "1000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 5",
+     "qname": "topmostSubform[0].Page1[0].f1_20[0]",
+     "kind": "text",
+     "expected": "2000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 7",
+     "qname": "topmostSubform[0].Page1[0].f1_22[0]",
+     "kind": "text",
+     "expected": "3000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 11",
+     "qname": "topmostSubform[0].Page1[0].f1_39[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page1[0].f1_43[0]",
+     "kind": "text",
+     "expected": "5000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_1[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 18",
+     "qname": "topmostSubform[0].Page2[0].f2_2[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 17 (both gains) = Yes",
+     "qname": "topmostSubform[0].Page2[0].c2_1[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/Off",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "Part I row 1a totals, column (h)",
+     "qname": "topmostSubform[0].Page1[0].Table_PartI[0].Row1a[0].f1_6[0]",
+     "kind": "text",
+     "expected": "6000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    }
+   ]
+  },
+  "A1": {
+   "doc": {
+    "need_appearances": "None",
+    "xfa_present": true,
+    "field_count_pypdf": 68
+   },
+   "rows": [
+    {
+     "semantic": "name(s) shown on return",
+     "qname": "topmostSubform[0].Page1[0].f1_1[0]",
+     "kind": "text",
+     "expected": "Spike Tester",
+     "pypdf_V": "Spike Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "SSN",
+     "qname": "topmostSubform[0].Page1[0].f1_2[0]",
+     "kind": "text",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "qualified opportunity fund question = No",
+     "qname": "topmostSubform[0].Page1[0].c1_1[1]",
+     "kind": "checkbox",
+     "expected": "/2",
+     "pypdf_V": "/2",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 4",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "text",
+     "expected": "1000",
+     "pypdf_V": "1000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 5",
+     "qname": "topmostSubform[0].Page1[0].f1_20[0]",
+     "kind": "text",
+     "expected": "2000",
+     "pypdf_V": "2000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 7",
+     "qname": "topmostSubform[0].Page1[0].f1_22[0]",
+     "kind": "text",
+     "expected": "3000",
+     "pypdf_V": "3000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 11",
+     "qname": "topmostSubform[0].Page1[0].f1_39[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page1[0].f1_43[0]",
+     "kind": "text",
+     "expected": "5000",
+     "pypdf_V": "5000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_1[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 18",
+     "qname": "topmostSubform[0].Page2[0].f2_2[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 17 (both gains) = Yes",
+     "qname": "topmostSubform[0].Page2[0].c2_1[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "Part I row 1a totals, column (h)",
+     "qname": "topmostSubform[0].Page1[0].Table_PartI[0].Row1a[0].f1_6[0]",
+     "kind": "text",
+     "expected": "6000",
+     "pypdf_V": "6000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    }
+   ]
+  },
+  "A2": {
+   "doc": {
+    "need_appearances": "True",
+    "xfa_present": true,
+    "field_count_pypdf": 68
+   },
+   "rows": [
+    {
+     "semantic": "name(s) shown on return",
+     "qname": "topmostSubform[0].Page1[0].f1_1[0]",
+     "kind": "text",
+     "expected": "Spike Tester",
+     "pypdf_V": "Spike Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "SSN",
+     "qname": "topmostSubform[0].Page1[0].f1_2[0]",
+     "kind": "text",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "qualified opportunity fund question = No",
+     "qname": "topmostSubform[0].Page1[0].c1_1[1]",
+     "kind": "checkbox",
+     "expected": "/2",
+     "pypdf_V": "/2",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 4",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "text",
+     "expected": "1000",
+     "pypdf_V": "1000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 5",
+     "qname": "topmostSubform[0].Page1[0].f1_20[0]",
+     "kind": "text",
+     "expected": "2000",
+     "pypdf_V": "2000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 7",
+     "qname": "topmostSubform[0].Page1[0].f1_22[0]",
+     "kind": "text",
+     "expected": "3000",
+     "pypdf_V": "3000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 11",
+     "qname": "topmostSubform[0].Page1[0].f1_39[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page1[0].f1_43[0]",
+     "kind": "text",
+     "expected": "5000",
+     "pypdf_V": "5000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_1[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 18",
+     "qname": "topmostSubform[0].Page2[0].f2_2[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "line 17 (both gains) = Yes",
+     "qname": "topmostSubform[0].Page2[0].c2_1[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "Part I row 1a totals, column (h)",
+     "qname": "topmostSubform[0].Page1[0].Table_PartI[0].Row1a[0].f1_6[0]",
+     "kind": "text",
+     "expected": "6000",
+     "pypdf_V": "6000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    }
+   ]
+  },
+  "B": {
+   "doc": {
+    "need_appearances": "False",
+    "xfa_present": true,
+    "field_count_pypdf": 68
+   },
+   "rows": [
+    {
+     "semantic": "name(s) shown on return",
+     "qname": "topmostSubform[0].Page1[0].f1_1[0]",
+     "kind": "text",
+     "expected": "Spike Tester",
+     "pypdf_V": "Spike Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 69
+      }
+     ]
+    },
+    {
+     "semantic": "SSN",
+     "qname": "topmostSubform[0].Page1[0].f1_2[0]",
+     "kind": "text",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 66
+      }
+     ]
+    },
+    {
+     "semantic": "qualified opportunity fund question = No",
+     "qname": "topmostSubform[0].Page1[0].c1_1[1]",
+     "kind": "checkbox",
+     "expected": "/2",
+     "pypdf_V": "/2",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/2",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 4",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "text",
+     "expected": "1000",
+     "pypdf_V": "1000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 5",
+     "qname": "topmostSubform[0].Page1[0].f1_20[0]",
+     "kind": "text",
+     "expected": "2000",
+     "pypdf_V": "2000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 7",
+     "qname": "topmostSubform[0].Page1[0].f1_22[0]",
+     "kind": "text",
+     "expected": "3000",
+     "pypdf_V": "3000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 11",
+     "qname": "topmostSubform[0].Page1[0].f1_39[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page1[0].f1_43[0]",
+     "kind": "text",
+     "expected": "5000",
+     "pypdf_V": "5000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_1[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "line 18",
+     "qname": "topmostSubform[0].Page2[0].f2_2[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 60
+      }
+     ]
+    },
+    {
+     "semantic": "line 17 (both gains) = Yes",
+     "qname": "topmostSubform[0].Page2[0].c2_1[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/1",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "Part I row 1a totals, column (h)",
+     "qname": "topmostSubform[0].Page1[0].Table_PartI[0].Row1a[0].f1_6[0]",
+     "kind": "text",
+     "expected": "6000",
+     "pypdf_V": "6000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 53
+      }
+     ]
+    }
+   ]
+  },
+  "C": {
+   "doc": {
+    "need_appearances": "None",
+    "xfa_present": false,
+    "field_count_pypdf": 68
+   },
+   "rows": [
+    {
+     "semantic": "name(s) shown on return",
+     "qname": "topmostSubform[0].Page1[0].f1_1[0]",
+     "kind": "text",
+     "expected": "Spike Tester",
+     "pypdf_V": "Spike Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 137
+      }
+     ]
+    },
+    {
+     "semantic": "SSN",
+     "qname": "topmostSubform[0].Page1[0].f1_2[0]",
+     "kind": "text",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 135
+      }
+     ]
+    },
+    {
+     "semantic": "qualified opportunity fund question = No",
+     "qname": "topmostSubform[0].Page1[0].c1_1[1]",
+     "kind": "checkbox",
+     "expected": "/2",
+     "pypdf_V": "/2",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/2",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "line 4",
+     "qname": "topmostSubform[0].Page1[0].f1_19[0]",
+     "kind": "text",
+     "expected": "1000",
+     "pypdf_V": "1000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 5",
+     "qname": "topmostSubform[0].Page1[0].f1_20[0]",
+     "kind": "text",
+     "expected": "2000",
+     "pypdf_V": "2000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 7",
+     "qname": "topmostSubform[0].Page1[0].f1_22[0]",
+     "kind": "text",
+     "expected": "3000",
+     "pypdf_V": "3000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 11",
+     "qname": "topmostSubform[0].Page1[0].f1_39[0]",
+     "kind": "text",
+     "expected": "4000",
+     "pypdf_V": "4000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 15",
+     "qname": "topmostSubform[0].Page1[0].f1_43[0]",
+     "kind": "text",
+     "expected": "5000",
+     "pypdf_V": "5000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 16",
+     "qname": "topmostSubform[0].Page2[0].f2_1[0]",
+     "kind": "text",
+     "expected": "3900",
+     "pypdf_V": "3900",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "line 18",
+     "qname": "topmostSubform[0].Page2[0].f2_2[0]",
+     "kind": "text",
+     "expected": "100",
+     "pypdf_V": "100",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 128
+      }
+     ]
+    },
+    {
+     "semantic": "line 17 (both gains) = Yes",
+     "qname": "topmostSubform[0].Page2[0].c2_1[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/1",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "Part I row 1a totals, column (h)",
+     "qname": "topmostSubform[0].Page1[0].Table_PartI[0].Row1a[0].f1_6[0]",
+     "kind": "text",
+     "expected": "6000",
+     "pypdf_V": "6000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "f8949": {
+  "A": {
+   "doc": {
+    "need_appearances": "None",
+    "xfa_present": true,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "name(s) shown on return",
+     "qname": "topmostSubform[0].Page1[0].f1_01[0]",
+     "kind": "text",
+     "expected": "Spike Tester",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "SSN/TIN",
+     "qname": "topmostSubform[0].Page1[0].f1_02[0]",
+     "kind": "text",
+     "expected": "123456789",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "Part I Box A (basis reported to IRS)",
+     "qname": "topmostSubform[0].Page1[0].c1_1[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/Off",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (a)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_03[0]",
+     "kind": "text",
+     "expected": "100 sh. XYZ Co.",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (b)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_04[0]",
+     "kind": "text",
+     "expected": "01/15/2025",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (c)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_05[0]",
+     "kind": "text",
+     "expected": "06/15/2025",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (d)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_06[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (e)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_07[0]",
+     "kind": "text",
+     "expected": "7000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (g)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_09[0]",
+     "kind": "text",
+     "expected": "500",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (h)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_10[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (d) proceeds",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_14[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (h) gain/loss",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_18[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (d) proceeds",
+     "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_14[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (h) gain/loss",
+     "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_18[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": null,
+     "pypdf_V_type": null,
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": false,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    }
+   ]
+  },
+  "A1": {
+   "doc": {
+    "need_appearances": "None",
+    "xfa_present": true,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "name(s) shown on return",
+     "qname": "topmostSubform[0].Page1[0].f1_01[0]",
+     "kind": "text",
+     "expected": "Spike Tester",
+     "pypdf_V": "Spike Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "SSN/TIN",
+     "qname": "topmostSubform[0].Page1[0].f1_02[0]",
+     "kind": "text",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "Part I Box A (basis reported to IRS)",
+     "qname": "topmostSubform[0].Page1[0].c1_1[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (a)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_03[0]",
+     "kind": "text",
+     "expected": "100 sh. XYZ Co.",
+     "pypdf_V": "100 sh. XYZ Co.",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (b)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_04[0]",
+     "kind": "text",
+     "expected": "01/15/2025",
+     "pypdf_V": "01/15/2025",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (c)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_05[0]",
+     "kind": "text",
+     "expected": "06/15/2025",
+     "pypdf_V": "06/15/2025",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (d)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_06[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (e)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_07[0]",
+     "kind": "text",
+     "expected": "7000",
+     "pypdf_V": "7000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (g)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_09[0]",
+     "kind": "text",
+     "expected": "500",
+     "pypdf_V": "500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (h)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_10[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (d) proceeds",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_14[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (h) gain/loss",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_18[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (d) proceeds",
+     "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_14[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (h) gain/loss",
+     "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_18[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    }
+   ]
+  },
+  "A2": {
+   "doc": {
+    "need_appearances": "True",
+    "xfa_present": true,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "name(s) shown on return",
+     "qname": "topmostSubform[0].Page1[0].f1_01[0]",
+     "kind": "text",
+     "expected": "Spike Tester",
+     "pypdf_V": "Spike Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "SSN/TIN",
+     "qname": "topmostSubform[0].Page1[0].f1_02[0]",
+     "kind": "text",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "Part I Box A (basis reported to IRS)",
+     "qname": "topmostSubform[0].Page1[0].c1_1[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": false,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/Off",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (a)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_03[0]",
+     "kind": "text",
+     "expected": "100 sh. XYZ Co.",
+     "pypdf_V": "100 sh. XYZ Co.",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (b)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_04[0]",
+     "kind": "text",
+     "expected": "01/15/2025",
+     "pypdf_V": "01/15/2025",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (c)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_05[0]",
+     "kind": "text",
+     "expected": "06/15/2025",
+     "pypdf_V": "06/15/2025",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (d)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_06[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (e)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_07[0]",
+     "kind": "text",
+     "expected": "7000",
+     "pypdf_V": "7000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (g)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_09[0]",
+     "kind": "text",
+     "expected": "500",
+     "pypdf_V": "500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (h)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_10[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (d) proceeds",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_14[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (h) gain/loss",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_18[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (d) proceeds",
+     "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_14[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (h) gain/loss",
+     "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_18[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": false,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": null
+      }
+     ]
+    }
+   ]
+  },
+  "B": {
+   "doc": {
+    "need_appearances": "False",
+    "xfa_present": true,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "name(s) shown on return",
+     "qname": "topmostSubform[0].Page1[0].f1_01[0]",
+     "kind": "text",
+     "expected": "Spike Tester",
+     "pypdf_V": "Spike Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 69
+      }
+     ]
+    },
+    {
+     "semantic": "SSN/TIN",
+     "qname": "topmostSubform[0].Page1[0].f1_02[0]",
+     "kind": "text",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 66
+      }
+     ]
+    },
+    {
+     "semantic": "Part I Box A (basis reported to IRS)",
+     "qname": "topmostSubform[0].Page1[0].c1_1[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/1",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (a)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_03[0]",
+     "kind": "text",
+     "expected": "100 sh. XYZ Co.",
+     "pypdf_V": "100 sh. XYZ Co.",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 71
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (b)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_04[0]",
+     "kind": "text",
+     "expected": "01/15/2025",
+     "pypdf_V": "01/15/2025",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 67
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (c)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_05[0]",
+     "kind": "text",
+     "expected": "06/15/2025",
+     "pypdf_V": "06/15/2025",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 67
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (d)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_06[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (e)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_07[0]",
+     "kind": "text",
+     "expected": "7000",
+     "pypdf_V": "7000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (g)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_09[0]",
+     "kind": "text",
+     "expected": "500",
+     "pypdf_V": "500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 60
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (h)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_10[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (d) proceeds",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_14[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (h) gain/loss",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_18[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (d) proceeds",
+     "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_14[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 62
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (h) gain/loss",
+     "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_18[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 61
+      }
+     ]
+    }
+   ]
+  },
+  "C": {
+   "doc": {
+    "need_appearances": "None",
+    "xfa_present": false,
+    "field_count_pypdf": 229
+   },
+   "rows": [
+    {
+     "semantic": "name(s) shown on return",
+     "qname": "topmostSubform[0].Page1[0].f1_01[0]",
+     "kind": "text",
+     "expected": "Spike Tester",
+     "pypdf_V": "Spike Tester",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 137
+      }
+     ]
+    },
+    {
+     "semantic": "SSN/TIN",
+     "qname": "topmostSubform[0].Page1[0].f1_02[0]",
+     "kind": "text",
+     "expected": "123456789",
+     "pypdf_V": "123456789",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 135
+      }
+     ]
+    },
+    {
+     "semantic": "Part I Box A (basis reported to IRS)",
+     "qname": "topmostSubform[0].Page1[0].c1_1[0]",
+     "kind": "checkbox",
+     "expected": "/1",
+     "pypdf_V": "/1",
+     "pypdf_V_type": "NameObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": null,
+     "widgets": [
+      {
+       "AS": "/1",
+       "ap_n_len": 73
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (a)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_03[0]",
+     "kind": "text",
+     "expected": "100 sh. XYZ Co.",
+     "pypdf_V": "100 sh. XYZ Co.",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 141
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (b)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_04[0]",
+     "kind": "text",
+     "expected": "01/15/2025",
+     "pypdf_V": "01/15/2025",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 134
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (c)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_05[0]",
+     "kind": "text",
+     "expected": "06/15/2025",
+     "pypdf_V": "06/15/2025",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": false,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 134
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (d)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_06[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (e)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_07[0]",
+     "kind": "text",
+     "expected": "7000",
+     "pypdf_V": "7000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (g)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_09[0]",
+     "kind": "text",
+     "expected": "500",
+     "pypdf_V": "500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 128
+      }
+     ]
+    },
+    {
+     "semantic": "row 1 column (h)",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row1[0].f1_10[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (d) proceeds",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_14[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (h) gain/loss",
+     "qname": "topmostSubform[0].Page1[0].Table_Line1_Part1[0].Row2[0].f1_18[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (d) proceeds",
+     "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_14[0]",
+     "kind": "text",
+     "expected": "10000",
+     "pypdf_V": "10000",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 130
+      }
+     ]
+    },
+    {
+     "semantic": "row 2 totals, column (h) gain/loss",
+     "qname": "topmostSubform[0].Page2[0].Table_Line1_Part2[0].Row2[0].f2_18[0]",
+     "kind": "text",
+     "expected": "3500",
+     "pypdf_V": "3500",
+     "pypdf_V_type": "TextStringObject",
+     "readback_ok": true,
+     "pdfcpu_ok": true,
+     "ap_ok": true,
+     "visible_text": true,
+     "widgets": [
+      {
+       "AS": null,
+       "ap_n_len": 129
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

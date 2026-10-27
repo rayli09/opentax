@@ -1,0 +1,7 @@
+target/
+fixtures/*.pdf
+results/*.pdf
+results/view-*.png
+results/*-p1-*.png
+results/pix-*.png
+__pycache__/

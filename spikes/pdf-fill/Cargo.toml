@@ -1,0 +1,19 @@
+[package]
+name = "pdf-fill-spike"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Spike: can pure-Rust PDF filling (lopdf /V-only vs pdfer_forms /AP regeneration) fill real IRS forms so values render? Not a workspace member."
+
+[workspace]
+
+[[bin]]
+name = "pdf-fill-spike"
+path = "src/main.rs"
+
+[dependencies]
+tax-pdf = { path = "../../crates/tax-pdf" }
+lopdf = "0.46"
+pdfer_forms = "0.3.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
