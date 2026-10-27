@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use tax_core::{FactResult, FilingStatus, Money, TaxParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::{
-    build_fill_values, compute_1040, deductible_part_of_se_tax, schedule_c_net_profit,
-    schedule_se_tax, validate_1099_div, Form1040Input, I1099BInput, I1099DivInput, I1099IntInput,
-    I1099NecInput, W2Input,
+    build_fill_values_with_dependents, compute_1040, deductible_part_of_se_tax,
+    schedule_c_net_profit, schedule_se_tax, validate_1099_div, validate_dependent, DependentInput,
+    Form1040Input, I1099BInput, I1099DivInput, I1099IntInput, I1099NecInput, W2Input,
 };
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
@@ -359,6 +359,14 @@ fn stored_necs(ret: &StoredReturn) -> CResult<Vec<I1099NecInput>> {
         .collect()
 }
 
+fn stored_dependents(ret: &StoredReturn) -> CResult<Vec<DependentInput>> {
+    ret.entries
+        .iter()
+        .filter(|e| e.node_type == "dependent")
+        .map(|e| serde_json::from_value::<DependentInput>(e.data.clone()).map_err(json_err))
+        .collect()
+}
+
 /// Aggregate the 1099-B entries of a partial return the same way the
 /// engine does: (net_short, net_long, line_7, schd_net_capital_gain)
 /// facts — Incomplete when any transaction is missing proceeds or
@@ -460,11 +468,19 @@ const ALL_LINES: &[&str] = &[
     "12",
     "15",
     "16",
+    "sched8812_tentative",
+    "sched8812_credit_after_phaseout",
+    "sched8812_earned_income",
+    "19",
+    "21",
+    "22",
     "23",
     "sched2_se_tax",
     "24",
     "25a",
     "25d",
+    "28",
+    "32",
     "33",
     "34",
     "37",
@@ -484,6 +500,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
     let divs = stored_divs(ret)?;
     let bs = stored_bs(ret)?;
     let necs = stored_necs(ret)?;
+    let deps = stored_dependents(ret)?;
     let status = FilingStatus::parse(&ret.status).map_err(|e| CliErr::new("invalid_status", e))?;
     let mut warnings = Vec::new();
 
@@ -512,6 +529,7 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 f1099_divs: divs,
                 f1099_bs: bs,
                 f1099_necs: necs,
+                dependents: deps,
             };
             let computed = compute_1040(&input, params);
             warnings.extend(computed.notes.iter().cloned());
@@ -536,6 +554,35 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
             lines.insert("1z".into(), FactResult::Complete(wages));
             lines.insert("12".into(), FactResult::Complete(deduction));
             lines.insert("25a".into(), FactResult::Complete(w2_withholding));
+            // The Schedule 8812 earned-income key depends only on
+            // stored W-2 / 1099-NEC entries, so it is computable here
+            // exactly as the engine computes it.
+            let ei_nec = if necs.is_empty() {
+                Money::ZERO
+            } else {
+                schedule_c_net_profit(&necs)
+            };
+            let earned_income = wages + Money::from_cents(ei_nec.cents().max(0));
+            lines.insert(
+                "sched8812_earned_income".into(),
+                FactResult::Complete(earned_income),
+            );
+            if deps.is_empty() {
+                // No dependents stored: the tentative credit is zero
+                // whatever the income, so these credit lines are stated
+                // zeros. Lines 22/24 still need line 16 and stay
+                // Incomplete (filled in by the ALL_LINES pass below).
+                for l in [
+                    "sched8812_tentative",
+                    "sched8812_credit_after_phaseout",
+                    "19",
+                    "21",
+                    "28",
+                    "32",
+                ] {
+                    lines.insert(l.into(), FactResult::Complete(Money::ZERO));
+                }
+            }
             if !ints.is_empty() {
                 let exempt: Money = ints.iter().map(|f| f.tax_exempt_interest).sum();
                 lines.insert("2a".into(), FactResult::Complete(exempt));
@@ -583,6 +630,24 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
                 let total_wh = w2_withholding + int_wh + div_wh + b_withholding + nec_withholding;
                 lines.insert("25d".into(), FactResult::Complete(total_wh));
                 lines.insert("33".into(), FactResult::Complete(total_wh));
+            }
+            if !deps.is_empty() {
+                // Dependents are stored, but the credits need AGI and
+                // line 16, which a partial return does not determine:
+                // every credit line — and line 33, which adds line 32 —
+                // is Incomplete here, never zero-filled.
+                for l in [
+                    "sched8812_tentative",
+                    "sched8812_credit_after_phaseout",
+                    "19",
+                    "21",
+                    "22",
+                    "28",
+                    "32",
+                    "33",
+                ] {
+                    lines.insert(l.into(), FactResult::Incomplete);
+                }
             }
             for l in ALL_LINES {
                 lines.entry(l.to_string()).or_insert(FactResult::Incomplete);
@@ -745,6 +810,14 @@ const CASE005_INPUT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/005-w2-nec/input.json");
 const CASE005_CORRECT: &str =
     include_str!("../../../benchmark/cases/f1040/2025/005-w2-nec/correct.json");
+const CASE006_INPUT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/006-family-mfj/input.json");
+const CASE006_CORRECT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/006-family-mfj/correct.json");
+const CASE007_INPUT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/007-actc-hoh/input.json");
+const CASE007_CORRECT: &str =
+    include_str!("../../../benchmark/cases/f1040/2025/007-actc-hoh/correct.json");
 
 /// (case directory name, embedded input.json, embedded correct.json).
 const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
@@ -753,6 +826,8 @@ const EMBEDDED_CASES: &[(&str, &str, &str)] = &[
     ("003-capital-loss-limit", CASE003_INPUT, CASE003_CORRECT),
     ("004-qdcg-showcase", CASE004_INPUT, CASE004_CORRECT),
     ("005-w2-nec", CASE005_INPUT, CASE005_CORRECT),
+    ("006-family-mfj", CASE006_INPUT, CASE006_CORRECT),
+    ("007-actc-hoh", CASE007_INPUT, CASE007_CORRECT),
 ];
 
 fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String>)> {
@@ -884,7 +959,14 @@ fn schema_json() -> Value {
                 "f1099_ints": {"type": "array", "items": "I1099IntInput"},
                 "f1099_divs": {"type": "array", "items": "I1099DivInput"},
                 "f1099_bs": {"type": "array", "items": "I1099BInput"},
-                "f1099_necs": {"type": "array", "items": "I1099NecInput"}
+                "f1099_necs": {"type": "array", "items": "I1099NecInput"},
+                "dependents": {"type": "array", "items": "DependentInput"}
+            },
+            "DependentInput": {
+                "name": {"type": "string", "note": "full name as it should print in the Form 1040 Dependents table"},
+                "relationship": {"type": "enum", "values": ["child", "stepchild", "foster_child", "other"], "note": "child/stepchild/foster_child can qualify for the child tax credit; other takes the credit-for-other-dependents path only"},
+                "age": {"type": "integer", "note": "age on December 31 of the tax year; the child tax credit requires under 17"},
+                "months_lived_with_taxpayer": {"type": "integer", "minimum": 0, "maximum": 12, "default": 12, "note": "v1 models the residency test as more than half the year (> 6 months)"}
             },
             "W2Input": {
                 "employer_ein": {"type": "string", "example": "12-3456789"},
@@ -961,6 +1043,11 @@ fn node_templates() -> Vec<(String, bool, Value)> {
             "1099-nec".to_string(),
             true,
             json!({"payer_name": "", "nonemployee_compensation": "0", "federal_withholding": "0", "expenses": "0"}),
+        ),
+        (
+            "dependent".to_string(),
+            true,
+            json!({"name": "", "relationship": "child", "age": 0, "months_lived_with_taxpayer": 12}),
         ),
     ]
 }
@@ -1104,6 +1191,12 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     }
                 }
             }
+            for (i, dep) in stored_dependents(&ret)?.iter().enumerate() {
+                for f in validate_dependent(dep) {
+                    findings.push(json!({"code": f.code, "severity": f.severity,
+                        "message": f.message, "field": null, "entry": format!("dependent_{:02}", i + 1)}));
+                }
+            }
             if !stored_w2s(&ret)?.is_empty() && !stored_necs(&ret)?.is_empty() {
                 findings.push(json!({"code": "nec_ss_wage_proxy", "severity": "info",
                     "message": "return has both W-2 and 1099-NEC entries: the Schedule SE Social Security wage-base room is figured from total W-2 Box 1 wages as a proxy for Box 3 Social Security wages (Schedule SE line 8a). The two differ when Box 1 is reduced by pre-tax amounts that remain Social Security wages (e.g. 401(k) deferrals), in which case the SE tax's Social Security part can be overstated; Box 3, even when transcribed, is not used for this in v1 (docs/KNOWN_LIMITS.md)",
@@ -1177,17 +1270,19 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     let view = compute_view(&ret, &params)?;
                     let status = FilingStatus::parse(&ret.status)
                         .map_err(|e| CliErr::new("invalid_status", e))?;
-                    let plan = build_fill_values(&view.lines, status).map_err(|incomplete| {
-                        CliErr::with_extra(
-                            "return_incomplete",
-                            format!(
+                    let dependents = stored_dependents(&ret)?;
+                    let plan = build_fill_values_with_dependents(&view.lines, status, &dependents)
+                        .map_err(|incomplete| {
+                            CliErr::with_extra(
+                                "return_incomplete",
+                                format!(
                                 "return {} is incomplete; mapped lines missing or incomplete: {}",
                                 ret.id,
                                 incomplete.join(", ")
                             ),
-                            json!({"incomplete_lines": incomplete}),
-                        )
-                    })?;
+                                json!({"incomplete_lines": incomplete}),
+                            )
+                        })?;
                     let values: std::collections::HashMap<String, String> = plan
                         .values
                         .iter()
@@ -1196,6 +1291,8 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     let report: FillReport = PdferBackend
                         .fill_fields(template, &values, out_path)
                         .map_err(|e| CliErr::new("pdf_fill_failed", e.to_string()))?;
+                    let mut all_warnings = report.warnings.clone();
+                    all_warnings.extend(plan.warnings.iter().cloned());
                     let filled: Vec<Value> = plan
                         .values
                         .iter()
@@ -1212,7 +1309,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                                 "backend": report.backend,
                                 "filled": filled,
                                 "skipped": skipped,
-                                "warnings": report.warnings}),
+                                "warnings": all_warnings}),
                         format!(
                             "exported filled PDF to {} ({} fields, backend {})",
                             out_path.display(),
@@ -1246,10 +1343,11 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
                 "1099-div" => "1099div",
                 "1099-b" => "1099b",
                 "1099-nec" => "1099nec",
+                "dependent" => "dependent",
                 _ => {
                     return Ok(Out::ok(
                         json!({"status": "not_implemented", "node_type": node_type,
-                                "detail": "v1 stores and computes w2, 1099-int, 1099-div, 1099-b, and 1099-nec entries (see `tax node list`)"}),
+                                "detail": "v1 stores and computes w2, 1099-int, 1099-div, 1099-b, 1099-nec, and dependent entries (see `tax node list`)"}),
                         format!("adding {node_type}: not implemented in v1"),
                     ));
                 }
@@ -1283,6 +1381,19 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
                 "1099-nec" => {
                     let _: I1099NecInput =
                         serde_json::from_value(value.clone()).map_err(json_err)?;
+                }
+                "dependent" => {
+                    let dep: DependentInput =
+                        serde_json::from_value(value.clone()).map_err(json_err)?;
+                    if dep.months_lived_with_taxpayer > 12 {
+                        return Err(CliErr::new(
+                            "invalid_input",
+                            format!(
+                                "dependent {}: months_lived_with_taxpayer must be 0-12 (got {})",
+                                dep.name, dep.months_lived_with_taxpayer
+                            ),
+                        ));
+                    }
                 }
                 _ => unreachable!(),
             }
@@ -1456,9 +1567,22 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
         ("standard_deduction", "12"),
         ("taxable_income", "15"),
         ("tax", "16"),
+        ("child_tax_credit", "19"),
+        ("nonrefundable_credits", "21"),
+        ("tax_after_credits", "22"),
         ("se_tax", "23"),
         ("net_se_earnings", "schedse_net_earnings"),
         ("total_tax", "24"),
+        ("additional_child_tax_credit", "28"),
+        ("actc", "28"),
+        ("refundable_credits", "32"),
+        ("total_payments", "33"),
+        ("ctc_tentative_credit", "sched8812_tentative"),
+        (
+            "ctc_credit_after_phaseout",
+            "sched8812_credit_after_phaseout",
+        ),
+        ("earned_income", "sched8812_earned_income"),
         ("overpaid", "34"),
         ("refund", "34"),
         ("amount_owed", "37"),
@@ -1505,7 +1629,16 @@ fn cmd_explain(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) 
         "23" => ("self-employment tax from Schedule SE, via Schedule 2 line 4: 12.4% Social Security on net SE earnings (internal key schedse_net_earnings) up to the wage-base room left after W-2 wages, plus 2.9% Medicare on all net SE earnings; rates and wage base from params/2025.json".to_string(), "Form 1040, line 23; Schedule SE; IRC 1401".to_string()),
         "schedse_net_earnings" => ("Schedule SE line 4a: Schedule C net profit times 92.35%; zero when the net is a loss".to_string(), "Schedule SE, line 4a; IRC 1402(a) (internal key)".to_string()),
         "sched2_se_tax" => ("the Schedule SE tax as it enters Schedule 2 line 4; equal to line 23".to_string(), "Schedule 2, line 4 (internal key)".to_string()),
-        "24" => ("line 16 plus line 23".to_string(), "Form 1040, line 24".to_string()),
+        "19" => ("the nonrefundable child tax credit and credit for other dependents from Schedule 8812 (line 14): the smaller of the credit after the modified-AGI phaseout (Schedule 8812 line 12 — tentative credit of $2,200 per qualifying child under 17 plus $500 per other dependent, reduced by 5% of the AGI excess over $400,000 MFJ / $200,000 other, the excess rounded up to a $1,000 multiple) or the Credit Limit Worksheet A amount, which is line 16 in v1 (Form 1040 line 18 minus Schedule 3 nonrefundable credits, both zero here beyond line 16)".to_string(), "Form 1040, line 19; Schedule 8812, Part I and Credit Limit Worksheet A".to_string()),
+        "sched8812_tentative" => ("Schedule 8812 line 8: $2,200 times the number of qualifying children (child-type relationship, under 17 at year-end, lived with the taxpayer more than half the year) plus $500 times the number of other dependents meeting the residency test (internal key)".to_string(), "Schedule 8812, lines 4-8 (internal key)".to_string()),
+        "sched8812_credit_after_phaseout" => ("Schedule 8812 line 12: the tentative credit (internal key sched8812_tentative) minus the phaseout reduction of Schedule 8812 line 11 — 5% of the modified AGI (AGI in v1) over the filing-status threshold, rounded up to the next multiple of $1,000 (internal key)".to_string(), "Schedule 8812, lines 9-12 (internal key)".to_string()),
+        "sched8812_earned_income" => ("earned income for the additional child tax credit (Schedule 8812 line 18a), v1 definition: total W-2 wages plus the Schedule C net profit when it is positive (internal key)".to_string(), "Schedule 8812, Part II-A, line 18a (internal key)".to_string()),
+        "21" => ("line 19 plus Schedule 3, line 14 (other nonrefundable credits), which is zero in v1, so line 21 equals line 19".to_string(), "Form 1040, line 21".to_string()),
+        "22" => ("line 16 minus line 21, floored at zero (nonrefundable credits cannot make the tax negative or offset line 23 taxes)".to_string(), "Form 1040, line 22".to_string()),
+        "24" => ("line 22 plus line 23".to_string(), "Form 1040, line 24".to_string()),
+        "28" => ("the additional child tax credit from Schedule 8812 Part II-A (line 27): the smallest of the credit left unused by line 19 (Schedule 8812 line 12 minus line 14), $1,700 per qualifying child, or 15% of earned income (internal key sched8812_earned_income) over $2,500; the Part II-B formula for three or more qualifying children is not implemented in v1".to_string(), "Form 1040, line 28; Schedule 8812, Part II-A".to_string()),
+        "32" => ("total other payments and refundable credits: line 28 in v1 (lines 27a/29/30/31 — EIC, American opportunity, adoption, Schedule 3 line 15 — are not implemented)".to_string(), "Form 1040, line 32".to_string()),
+        "33" => ("line 25d (total withheld) plus line 32 (refundable credits)".to_string(), "Form 1040, line 33".to_string()),
         "schd_net_capital_gain" => ("the QDCG worksheet's capital-gain input: the smaller of Schedule D lines 15 and 16 when both are gains, else 0".to_string(), "Qualified Dividends and Capital Gain Tax Worksheet, line 3 (Instructions for Form 1040)".to_string()),
         "schd_carryover_short" => ("short-term capital loss carried to next year per the Capital Loss Carryover Worksheet (the $3,000/$1,500 allowance is absorbed against short-term losses first)".to_string(), "Instructions for Schedule D, Capital Loss Carryover Worksheet".to_string()),
         "schd_carryover_long" => ("long-term capital loss carried to next year per the Capital Loss Carryover Worksheet".to_string(), "Instructions for Schedule D, Capital Loss Carryover Worksheet".to_string()),

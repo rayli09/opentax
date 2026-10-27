@@ -11,8 +11,9 @@ use tax_core::{FactResult, Money, TaxParams};
 
 pub mod worksheets;
 pub use worksheets::{
-    capital_loss_carryover, combine_schedule_d, deductible_part_of_se_tax, line16_tax, qdcg_tax,
-    schedule_se_tax, tax_on_amount, ScheduleDCombination, ScheduleSe,
+    capital_loss_carryover, classify_dependent, combine_schedule_d, deductible_part_of_se_tax,
+    line16_tax, qdcg_tax, schedule_8812, schedule_se_tax, tax_on_amount, DependentCreditClass,
+    Schedule8812, ScheduleDCombination, ScheduleSe,
 };
 
 /// One W-2 (Form W-2, Wage and Tax Statement). Money = cents.
@@ -165,6 +166,89 @@ impl I1099NecInput {
     }
 }
 
+/// A dependent's relationship to the taxpayer, for the credits on
+/// Schedule 8812. Only the child-type relationships can qualify for the
+/// child tax credit; `"other"` (any other qualifying relative) takes
+/// the credit-for-other-dependents path only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DependentRelationship {
+    Child,
+    Stepchild,
+    FosterChild,
+    Other,
+}
+
+fn default_months_lived_with_taxpayer() -> u32 {
+    12
+}
+
+/// One dependent claimed on the return (Form 1040, Dependents section).
+/// Dependents are not income documents: they feed only the Schedule
+/// 8812 credits (child tax credit, credit for other dependents,
+/// additional child tax credit). No TIN/SSN is stored — a dependent's
+/// SSN is never entered into the PDF export (see docs/KNOWN_LIMITS.md).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DependentInput {
+    /// Full name as it should print in the Dependents table.
+    pub name: String,
+    pub relationship: DependentRelationship,
+    /// Age on December 31 of the tax year. The child tax credit
+    /// requires the child to be *under* 17 at year-end (Schedule 8812
+    /// instructions: "under age 17 at the end of 2025").
+    pub age: u32,
+    /// Months of the tax year the dependent lived with the taxpayer
+    /// (0–12). The residency test modeled in v1 is "more than half the
+    /// year", i.e. strictly more than 6 months.
+    #[serde(default = "default_months_lived_with_taxpayer")]
+    pub months_lived_with_taxpayer: u32,
+}
+
+/// Consistency findings for one dependent entry, mirroring
+/// [`validate_1099_div`]: classification consequences worth surfacing
+/// before the return is filed (the engine takes them into account in
+/// [`worksheets::classify_dependent`]; these findings explain it).
+pub fn validate_dependent(dep: &DependentInput) -> Vec<ConsistencyFinding> {
+    let mut findings = Vec::new();
+    if dep.relationship != DependentRelationship::Other && dep.age >= 17 {
+        findings.push(ConsistencyFinding {
+            code: "dependent_ctc_age",
+            severity: "info",
+            message: format!(
+                "dependent {}: age {} on December 31 is 17 or older, so the child tax \
+                 credit does not apply (the child must be under 17 at year-end); the \
+                 credit for other dependents is taken instead, if the residency test \
+                 is met",
+                dep.name, dep.age
+            ),
+        });
+    }
+    if dep.relationship == DependentRelationship::Other {
+        findings.push(ConsistencyFinding {
+            code: "dependent_odc_only",
+            severity: "info",
+            message: format!(
+                "dependent {}: relationship \"other\" takes the credit for other \
+                 dependents path only — never the child tax credit",
+                dep.name
+            ),
+        });
+    }
+    if dep.months_lived_with_taxpayer <= 6 {
+        findings.push(ConsistencyFinding {
+            code: "dependent_residency",
+            severity: "warning",
+            message: format!(
+                "dependent {}: lived with the taxpayer {} month(s), which fails the \
+                 more-than-half-the-year residency test as modeled in v1 — no credit \
+                 is taken for this dependent",
+                dep.name, dep.months_lived_with_taxpayer
+            ),
+        });
+    }
+    findings
+}
+
 /// Schedule C net profit (loss) over all 1099-NEC engagements
 /// (Σ (Box 1 − expenses)) — Schedule 1 line 3, flowing to Form 1040
 /// line 8. An empty set is a stated fact: net zero.
@@ -195,6 +279,9 @@ pub struct Form1040Input {
     pub f1099_bs: Vec<I1099BInput>,
     #[serde(default)]
     pub f1099_necs: Vec<I1099NecInput>,
+    /// Dependents claimed on the return (Schedule 8812 credits only).
+    #[serde(default)]
+    pub dependents: Vec<DependentInput>,
 }
 
 /// A computed return: line number (Form 1040 numbering) → fact result.
@@ -208,8 +295,11 @@ pub struct Form1040Input {
 /// self-employment keys `schc_net_profit` (Schedule C net profit from
 /// 1099-NEC engagements, Schedule 1 line 3), `schedse_net_earnings`
 /// (Schedule SE line 4a net earnings) and `sched2_se_tax` (the Schedule
-/// SE tax as it enters Schedule 2 line 4, equal to line 23). They are
-/// not Form 1040 line numbers.
+/// SE tax as it enters Schedule 2 line 4, equal to line 23) — plus the
+/// Schedule 8812 keys `sched8812_tentative` (line 8 tentative credit
+/// before the phaseout), `sched8812_credit_after_phaseout` (line 12)
+/// and `sched8812_earned_income` (Part II-A line 18a, v1 definition).
+/// They are not Form 1040 line numbers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComputedReturn {
     pub lines: BTreeMap<String, FactResult<Money>>,
@@ -274,13 +364,17 @@ pub fn validate_1099_div(div: &I1099DivInput) -> Vec<ConsistencyFinding> {
 /// from 1099-NEC engagements only), 9 total income, 10 adjustments to
 /// income (v1: the deductible part of SE tax, Schedule 1 line 15), 11 AGI
 /// (9 − 10), 12 standard deduction, 15 taxable income, 16 tax,
-/// 23 other taxes (v1: the Schedule SE tax, via Schedule 2 line 4),
-/// 24 total tax (16 + 23), 25a W-2 withholding, 25d total withheld
-/// (W-2 + 1099-INT/DIV/B/NEC Box 4), 33 total other payments and
-/// refundable credits (simplified: = 25d), 34 overpaid (refund) when
-/// payments exceed line 24, 37 amount owed otherwise. Plus the internal
-/// `schd_*` / `schc_*` / `schedse_*` / `sched2_*` keys described on
-/// [`ComputedReturn`].
+/// 19 nonrefundable child tax credit / credit for other dependents
+/// (Schedule 8812 line 14), 21 total nonrefundable credits (= 19 in v1:
+/// Schedule 3 line 14 is zero), 22 tax after nonrefundable credits
+/// (max(0, 16 − 21)), 23 other taxes (v1: the Schedule SE tax, via
+/// Schedule 2 line 4), 24 total tax (22 + 23), 25a W-2 withholding,
+/// 25d total withheld (W-2 + 1099-INT/DIV/B/NEC Box 4), 28 additional
+/// child tax credit (Schedule 8812 Part II-A), 32 total other payments
+/// and refundable credits (= 28 in v1), 33 total payments (25d + 32),
+/// 34 overpaid (refund) when payments exceed line 24, 37 amount owed
+/// otherwise. Plus the internal `schd_*` / `schc_*` / `schedse_*` /
+/// `sched2_*` / `sched8812_*` keys described on [`ComputedReturn`].
 ///
 /// Line 16 is figured by the method the 1040 instructions prescribe
 /// (see [`worksheets::line16_tax`]): the Qualified Dividends and Capital
@@ -293,16 +387,24 @@ pub fn validate_1099_div(div: &I1099DivInput) -> Vec<ConsistencyFinding> {
 /// lines 7, 9, 11, 15, 16, 24, 34, 37 (and the `schd_*` keys)
 /// `Incomplete`; independent lines stay `Complete` — in particular the
 /// self-employment lines (8, 10, 23 and the `schc_*` / `schedse_*` /
-/// `sched2_*` keys) depend only on 1099-NEC and W-2 inputs.
+/// `sched2_*` keys) depend only on 1099-NEC and W-2 inputs. The
+/// Schedule 8812 credit lines (19, 21, 22, 28, 32 — and 33 through 32)
+/// depend on AGI and line 16 when dependents are stored, so they are
+/// `Incomplete` then too; with no dependents stored they are a stated
+/// zero (the tentative credit is zero regardless of income).
 ///
 /// Simplifications (docs/KNOWN_LIMITS.md): the only adjustment to income
-/// is the deductible part of SE tax; no itemizing, no credits, no QBI.
-/// Schedule D is the simplified two-net combination (no K-1 / Forms
-/// 6252/4684 / capital gain distribution components, no 28%-rate or
-/// unrecaptured §1250 amounts), so the Schedule D Tax Worksheet is never
-/// triggered; NIIT (Form 8960) is not figured. Schedule SE is the
-/// simplified computation in [`worksheets::schedule_se_tax`], with Σ W-2
-/// Box 1 wages standing in for Box 3 Social Security wages.
+/// is the deductible part of SE tax; no itemizing, no QBI. The only
+/// credits are the Schedule 8812 family credits, in the simplified
+/// form of [`worksheets::schedule_8812`] (MAGI = AGI; no Schedule 3
+/// nonrefundable credits; Part II-B not implemented; the earned income
+/// credit is a different credit and is NOT implemented). Schedule D is
+/// the simplified two-net combination (no K-1 / Forms 6252/4684 /
+/// capital gain distribution components, no 28%-rate or unrecaptured
+/// §1250 amounts), so the Schedule D Tax Worksheet is never triggered;
+/// NIIT (Form 8960) is not figured. Schedule SE is the simplified
+/// computation in [`worksheets::schedule_se_tax`], with Σ W-2 Box 1
+/// wages standing in for Box 3 Social Security wages.
 pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn {
     let wages: Money = input.w2s.iter().map(|w| w.wages).sum();
     let w2_withholding: Money = input.w2s.iter().map(|w| w.federal_withholding).sum();
@@ -420,23 +522,93 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
         }
         _ => (FactResult::Incomplete, FactResult::Incomplete),
     };
-    // Line 24 (total tax) = line 16 + line 23; overpayment / amount owed
-    // compare line 33 payments against line 24, per the form.
-    let total_tax_f = tax_f.clone().map(|t| t + se.tax);
-    let payments_f = complete(total_withholding);
-    let (overpaid_f, owed_f) = match total_tax_f.clone() {
-        FactResult::Complete(tax) | FactResult::Placeholder(tax) => {
-            let wrap = |v: Money| match total_tax_f {
-                FactResult::Placeholder(_) => FactResult::Placeholder(v),
-                _ => FactResult::Complete(v),
+    // Schedule 8812 (family credits). Earned income (Part II-A line
+    // 18a, v1 definition): total W-2 wages plus the Schedule C net
+    // profit when it is positive. The worksheet needs MAGI (= AGI in
+    // v1) and line 16 for the Credit Limit Worksheet A, so with
+    // dependents stored the credit lines inherit their completeness;
+    // with none stored the tentative credit is zero whatever the
+    // income, so every credit line is a stated zero.
+    let earned_income = wages + Money::from_cents(schc_net.cents().max(0));
+    let s8812_f: FactResult<Schedule8812> = if input.dependents.is_empty() {
+        FactResult::Complete(schedule_8812(
+            &[],
+            input.status,
+            Money::ZERO,
+            Money::ZERO,
+            earned_income,
+            params,
+        ))
+    } else {
+        match (agi_f.clone(), tax_f.clone()) {
+            (FactResult::Complete(agi), FactResult::Complete(tax)) => {
+                FactResult::Complete(schedule_8812(
+                    &input.dependents,
+                    input.status,
+                    agi,
+                    tax,
+                    earned_income,
+                    params,
+                ))
+            }
+            (FactResult::Incomplete, _) | (_, FactResult::Incomplete) => FactResult::Incomplete,
+            (a, b) => FactResult::Placeholder(schedule_8812(
+                &input.dependents,
+                input.status,
+                *a.value().expect("non-incomplete fact has a value"),
+                *b.value().expect("non-incomplete fact has a value"),
+                earned_income,
+                params,
+            )),
+        }
+    };
+    let tentative_f = s8812_f.clone().map(|s| s.tentative_credit);
+    let after_phaseout_f = s8812_f.clone().map(|s| s.credit_after_phaseout);
+    // Line 19 (Schedule 8812 line 14); line 21 = line 19 in v1
+    // (Schedule 3 line 14, other nonrefundable credits, is zero).
+    let line19_f = s8812_f.clone().map(|s| s.nonrefundable_credit);
+    let line21_f = line19_f.clone();
+    // Line 22 = max(0, line 16 − line 21); line 24 = line 22 + line 23.
+    let line22_f = match (tax_f.clone(), line21_f.clone()) {
+        (FactResult::Complete(t), FactResult::Complete(c)) => {
+            FactResult::Complete(Money::from_cents((t - c).cents().max(0)))
+        }
+        (FactResult::Incomplete, _) | (_, FactResult::Incomplete) => FactResult::Incomplete,
+        (a, b) => FactResult::Placeholder(Money::from_cents(
+            (*a.value().expect("non-incomplete fact has a value")
+                - *b.value().expect("non-incomplete fact has a value"))
+            .cents()
+            .max(0),
+        )),
+    };
+    let total_tax_f = add_facts(line22_f.clone(), complete(se.tax));
+    // Line 28 (ACTC); line 32 = line 28 in v1; line 33 = 25d + 32.
+    let line28_f = s8812_f.map(|s| s.additional_child_tax_credit);
+    let line32_f = line28_f.clone();
+    let payments_f = add_facts(complete(total_withholding), line32_f.clone());
+    // Overpayment / amount owed compare line 33 payments against
+    // line 24, per the form.
+    let (overpaid_f, owed_f) = match (total_tax_f.clone(), payments_f.clone()) {
+        (
+            FactResult::Complete(tax) | FactResult::Placeholder(tax),
+            FactResult::Complete(pay) | FactResult::Placeholder(pay),
+        ) => {
+            let placeholder = matches!(total_tax_f, FactResult::Placeholder(_))
+                || matches!(payments_f, FactResult::Placeholder(_));
+            let wrap = |v: Money| {
+                if placeholder {
+                    FactResult::Placeholder(v)
+                } else {
+                    FactResult::Complete(v)
+                }
             };
-            if total_withholding.cents() > tax.cents() {
-                (wrap(total_withholding - tax), wrap(Money::ZERO))
+            if pay.cents() > tax.cents() {
+                (wrap(pay - tax), wrap(Money::ZERO))
             } else {
-                (wrap(Money::ZERO), wrap(tax - total_withholding))
+                (wrap(Money::ZERO), wrap(tax - pay))
             }
         }
-        FactResult::Incomplete => (FactResult::Incomplete, FactResult::Incomplete),
+        _ => (FactResult::Incomplete, FactResult::Incomplete),
     };
 
     let mut lines: BTreeMap<String, FactResult<Money>> = BTreeMap::new();
@@ -462,10 +634,18 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     lines.insert("12".into(), complete(deduction));
     lines.insert("15".into(), taxable_f);
     lines.insert("16".into(), tax_f);
+    lines.insert("sched8812_tentative".into(), tentative_f);
+    lines.insert("sched8812_credit_after_phaseout".into(), after_phaseout_f);
+    lines.insert("sched8812_earned_income".into(), complete(earned_income));
+    lines.insert("19".into(), line19_f);
+    lines.insert("21".into(), line21_f);
+    lines.insert("22".into(), line22_f);
     lines.insert("23".into(), complete(se.tax));
     lines.insert("24".into(), total_tax_f);
     lines.insert("25a".into(), complete(w2_withholding));
     lines.insert("25d".into(), complete(total_withholding));
+    lines.insert("28".into(), line28_f);
+    lines.insert("32".into(), line32_f);
     lines.insert("33".into(), payments_f);
     lines.insert("34".into(), overpaid_f);
     lines.insert("37".into(), owed_f);
@@ -493,9 +673,22 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
          (internal keys schd_carryover_short / schd_carryover_long)."
             .to_string(),
         "The only adjustment to income (line 10) is the deductible part of \
-         self-employment tax; no credits or itemized deductions in v1."
+         self-employment tax; no itemized deductions in v1. The only \
+         credits are the Schedule 8812 family credits (lines 19/21 \
+         nonrefundable, line 28 additional child tax credit, line 32)."
             .to_string(),
     ];
+    if !input.dependents.is_empty() {
+        notes.push(
+            "Schedule 8812 is the simplified computation: MAGI is taken \
+             to be AGI, the nonrefundable credit is limited by line 16 \
+             (Credit Limit Worksheet A), and the additional child tax \
+             credit uses Part II-A only (the three-or-more-children \
+             Part II-B formula is not implemented). The earned income \
+             credit (EIC) is a different credit and is not implemented."
+                .to_string(),
+        );
+    }
     if !input.f1099_necs.is_empty() {
         notes.push(
             "Schedule C net profit from 1099-NEC engagements flows through \
@@ -549,6 +742,10 @@ pub struct FieldMapEntry {
     /// For checkboxes: the field's on-state name (`"1"`..`"5"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    /// For dependents-table entries (`dependent_*` kinds): which
+    /// dependent column (1–4) this field belongs to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependent_index: Option<u32>,
     /// How this assignment was verified (geometric row match).
     pub note: String,
 }
@@ -605,6 +802,9 @@ pub struct SkippedField {
 pub struct FillPlan {
     pub values: Vec<FillValue>,
     pub skipped: Vec<SkippedField>,
+    /// Non-fatal export caveats (e.g. more dependents stored than the
+    /// form's four table columns).
+    pub warnings: Vec<String>,
 }
 
 /// Identity fields a stored return does not carry today; the PDF export
@@ -625,6 +825,24 @@ const IDENTITY_SKIPS: &[(&str, &str)] = &[
 pub fn build_fill_values(
     lines: &BTreeMap<String, FactResult<Money>>,
     status: FilingStatus,
+) -> Result<FillPlan, Vec<String>> {
+    build_fill_values_with_dependents(lines, status, &[])
+}
+
+/// [`build_fill_values`], plus the page-1 Dependents table for the
+/// stored dependents: each dependent's name (first whitespace-separated
+/// word → the (1) First name field, the remainder → the (2) Last name
+/// field) and the question-(7) credit checkbox matching the dependent's
+/// Schedule 8812 classification ([`worksheets::classify_dependent`]:
+/// child tax credit → on-state `"1"`, credit for other dependents →
+/// `"2"`, no credit → neither box). The table has four columns: a fifth
+/// or later dependent is not printed (a warning is recorded; the
+/// credits are still computed for all dependents). Dependent SSNs are
+/// not stored, so the (3) SSN fields are reported under `skipped`.
+pub fn build_fill_values_with_dependents(
+    lines: &BTreeMap<String, FactResult<Money>>,
+    status: FilingStatus,
+    dependents: &[DependentInput],
 ) -> Result<FillPlan, Vec<String>> {
     let map = f1040_2025_field_map();
     let mut incomplete: Vec<String> = Vec::new();
@@ -685,14 +903,84 @@ pub fn build_fill_values(
         }
     }
 
-    let skipped = IDENTITY_SKIPS
+    // Dependents table (page 1): names + the question-(7) credit
+    // checkbox, for the first four stored dependents (the form has
+    // exactly four columns).
+    let mut warnings: Vec<String> = Vec::new();
+    if dependents.len() > 4 {
+        warnings.push(format!(
+            "{} dependents are stored but the Form 1040 Dependents table has only \
+             four columns; the first four are printed (credits are still computed \
+             for all {})",
+            dependents.len(),
+            dependents.len()
+        ));
+    }
+    let dep_entry = |kind: &str, index: u32| -> Option<&FieldMapEntry> {
+        map.entries
+            .iter()
+            .find(|e| e.kind == kind && e.dependent_index == Some(index))
+    };
+    for (i, dep) in dependents.iter().take(4).enumerate() {
+        let index = (i + 1) as u32;
+        let mut words = dep.name.split_whitespace();
+        let first = words.next().unwrap_or("");
+        let last = words.collect::<Vec<_>>().join(" ");
+        if !first.is_empty() {
+            if let Some(e) = dep_entry("dependent_first_name", index) {
+                values.push(FillValue {
+                    line: format!("dependent_{index}_first_name"),
+                    field: e.qname.clone(),
+                    value: first.to_string(),
+                });
+            }
+        }
+        if !last.is_empty() {
+            if let Some(e) = dep_entry("dependent_last_name", index) {
+                values.push(FillValue {
+                    line: format!("dependent_{index}_last_name"),
+                    field: e.qname.clone(),
+                    value: last,
+                });
+            }
+        }
+        let credit_kind = match classify_dependent(dep) {
+            DependentCreditClass::ChildTaxCredit => Some("dependent_credit_ctc"),
+            DependentCreditClass::OtherDependent => Some("dependent_credit_odc"),
+            DependentCreditClass::None => None,
+        };
+        if let Some(kind) = credit_kind {
+            if let Some(e) = dep_entry(kind, index) {
+                values.push(FillValue {
+                    line: format!("dependent_{index}_credit"),
+                    field: e.qname.clone(),
+                    value: e
+                        .value
+                        .clone()
+                        .expect("dependent credit map entries carry an on-state value"),
+                });
+            }
+        }
+    }
+
+    let mut skipped: Vec<SkippedField> = IDENTITY_SKIPS
         .iter()
         .map(|(field, reason)| SkippedField {
             field: field.to_string(),
             reason: reason.to_string(),
         })
         .collect();
-    Ok(FillPlan { values, skipped })
+    if !dependents.is_empty() {
+        skipped.push(SkippedField {
+            field: "dependent_ssn".to_string(),
+            reason: "not stored in return".to_string(),
+        });
+    }
+    Ok(FillPlan {
+        values,
+        skipped,
+        warnings,
+    })
 }
 
 #[cfg(test)]
@@ -717,6 +1005,7 @@ mod tests {
             f1099_divs: vec![],
             f1099_bs: vec![],
             f1099_necs: vec![],
+            dependents: vec![],
         }
     }
 
@@ -1213,11 +1502,11 @@ mod tests {
         assert_eq!(map.year, 2025);
         assert!(!map.derivation.is_empty());
         let amounts: Vec<_> = map.entries.iter().filter(|e| e.kind == "amount").collect();
-        // 23 mapped amount fields: 1a 1z 2a 2b 3a 3b 7 8 9 10 11a 11b 12e
-        // 14 15 16 23 24 25a 25d 33 34 37 — engine line 11 feeds both 11a
-        // and 11b, line 12 feeds 12e and 14, and line 24 is fed by the
-        // engine's own line 24 (= 16 + 23).
-        assert_eq!(amounts.len(), 23);
+        // 28 mapped amount fields: 1a 1z 2a 2b 3a 3b 7 8 9 10 11a 11b 12e
+        // 14 15 16 19 21 22 23 24 25a 25d 28 32 33 34 37 — engine line 11
+        // feeds both 11a and 11b, line 12 feeds 12e and 14, and line 24
+        // is fed by the engine's own line 24 (= 22 + 23).
+        assert_eq!(amounts.len(), 28);
         for e in &map.entries {
             assert!(e.qname.starts_with("topmostSubform[0]."), "{}", e.qname);
             assert!(!e.note.is_empty(), "every entry documents its evidence");
@@ -1236,8 +1525,8 @@ mod tests {
     fn complete_lines(overpaid: i64, owed: i64) -> BTreeMap<String, FactResult<Money>> {
         let mut lines = BTreeMap::new();
         for l in [
-            "1a", "1z", "2a", "2b", "3a", "3b", "7", "8", "9", "10", "11", "12", "15", "16", "23",
-            "24", "25a", "25d", "33",
+            "1a", "1z", "2a", "2b", "3a", "3b", "7", "8", "9", "10", "11", "12", "15", "16", "19",
+            "21", "22", "23", "24", "25a", "25d", "28", "32", "33",
         ] {
             lines.insert(l.to_string(), FactResult::Complete(Money::from_cents(100)));
         }
@@ -1303,6 +1592,267 @@ mod tests {
         lines.remove("25d");
         let err = build_fill_values(&lines, FilingStatus::Single).unwrap_err();
         assert_eq!(err, vec!["7".to_string(), "25d".to_string()]);
+    }
+
+    fn dependent(
+        name: &str,
+        relationship: DependentRelationship,
+        age: u32,
+        months: u32,
+    ) -> DependentInput {
+        DependentInput {
+            name: name.into(),
+            relationship,
+            age,
+            months_lived_with_taxpayer: months,
+        }
+    }
+
+    fn case006_input() -> Form1040Input {
+        let mut input = golden_input();
+        input.status = FilingStatus::Mfj;
+        input.w2s[0].wages = Money::from_cents(9_000_000);
+        input.w2s[0].federal_withholding = Money::from_cents(800_000);
+        input.dependents = vec![
+            dependent("Kid One", DependentRelationship::Child, 7, 12),
+            dependent("Kid Two", DependentRelationship::Child, 4, 12),
+            dependent("Relative Three", DependentRelationship::Other, 19, 12),
+        ];
+        input
+    }
+
+    /// Golden case 006 (benchmark/cases/f1040/2025/006-family-mfj):
+    /// MFJ, W-2 $90,000 / $8,000 withheld; children 7 and 4 (CTC) and an
+    /// other dependent 19 (ODC). Hand-derived in the case's _sources:
+    /// taxable $58,500 → Tax Table MFJ $6,546; tentative credit
+    /// 2 × $2,200 + $500 = $4,900, no phaseout (MAGI < $400,000),
+    /// nonrefundable = min(4900, 6546) = $4,900; line 22 = $1,646;
+    /// ACTC $0 (fully absorbed); refund $6,354.
+    #[test]
+    fn golden_family_mfj() {
+        let params = TaxParams::load_2025().unwrap();
+        let r = compute_1040(&case006_input(), &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("11"), 9_000_000, "AGI $90,000");
+        assert_eq!(line("15"), 5_850_000, "taxable $58,500");
+        assert_eq!(line("16"), 654_600, "tax $6,546 (Tax Table MFJ)");
+        assert_eq!(r.line16_method.as_deref(), Some("tax_table"));
+        assert_eq!(line("sched8812_tentative"), 490_000);
+        assert_eq!(line("sched8812_credit_after_phaseout"), 490_000);
+        assert_eq!(line("sched8812_earned_income"), 9_000_000);
+        assert_eq!(line("19"), 490_000, "nonrefundable CTC/ODC $4,900");
+        assert_eq!(line("21"), 490_000);
+        assert_eq!(line("22"), 164_600, "6546 - 4900");
+        assert_eq!(line("23"), 0);
+        assert_eq!(line("24"), 164_600, "total tax = 22 + 23");
+        assert_eq!(line("28"), 0, "no ACTC: credit fully absorbed");
+        assert_eq!(line("32"), 0);
+        assert_eq!(line("33"), 800_000, "25d + 32");
+        assert_eq!(line("34"), 635_400, "refund $6,354");
+        assert_eq!(line("37"), 0);
+    }
+
+    fn case007_input() -> Form1040Input {
+        let mut input = golden_input();
+        input.status = FilingStatus::Hoh;
+        input.w2s[0].wages = Money::from_cents(3_000_000);
+        input.w2s[0].federal_withholding = Money::from_cents(100_000);
+        input.dependents = vec![dependent("Kid One", DependentRelationship::Child, 5, 12)];
+        input
+    }
+
+    /// Golden case 007 (benchmark/cases/f1040/2025/007-actc-hoh): HoH,
+    /// W-2 $30,000 / $1,000 withheld, one child age 5. Hand-derived in
+    /// the case's _sources: taxable $6,375 → Tax Table HoH $638;
+    /// tentative CTC $2,200; nonrefundable limited to $638 (Credit
+    /// Limit Worksheet A = line 16); ACTC = 2200 − 638 = $1,562 (under
+    /// the $1,700 cap and the $4,125 earned-income measure); refund
+    /// = $1,000 withholding + $1,562 ACTC = $2,562.
+    #[test]
+    fn golden_actc_hoh() {
+        let params = TaxParams::load_2025().unwrap();
+        let r = compute_1040(&case007_input(), &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("12"), 2_362_500, "HoH standard deduction $23,625");
+        assert_eq!(line("15"), 637_500, "taxable $6,375");
+        assert_eq!(line("16"), 63_800, "tax $638 (Tax Table HoH)");
+        assert_eq!(line("sched8812_tentative"), 220_000);
+        assert_eq!(line("19"), 63_800, "nonrefundable limited to line 16");
+        assert_eq!(line("21"), 63_800);
+        assert_eq!(line("22"), 0);
+        assert_eq!(line("24"), 0);
+        assert_eq!(line("28"), 156_200, "ACTC $1,562");
+        assert_eq!(line("32"), 156_200);
+        assert_eq!(line("33"), 256_200, "25d 1000 + 32 1562");
+        assert_eq!(line("34"), 256_200, "refund $2,562");
+        assert_eq!(line("37"), 0);
+    }
+
+    #[test]
+    fn case006_json_round_trip() {
+        // Note: case 006's input omits months_lived_with_taxpayer, which
+        // must default to 12.
+        let json = r#"{
+            "status": "mfj",
+            "w2s": [{"employer_ein": "12-3456789", "wages": "9000000", "federal_withholding": "800000"}],
+            "interest_income": "0",
+            "ordinary_dividends": "0",
+            "dependents": [
+                {"name": "Kid One", "relationship": "child", "age": 7},
+                {"name": "Kid Two", "relationship": "child", "age": 4},
+                {"name": "Relative Three", "relationship": "other", "age": 19}
+            ]
+        }"#;
+        let input: Form1040Input = serde_json::from_str(json).unwrap();
+        assert_eq!(input, case006_input());
+    }
+
+    #[test]
+    fn no_dependents_keeps_pre_credit_behavior() {
+        // Cases 001-005 have no dependents: lines 19/21/28/32 are stated
+        // zeros, 22 = 16, 24 = 16 + 23, 33 = 25d — the pre-8812 wiring.
+        let params = TaxParams::load_2025().unwrap();
+        let r = compute_1040(&golden_input(), &params);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("sched8812_tentative"), 0);
+        assert_eq!(line("sched8812_credit_after_phaseout"), 0);
+        assert_eq!(line("19"), 0);
+        assert_eq!(line("21"), 0);
+        assert_eq!(line("22"), line("16"));
+        assert_eq!(line("24"), line("16") + line("23"));
+        assert_eq!(line("28"), 0);
+        assert_eq!(line("32"), 0);
+        assert_eq!(line("33"), line("25d"));
+    }
+
+    #[test]
+    fn dependents_with_incomplete_1099b_poison_credit_lines() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut input = case002_input();
+        input.dependents = vec![dependent("Kid One", DependentRelationship::Child, 5, 12)];
+        input.f1099_bs[0].transactions[0].cost_basis = None;
+        let r = compute_1040(&input, &params);
+        assert!(!r.complete);
+        for line in ["19", "21", "22", "24", "28", "32", "33", "34", "37"] {
+            assert_eq!(
+                r.lines[line],
+                FactResult::Incomplete,
+                "line {line} must be incomplete"
+            );
+        }
+        // Earned income depends only on W-2/NEC entries: still exact.
+        assert_eq!(
+            r.lines["sched8812_earned_income"].value().copied().unwrap(),
+            Money::from_cents(5_000_000)
+        );
+    }
+
+    #[test]
+    fn dependent_validation_findings() {
+        let f = validate_dependent(&dependent("A", DependentRelationship::Child, 17, 12));
+        assert!(f
+            .iter()
+            .any(|x| x.code == "dependent_ctc_age" && x.severity == "info"));
+        let f = validate_dependent(&dependent("B", DependentRelationship::Child, 10, 6));
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].code, "dependent_residency");
+        assert_eq!(f[0].severity, "warning");
+        let f = validate_dependent(&dependent("C", DependentRelationship::Other, 40, 12));
+        assert!(f
+            .iter()
+            .any(|x| x.code == "dependent_odc_only" && x.severity == "info"));
+        let f = validate_dependent(&dependent("D", DependentRelationship::Child, 10, 12));
+        assert!(f.is_empty(), "an ordinary qualifying child raises nothing");
+    }
+
+    #[test]
+    fn fill_plan_dependents_table() {
+        let params = TaxParams::load_2025().unwrap();
+        let input = case006_input();
+        let r = compute_1040(&input, &params);
+        let plan =
+            build_fill_values_with_dependents(&r.lines, FilingStatus::Mfj, &input.dependents)
+                .unwrap();
+        let get = |l: &str| plan.values.iter().find(|v| v.line == l);
+        // Names: first word -> (1) first name, remainder -> (2) last name.
+        assert_eq!(get("dependent_1_first_name").unwrap().value, "Kid");
+        assert_eq!(get("dependent_1_last_name").unwrap().value, "One");
+        assert!(get("dependent_1_first_name")
+            .unwrap()
+            .field
+            .ends_with("Row1[0].f1_31[0]"));
+        // Credit checkboxes: children -> CTC on-state "1"; the age-19
+        // other dependent -> ODC on-state "2", on the Row7 fields.
+        let c1 = get("dependent_1_credit").unwrap();
+        assert_eq!(c1.value, "1");
+        assert!(c1.field.ends_with("Dependent1[0].c1_28[0]"));
+        let c3 = get("dependent_3_credit").unwrap();
+        assert_eq!(c3.value, "2");
+        assert!(c3.field.ends_with("Dependent3[0].c1_30[1]"));
+        // Credit amount lines are part of the plan too.
+        assert_eq!(
+            plan.values.iter().find(|v| v.line == "19").unwrap().value,
+            "4900.00"
+        );
+        assert_eq!(
+            plan.values.iter().find(|v| v.line == "22").unwrap().value,
+            "1646.00"
+        );
+        // Dependent SSNs are reported skipped, not invented.
+        assert!(plan
+            .skipped
+            .iter()
+            .any(|s| s.field == "dependent_ssn" && s.reason == "not stored in return"));
+        assert!(plan.warnings.is_empty());
+    }
+
+    #[test]
+    fn fill_plan_dependents_over_four_and_no_credit() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut input = case007_input();
+        input.dependents = vec![
+            dependent("A One", DependentRelationship::Child, 5, 12),
+            dependent("B Two", DependentRelationship::Child, 6, 12),
+            dependent("C Three", DependentRelationship::Child, 7, 12),
+            dependent("D Four", DependentRelationship::Child, 8, 12),
+            dependent("E Five", DependentRelationship::Child, 9, 12),
+            dependent("F Six", DependentRelationship::Child, 3, 4),
+        ];
+        let r = compute_1040(&input, &params);
+        let plan =
+            build_fill_values_with_dependents(&r.lines, FilingStatus::Hoh, &input.dependents)
+                .unwrap();
+        // Only the first four columns are printed; the warning says so.
+        assert!(plan
+            .values
+            .iter()
+            .any(|v| v.line == "dependent_4_first_name"));
+        assert!(!plan
+            .values
+            .iter()
+            .any(|v| v.line.starts_with("dependent_5")));
+        assert!(!plan
+            .values
+            .iter()
+            .any(|v| v.line.starts_with("dependent_6")));
+        assert_eq!(plan.warnings.len(), 1);
+        assert!(plan.warnings[0].contains("four columns"));
+        // A residency-failing dependent (the sixth here is beyond the
+        // table; use the same shape within four) gets a name but no
+        // credit box.
+        let mut input2 = case007_input();
+        input2.dependents = vec![dependent("Short Stay", DependentRelationship::Child, 5, 4)];
+        let r2 = compute_1040(&input2, &params);
+        let plan2 =
+            build_fill_values_with_dependents(&r2.lines, FilingStatus::Hoh, &input2.dependents)
+                .unwrap();
+        assert!(plan2
+            .values
+            .iter()
+            .any(|v| v.line == "dependent_1_first_name"));
+        assert!(!plan2.values.iter().any(|v| v.line == "dependent_1_credit"));
     }
 
     #[test]
