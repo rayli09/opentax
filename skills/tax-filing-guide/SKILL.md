@@ -83,6 +83,62 @@ receipt or equivalent), and record the mailing as the user's
 confirmation under step 4 above. The CLI produces the forms only; it
 never mails, submits, or pays.
 
+## California: the Form 540 is a separate filing
+
+When the return has a California state block (`tax return set-state`),
+the same packet export also produces a filled **Form 540** after the
+federal forms. California is filed **separately from the federal
+return** — its own envelope, its own address, its own payment. Never
+put the 540 in the IRS envelope or the 1040 in the FTB envelope.
+
+Manifest expectations for the CA entries:
+
+- `f540` must be `filled`. A `missing_template` f540 (the blank
+  `f540.pdf` was not in the forms dir) means the CA packet is not
+  ready — say so and stop, same as a federal missing template.
+- `f540ca` (Schedule CA) is **`not_applicable`, and that is correct**,
+  whenever the CA computation is in v1 scope: Schedule CA is required
+  only when there are California adjustments, and the CA engine
+  states the Schedule CA Part I totals (Form 540 lines 14/16) as zero
+  for every in-scope return — California conforms to the federal
+  treatment of all v1 facts, including the deductible part of
+  self-employment tax. Do not present the missing Schedule CA as a
+  gap, and do not file a zero Schedule CA.
+
+Before mailing, the filer completes by hand the fields the packet
+intentionally leaves blank on the 540 (the manifest notes list them):
+the county at time of filing; **line 91 use tax — the form says "Do
+not leave blank"**, so enter -0- and check the applicable box ("No use
+tax is owed" or "paid directly to CDTFA"); the line 92 full-year
+health-coverage box if it applies; lines 98/99/115 if they want part
+of the overpayment applied to next year's estimates or a direct
+deposit (bank details are never stored, so the routing/account
+fields are always blank in the packet); and the signature/date block
+(both spouses sign a joint return — the user signs, always).
+
+Assemble the CA envelope: Form 540, with the state copies (Copy 2) of
+each W-2 and any 1099 showing California withholding attached as the
+540 instructions direct; a check, if an amount is owed, payable to
+"Franchise Tax Board" with the filer's SSN and "2025 Form 540" on it
+(never cash). Mail to the Franchise Tax Board (2025 Form 540 booklet,
+"Mailing Your Tax Return"; the same two addresses are printed on the
+540 itself, Side 5):
+
+- **Refund or no amount due:** Franchise Tax Board,
+  PO Box 942840, Sacramento, CA 94240-0001
+- **Payment enclosed:** Franchise Tax Board,
+  PO Box 942867, Sacramento, CA 94267-0001
+
+Keep a full copy plus mailing evidence, and record the mailing as the
+user's confirmation under step 4 above.
+
+E-file note: the FTB runs its own free e-file, **CalFile**, for
+eligible filers, and commercial software can e-file the 540 as well —
+either is a valid channel, with the user submitting themselves as
+always. This tool does not e-file California: it produces the paper
+Form 540 only, and there is no CA equivalent of the federal MeF XML
+export in v1 (California's e-file XML is out of scope).
+
 ## Iron rules
 
 The router's six iron rules apply in full; rules 4 and 5 are the job here.

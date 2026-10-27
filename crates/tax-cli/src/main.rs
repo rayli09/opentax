@@ -196,7 +196,8 @@ enum ReturnAction {
     /// PDF) and --out. packet requires --forms-dir (a directory holding
     /// the blank TY2025 form PDFs under their canonical names —
     /// f1040.pdf, f1040sd.pdf, f8949.pdf, f1040s1.pdf, f1040s2.pdf,
-    /// f1040sc.pdf, f1040sse.pdf, f10408812.pdf, f1040s1a.pdf) and
+    /// f1040sc.pdf, f1040sse.pdf, f10408812.pdf, f1040s1a.pdf, plus
+    /// f540.pdf when a California state block is selected) and
     /// --out-dir (the packet is written there, with a manifest.json).
     /// mef requires --out (the XML file to write) and a stored taxpayer
     /// identity (the ReturnHeader cannot be populated without one);
@@ -2156,11 +2157,15 @@ fn packet_export(
         // state block is stored) California sections; name the
         // California lines explicitly when they are the gap, so a
         // CA-incomplete return does not report federal-only lines.
-        let mut message = format!(
-            "return {} is incomplete; lines missing or incomplete: {}",
-            ret.id,
-            view.incomplete.join(", ")
-        );
+        let mut message = if view.incomplete.is_empty() {
+            format!("return {} is incomplete", ret.id)
+        } else {
+            format!(
+                "return {} is incomplete; lines missing or incomplete: {}",
+                ret.id,
+                view.incomplete.join(", ")
+            )
+        };
         let mut extra = json!({"incomplete_lines": view.incomplete});
         if let Some(state) = &view.state {
             if !state.complete {

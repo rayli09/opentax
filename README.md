@@ -19,14 +19,16 @@ with its source recorded.
 > TY2025 California Form 540 for full-year residents (Schedule CA
 > adjustments scoped to the engine's facts, exemption credits with
 > the AGI limitation, the official CA Tax Table / Rate Schedules,
-> CalEITC and the Young Child Tax Credit; compute only, no CA PDF
-> yet), not a
+> CalEITC and the Young Child Tax Credit; the packet export also
+> fills the official Form 540 PDF, and Schedule CA is reported
+> not_applicable — v1 states no CA adjustments), not a
 > finished tax product. See
 > `docs/KNOWN_LIMITS.md` for exactly what is missing. JSON export,
 > filled-PDF export (amounts, filing status, and the Dependents table
 > onto a user-supplied TY2025 1040 template), and filing-packet export
 > (`--type packet`: the filled 1040 plus every applicable schedule —
-> Schedule D, Form 8949, Schedules 1, 2, C, SE, 8812, 1-A — with a
+> Schedule D, Form 8949, Schedules 1, 2, C, SE, 8812, 1-A — and, for
+> returns with a California state block, the filled Form 540, with a
 > per-form manifest) work; MeF XML export
 > (`--type mef`) also works — the return as standards-shaped XML
 > (TY2025v5.2 form documents, whole-dollar amounts, XSD-validated by

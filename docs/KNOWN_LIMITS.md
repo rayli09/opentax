@@ -324,7 +324,8 @@ midpoints (Tax Table) and by tiling/unimodality/maxima/spot reads
   facts is outside CA v1.
 - **Line 12 (California state wages) is not computed** — it is
   informational on the printed form; W-2 Box 16 is stored per entry
-  and used for the CalEITC earned income.
+  and used for the CalEITC earned income. It is left blank on the
+  filled Form 540 for the same reason.
 - **Standard deduction only** ($5,706 single/MFS, $11,412 MFJ/HoH).
   California itemized deductions (Schedule CA Part II, Form 540
   line 18 alternative) are not computed even when the federal return
@@ -398,10 +399,39 @@ midpoints (Tax Table) and by tiling/unimodality/maxima/spot reads
   makes line 71 (and with it 78 and the refund/due) Incomplete with a
   per-entry `ca_state_withholding_missing` validate finding; filers
   record `"0"` explicitly to state that no state tax was withheld.
-- **No PDF filling and no e-file for California in this lane**: the
-  packet and MeF exports are federal artifacts; Form 540 / Schedule
-  CA PDF fill is a separate lane, and California's e-file XML is out
-  of scope entirely.
+- **PDF filling (packet export)**: when a state block is stored, the
+  packet export fills the official FTB Form 540 after the federal
+  forms, from the CA engine's stated lines and the stored identity,
+  through the geometrically verified map
+  `crates/tax-forms/forms/f540-2025-field-map.json` (widget Rects vs
+  `pdftotext -bbox` printed labels, cross-checked against every
+  field's /TU tooltip; template:
+  https://www.ftb.ca.gov/forms/2025/2025-540.pdf, kept as the
+  git-ignored fixture `f540.pdf`). A CA-incomplete return fails the
+  packet export naming the incomplete California lines. Fields the
+  engine does not state stay blank and the manifest notes say why:
+  line 12, county at time of filing (not stored), lines 40–47, 61,
+  63, 72–74, 77, 91–96, 98, 99, 110–115, the direct-deposit fields
+  (bank details are not stored), and the signature block. Line 62 is
+  printed only when greater than zero; lines 97/100 print only the
+  side of the pair that is greater than zero. The exemption **counts**
+  (lines 7–10 boxes) come from the same `exemption_counts`
+  derivation as the engine's amounts. The Dependents section prints
+  the first three stored dependents (the form has three columns;
+  credits still compute for all). Form 540 has no occupation field,
+  so occupations never print on it. Two FTB form quirks the stack
+  handles: its AcroForm `/Fields` is an *indirect* array (tax-pdf
+  enumeration resolves that shape since this lane; IRS forms use a
+  direct array), and the running name/SSN headers on Sides 2–6 are
+  single fields with one widget per side, not per-side fields.
+  **Schedule CA is never filled in v1** (`f540ca` template:
+  https://www.ftb.ca.gov/forms/2025/2025-540-ca.pdf, fixture
+  `f540ca.pdf`): the packet reports it `not_applicable` with the
+  no-adjustments note above, because Schedule CA is required only
+  when there are adjustments and the engine states none. A
+  federal-only return's packet gains both CA entries as
+  `not_applicable`. California's e-file XML remains out of scope
+  entirely.
 
 ## Documents (tax-doc)
 
