@@ -390,6 +390,17 @@ fn default_age_65_born_before() -> String {
     // Deduction; the date is printed on the form).
     "1961-01-02".to_string()
 }
+fn default_senior_bonus_per_person_cents() -> i64 {
+    // Schedule 1-A (Form 1040) TY2025, Part V, lines 35–36: $6,000 per
+    // eligible person (the OBBBA "enhanced deduction for seniors",
+    // IRC §224 as added by P.L. 119-21, TY2025–2028).
+    600_000
+}
+fn default_senior_bonus_phaseout_rate_bp() -> u32 {
+    // Schedule 1-A, Part V, line 34: 6% of the modified AGI over the
+    // line 32 threshold.
+    600
+}
 fn default_eic_investment_income_limit_cents() -> i64 {
     // IRC §32(i), TY2025 amount per Rev. Proc. 2024-40, §3.01(2).
     1_195_000
@@ -439,6 +450,22 @@ pub struct TaxParams {
     /// 1961-01-01). ISO dates compare lexicographically.
     #[serde(default = "default_age_65_born_before")]
     pub age_65_born_before: String,
+    /// Schedule 1-A, Part V "enhanced deduction for seniors" (the
+    /// OBBBA temporary senior deduction, TY2025–2028): per-person
+    /// amount before the phaseout (Schedule 1-A line 35 base: $6,000).
+    #[serde(default = "default_senior_bonus_per_person_cents")]
+    pub senior_bonus_per_person_cents: i64,
+    /// Schedule 1-A, Part V phaseout threshold (modified AGI) per
+    /// filing status (Schedule 1-A line 32: $150,000 if married filing
+    /// jointly, $75,000 otherwise — the form states only these two
+    /// figures; married filing separately is barred from the deduction
+    /// entirely by the Part V caution, so its entry is never used).
+    #[serde(default)]
+    pub senior_bonus_phaseout_threshold_cents: HashMap<String, i64>,
+    /// Schedule 1-A, Part V phaseout rate (line 34: 6% of the excess
+    /// over the threshold), basis points.
+    #[serde(default = "default_senior_bonus_phaseout_rate_bp")]
+    pub senior_bonus_phaseout_rate_bp: u32,
     pub social_security_wage_base_cents: i64,
     /// Self-employment (Schedule SE) Social Security rate, basis points
     /// (12.4% per IRC §1401(a)).
@@ -560,6 +587,23 @@ impl TaxParams {
     /// considered age 65 for the tax year (TY2025: "1961-01-02").
     pub fn age_65_born_before(&self) -> &str {
         &self.age_65_born_before
+    }
+
+    /// Schedule 1-A, Part V phaseout threshold (modified AGI) for the
+    /// status (line 32: $150,000 if married filing jointly, $75,000
+    /// otherwise).
+    pub fn senior_bonus_phaseout_threshold(&self, status: FilingStatus) -> Money {
+        let fallback = if status == FilingStatus::Mfj {
+            15_000_000
+        } else {
+            7_500_000
+        };
+        Money::from_cents(
+            *self
+                .senior_bonus_phaseout_threshold_cents
+                .get(status.as_str())
+                .unwrap_or(&fallback),
+        )
     }
 
     /// IRC §1211(b) capital-loss limit for the status ($3,000; $1,500 MFS).
@@ -1105,6 +1149,38 @@ mod tests {
                 assert!(row.tax(s) >= prev.tax(s), "column {s:?} must not decrease");
             }
         }
+    }
+
+    #[test]
+    fn params_2025_senior_bonus() {
+        let p = TaxParams::load_2025().unwrap();
+        // Schedule 1-A (Form 1040) TY2025, Part V: $6,000 per eligible
+        // person; 6% phaseout over $75,000 modified AGI ($150,000 if
+        // married filing jointly). The MFS entry carries the form's
+        // non-MFJ figure even though MFS is barred from the deduction.
+        assert_eq!(p.senior_bonus_per_person_cents, 600_000);
+        assert_eq!(p.senior_bonus_phaseout_rate_bp, 600);
+        assert_eq!(
+            p.senior_bonus_phaseout_threshold(FilingStatus::Single)
+                .cents(),
+            7_500_000
+        );
+        assert_eq!(
+            p.senior_bonus_phaseout_threshold(FilingStatus::Hoh).cents(),
+            7_500_000
+        );
+        assert_eq!(
+            p.senior_bonus_phaseout_threshold(FilingStatus::Mfs).cents(),
+            7_500_000
+        );
+        assert_eq!(
+            p.senior_bonus_phaseout_threshold(FilingStatus::Mfj).cents(),
+            15_000_000
+        );
+        // Same age-65 cutoff as the standard-deduction addition
+        // (Schedule 1-A lines 36a/36b print the same date).
+        assert_eq!(p.age_65_born_before(), "1961-01-02");
+        assert!(p.source.contains("Schedule 1-A"));
     }
 
     #[test]

@@ -18,6 +18,12 @@
 //!   Schedule 8812 instructions) and Part II-A (additional child tax
 //!   credit); Part II-B (three or more qualifying children) is not
 //!   implemented — see docs/KNOWN_LIMITS.md for every simplification.
+//! - Schedule 1-A, Part V ONLY (enhanced deduction for seniors):
+//!   Schedule 1-A (Form 1040), TY2025, lines 31–38. Parts II (tips),
+//!   III (overtime pay), and IV (car loan interest) are NOT implemented
+//!   — their inputs do not exist in v1. Part I (modified AGI) is the
+//!   caller's AGI: the add-backs for excluded foreign income (§§911 /
+//!   931 / 933) do not exist among v1 inputs, so MAGI = AGI.
 //!
 //! Money is integer cents throughout; the only multiplications are the
 //! worksheet's 15% / 20% rates, done with [`Money::mul_bp`] (integer
@@ -28,7 +34,7 @@
 
 use tax_core::{bracket_tax, EicTable, FilingStatus, Money, TaxParams, TaxTable};
 
-use crate::{DependentInput, DependentRelationship, TaxpayerIdentity};
+use crate::{DependentInput, DependentRelationship, PersonIdentity, TaxpayerIdentity};
 
 /// The Schedule D combination of the two 8949 nets, in Schedule D's own
 /// line numbering (our simplified Schedule D: line 7 = net short-term
@@ -644,6 +650,111 @@ pub fn earned_income_credit(
         Money::from_cents(on_earned.cents().min(on_agi.cents()))
     };
     done(credit, None)
+}
+
+/// How many people on this return can take the Schedule 1-A, Part V
+/// enhanced deduction for seniors (lines 36a/36b): 0, 1, or 2.
+///
+/// A person counts when BOTH conditions on the form are met: they
+/// "have a valid social security number" (v1 proxy: a normalized SSN
+/// is stored — the same standing proxy as the EIC; SSN validity and
+/// issuance timing are not modeled) AND they "were born before
+/// January 2, 1961" ([`PersonIdentity::is_age_65`] against the shared
+/// TY2025 cutoff — Schedule 1-A prints the same date as the
+/// standard-deduction addition). The spouse counts only on a joint
+/// return: Part V's caution states "If married, you must file jointly
+/// to claim this deduction", so married filing separately takes NO
+/// deduction for either spouse (the spouse block is not even consulted)
+/// and a spouse stored on a single / head-of-household return is data
+/// noise, consistent with the standard-deduction additions. With no
+/// identity (or no DOB) stored, the answer is 0 — the deduction is a
+/// stated zero, surfaced by a `tax return validate` info finding.
+pub fn senior_bonus_eligible_persons(
+    identity: Option<&TaxpayerIdentity>,
+    status: FilingStatus,
+    params: &TaxParams,
+) -> u32 {
+    let Some(id) = identity else { return 0 };
+    if status == FilingStatus::Mfs {
+        return 0;
+    }
+    let eligible = |p: &PersonIdentity| p.is_age_65(params) && p.ssn.is_some();
+    let mut n = u32::from(eligible(&id.person));
+    if status == FilingStatus::Mfj {
+        if let Some(spouse) = &id.spouse {
+            n += u32::from(eligible(spouse));
+        }
+    }
+    n
+}
+
+/// Schedule 1-A (Form 1040) TY2025, Part V — Enhanced Deduction for
+/// Seniors, lines 31–37, and the resulting deduction.
+///
+/// The phaseout is PER PERSON, which the form's line structure makes
+/// explicit: line 33 is the modified AGI over the line 32 threshold,
+/// line 34 is 6% of that excess, and line 35 is "$6,000 minus line
+/// 34" — a single per-person amount that lines 36a (you) and 36b
+/// (spouse, MFJ only) each take in full. A joint return with both
+/// spouses eligible therefore gets 2 × line 35, NOT (2 × $6,000)
+/// minus one phaseout. Line 37 is the sum of 36a and 36b; the
+/// Schedule 1-A line 38 total that flows to Form 1040 line 13b equals
+/// line 37 in v1 (Parts II–IV are not implemented).
+///
+/// `magi` is the caller's modified AGI — AGI in v1 (Part I add-backs
+/// for excluded foreign income do not exist among v1 inputs). The
+/// form is figured in whole dollars; the engine keeps cents and the
+/// 6% multiplication rounds to the nearest cent ([`Money::mul_bp`]),
+/// the same treatment as every other worksheet here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeniorBonus {
+    /// Schedule 1-A line 31: modified AGI (AGI in v1).
+    pub magi: Money,
+    /// Schedule 1-A line 35: the per-person amount after the phaseout
+    /// ($6,000 at or under the threshold; $0 once the excess reaches
+    /// $100,000).
+    pub per_person: Money,
+    /// Lines 36a/36b: how many people take the line 35 amount (0–2).
+    pub eligible_persons: u32,
+    /// Schedule 1-A line 37 (= line 38 total in v1): the deduction
+    /// that flows to Form 1040 line 13b.
+    pub deduction: Money,
+    /// Why the deduction is structurally zero regardless of MAGI:
+    /// `"mfs"` (Part V caution — married taxpayers must file jointly)
+    /// or `"no_eligible_person"` (no stored person is 65+ with an
+    /// SSN). A deduction phased out to zero by MAGI is arithmetic,
+    /// not a disqualifier (`None`).
+    pub disqualifier: Option<&'static str>,
+}
+
+pub fn schedule_1a_senior_deduction(
+    identity: Option<&TaxpayerIdentity>,
+    status: FilingStatus,
+    magi: Money,
+    params: &TaxParams,
+) -> SeniorBonus {
+    let eligible_persons = senior_bonus_eligible_persons(identity, status, params);
+    let disqualifier = if status == FilingStatus::Mfs {
+        Some("mfs")
+    } else if eligible_persons == 0 {
+        Some("no_eligible_person")
+    } else {
+        None
+    };
+    // Lines 31–35: excess over the threshold, 6% of it, subtracted
+    // from the $6,000 per-person amount, floored at zero.
+    let threshold = params.senior_bonus_phaseout_threshold(status);
+    let excess = Money::from_cents((magi.cents() - threshold.cents()).max(0));
+    let reduction = excess.mul_bp(params.senior_bonus_phaseout_rate_bp);
+    let per_person =
+        Money::from_cents((params.senior_bonus_per_person_cents - reduction.cents()).max(0));
+    SeniorBonus {
+        magi,
+        per_person,
+        eligible_persons,
+        deduction: Money::from_cents(per_person.cents() * i64::from(eligible_persons)),
+        disqualifier,
+    }
 }
 
 #[cfg(test)]
@@ -1414,5 +1525,121 @@ mod tests {
         let se = schedule_se_tax(m(100), Money::ZERO, &p);
         assert_eq!(se.tax, Money::from_cents(1_413));
         assert_eq!(deductible_part_of_se_tax(se.tax), Money::from_cents(707));
+    }
+
+    fn senior(dob: &str, with_ssn: bool) -> PersonIdentity {
+        PersonIdentity {
+            ssn: with_ssn.then(|| "123456789".to_string()),
+            date_of_birth: Some(dob.to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn identity(person: PersonIdentity, spouse: Option<PersonIdentity>) -> TaxpayerIdentity {
+        TaxpayerIdentity {
+            person,
+            spouse,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn senior_bonus_age_boundary() {
+        let p = params();
+        // Born before January 2, 1961 counts (Schedule 1-A lines
+        // 36a/36b); born ON the cutoff date does not.
+        let yes = identity(senior("1961-01-01", true), None);
+        let no = identity(senior("1961-01-02", true), None);
+        assert_eq!(
+            senior_bonus_eligible_persons(Some(&yes), FilingStatus::Single, &p),
+            1
+        );
+        assert_eq!(
+            senior_bonus_eligible_persons(Some(&no), FilingStatus::Single, &p),
+            0
+        );
+        let r = schedule_1a_senior_deduction(Some(&yes), FilingStatus::Single, m(50_000), &p);
+        assert_eq!(r.deduction, m(6_000), "full $6,000 under the threshold");
+        assert_eq!(r.disqualifier, None);
+    }
+
+    #[test]
+    fn senior_bonus_requires_ssn_and_identity() {
+        let p = params();
+        // 65+ but no SSN stored: lines 36a/36b require a valid SSN.
+        let no_ssn = identity(senior("1958-05-01", false), None);
+        assert_eq!(
+            senior_bonus_eligible_persons(Some(&no_ssn), FilingStatus::Single, &p),
+            0
+        );
+        // No identity at all: stated zero with the documented reason.
+        let r = schedule_1a_senior_deduction(None, FilingStatus::Single, m(50_000), &p);
+        assert_eq!(r.deduction, Money::ZERO);
+        assert_eq!(r.disqualifier, Some("no_eligible_person"));
+    }
+
+    #[test]
+    fn senior_bonus_mfj_one_vs_both_spouses() {
+        let p = params();
+        let both = identity(senior("1958-05-01", true), Some(senior("1960-11-15", true)));
+        let one = identity(senior("1958-05-01", true), Some(senior("1970-06-01", true)));
+        let magi = m(70_000); // under the $150,000 MFJ threshold
+        let r = schedule_1a_senior_deduction(Some(&both), FilingStatus::Mfj, magi, &p);
+        assert_eq!(r.eligible_persons, 2);
+        assert_eq!(r.deduction, m(12_000), "golden case 008 shape");
+        let r = schedule_1a_senior_deduction(Some(&one), FilingStatus::Mfj, magi, &p);
+        assert_eq!(r.eligible_persons, 1);
+        assert_eq!(r.deduction, m(6_000));
+        // A spouse stored on a single return never counts.
+        assert_eq!(
+            senior_bonus_eligible_persons(Some(&both), FilingStatus::Single, &p),
+            1
+        );
+    }
+
+    #[test]
+    fn senior_bonus_phaseout_is_per_person() {
+        let p = params();
+        let both = identity(senior("1958-05-01", true), Some(senior("1960-11-15", true)));
+        // Golden case 010 shape: MFJ, MAGI $200,000 → excess $50,000 →
+        // 6% = $3,000 off EACH person's $6,000 → 2 × $3,000 = $6,000
+        // (not $12,000 − $3,000 = $9,000).
+        let r = schedule_1a_senior_deduction(Some(&both), FilingStatus::Mfj, m(200_000), &p);
+        assert_eq!(r.per_person, m(3_000), "Schedule 1-A line 35");
+        assert_eq!(r.deduction, m(6_000), "Schedule 1-A line 37");
+        assert_eq!(r.disqualifier, None);
+        // Exactly at the threshold: no reduction (line 33 is zero).
+        let single = identity(senior("1958-05-01", true), None);
+        let r = schedule_1a_senior_deduction(Some(&single), FilingStatus::Single, m(75_000), &p);
+        assert_eq!(r.deduction, m(6_000));
+        let r = schedule_1a_senior_deduction(Some(&both), FilingStatus::Mfj, m(150_000), &p);
+        assert_eq!(r.deduction, m(12_000));
+        // Floor at zero: $100,000 of excess exhausts the $6,000
+        // (single at $175,000); beyond that it stays zero, and a
+        // phaseout to zero is arithmetic, not a disqualifier.
+        let r = schedule_1a_senior_deduction(Some(&single), FilingStatus::Single, m(175_000), &p);
+        assert_eq!(r.per_person, Money::ZERO);
+        assert_eq!(r.deduction, Money::ZERO);
+        assert_eq!(r.disqualifier, None);
+        let r = schedule_1a_senior_deduction(Some(&both), FilingStatus::Mfj, m(900_000), &p);
+        assert_eq!(r.deduction, Money::ZERO);
+        // Partial phaseout, single: $25,000 excess → $1,500 off.
+        let r = schedule_1a_senior_deduction(Some(&single), FilingStatus::Single, m(100_000), &p);
+        assert_eq!(r.deduction, m(4_500));
+    }
+
+    #[test]
+    fn senior_bonus_mfs_barred() {
+        let p = params();
+        let both = identity(senior("1958-05-01", true), Some(senior("1960-11-15", true)));
+        // Part V caution: "If married, you must file jointly to claim
+        // this deduction" — MFS takes nothing, even at low MAGI.
+        assert_eq!(
+            senior_bonus_eligible_persons(Some(&both), FilingStatus::Mfs, &p),
+            0
+        );
+        let r = schedule_1a_senior_deduction(Some(&both), FilingStatus::Mfs, m(40_000), &p);
+        assert_eq!(r.deduction, Money::ZERO);
+        assert_eq!(r.disqualifier, Some("mfs"));
     }
 }

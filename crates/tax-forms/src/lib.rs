@@ -13,8 +13,9 @@ pub mod worksheets;
 pub use worksheets::{
     capital_loss_carryover, classify_dependent, classify_eic_child, combine_schedule_d,
     deductible_part_of_se_tax, earned_income_credit, eic_age_test, eic_childless_age_outcome,
-    eic_qualifying_children, line16_tax, qdcg_tax, schedule_8812, schedule_se_tax, tax_on_amount,
-    DependentCreditClass, EarnedIncomeCredit, Schedule8812, ScheduleDCombination, ScheduleSe,
+    eic_qualifying_children, line16_tax, qdcg_tax, schedule_1a_senior_deduction, schedule_8812,
+    schedule_se_tax, senior_bonus_eligible_persons, tax_on_amount, DependentCreditClass,
+    EarnedIncomeCredit, Schedule8812, ScheduleDCombination, ScheduleSe, SeniorBonus,
 };
 
 /// One W-2 (Form W-2, Wage and Tax Statement). Money = cents.
@@ -520,7 +521,8 @@ pub struct Form1040Input {
     #[serde(default)]
     pub dependents: Vec<DependentInput>,
     /// Taxpayer identity (optional in v1): drives the age-65/blind
-    /// standard-deduction additions on line 12 and the identity fields
+    /// standard-deduction additions on line 12, the Schedule 1-A
+    /// Part V senior deduction on line 13b, and the identity fields
     /// of the PDF export. Absent = no additions, identity fields
     /// reported skipped on export.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -546,7 +548,10 @@ pub struct Form1040Input {
 /// Worksheets' earned income figure), `eic_investment_income` (the
 /// IRC §32(i) aggregate as scoped in v1) and `eic_qualifying_children`
 /// (a COUNT, expressed in the money map as count × $1.00 — e.g. two
-/// qualifying children is `"200"` cents; it is not an amount of money).
+/// qualifying children is `"200"` cents; it is not an amount of money)
+/// — plus the Schedule 1-A key `senior_bonus` (the Part V enhanced
+/// deduction for seniors, Schedule 1-A line 37; equal to line 13b in
+/// v1, where Parts II–IV of Schedule 1-A are absent).
 /// They are not Form 1040 line numbers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ComputedReturn {
@@ -611,7 +616,11 @@ pub fn validate_1099_div(div: &I1099DivInput) -> Vec<ConsistencyFinding> {
 /// 8 additional income from Schedule 1 (v1: the Schedule C net profit
 /// from 1099-NEC engagements only), 9 total income, 10 adjustments to
 /// income (v1: the deductible part of SE tax, Schedule 1 line 15), 11 AGI
-/// (9 − 10), 12 standard deduction, 15 taxable income, 16 tax,
+/// (9 − 10), 12 standard deduction, 13b additional deductions from
+/// Schedule 1-A (v1: the Part V enhanced deduction for seniors only),
+/// 14 total deductions (12 + 13b; the printed form adds 12e + 13a +
+/// 13b and line 13a, the QBI deduction, is not computed in v1),
+/// 15 taxable income (11 − 14, floored at zero), 16 tax,
 /// 19 nonrefundable child tax credit / credit for other dependents
 /// (Schedule 8812 line 14), 21 total nonrefundable credits (= 19 in v1:
 /// Schedule 3 line 14 is zero), 22 tax after nonrefundable credits
@@ -653,6 +662,14 @@ pub fn validate_1099_div(div: &I1099DivInput) -> Vec<ConsistencyFinding> {
 ///
 /// Simplifications (docs/KNOWN_LIMITS.md): the only adjustment to income
 /// is the deductible part of SE tax; no itemizing, no QBI. The only
+/// Schedule 1-A part is Part V (enhanced deduction for seniors) in
+/// [`worksheets::schedule_1a_senior_deduction`] — Parts II (tips),
+/// III (overtime), and IV (car loan interest) are not implemented, so
+/// line 13b is the senior deduction alone; MAGI = AGI there, and
+/// married filing separately takes no senior deduction (Part V
+/// caution). With no eligible person stored, line 13b is a stated
+/// zero; with an eligible person it depends on AGI like the credits
+/// above. The only
 /// credits are the Schedule 8812 family credits, in the simplified
 /// form of [`worksheets::schedule_8812`] (MAGI = AGI; no Schedule 3
 /// nonrefundable credits; Part II-B not implemented), and the earned
@@ -759,9 +776,42 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     // from the stored identity (zero when no identity/DOB is stored).
     let deduction = params.standard_deduction(input.status)
         + additional_standard_deduction(input.identity.as_ref(), input.status, params);
-    let taxable_f = agi_f
-        .clone()
-        .map(|agi| Money::from_cents((agi - deduction).cents().max(0)));
+    // Lines 13b/14: Schedule 1-A additional deductions and the total.
+    // The senior part (Schedule 1-A Part V) phases out on modified
+    // AGI, so with an eligible person it inherits AGI's completeness;
+    // with no eligible person (or MFS, which Part V bars) the
+    // deduction is zero regardless of AGI — a stated zero, the same
+    // treatment as the EIC's AGI-independent disqualifiers.
+    let senior_eligible =
+        senior_bonus_eligible_persons(input.identity.as_ref(), input.status, params);
+    let senior_f = if senior_eligible == 0 {
+        FactResult::Complete(schedule_1a_senior_deduction(
+            input.identity.as_ref(),
+            input.status,
+            agi_f.value().copied().unwrap_or(Money::ZERO),
+            params,
+        ))
+    } else {
+        agi_f.clone().map(|agi| {
+            schedule_1a_senior_deduction(input.identity.as_ref(), input.status, agi, params)
+        })
+    };
+    let line13b_f = senior_f.clone().map(|s| s.deduction);
+    // Printed line 14 = 12e + 13a + 13b; the engine computes no 13a
+    // (QBI), so line 14 = line 12 + line 13b.
+    let line14_f = add_facts(complete(deduction), line13b_f.clone());
+    // Line 15: taxable income = line 11 − line 14, floored at zero.
+    let taxable_f = match (agi_f.clone(), line14_f.clone()) {
+        (FactResult::Complete(agi), FactResult::Complete(total)) => {
+            FactResult::Complete(Money::from_cents((agi - total).cents().max(0)))
+        }
+        (FactResult::Placeholder(agi), FactResult::Complete(total))
+        | (FactResult::Complete(agi), FactResult::Placeholder(total))
+        | (FactResult::Placeholder(agi), FactResult::Placeholder(total)) => {
+            FactResult::Placeholder(Money::from_cents((agi - total).cents().max(0)))
+        }
+        _ => FactResult::Incomplete,
+    };
     // Line 16 by the prescribed method (QDCG worksheet / Tax Table /
     // Tax Computation Worksheet); the method travels with the result.
     let schd_gain = schd
@@ -777,10 +827,10 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
         FactResult::Incomplete => (FactResult::Incomplete, None),
     };
     // Capital Loss Carryover Worksheet (needs the unfloored line 15:
-    // AGI minus deductions before the zero floor).
-    let (carry_short_f, carry_long_f) = match (&schd, agi_f.value()) {
-        (Some(c), Some(agi)) => {
-            let (cs, cl) = capital_loss_carryover(c, *agi - deduction);
+    // AGI minus total deductions — line 14 — before the zero floor).
+    let (carry_short_f, carry_long_f) = match (&schd, agi_f.value(), line14_f.value()) {
+        (Some(c), Some(agi), Some(total_deductions)) => {
+            let (cs, cl) = capital_loss_carryover(c, *agi - *total_deductions);
             (complete(cs), complete(cl))
         }
         _ => (FactResult::Incomplete, FactResult::Incomplete),
@@ -982,6 +1032,9 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
     lines.insert("10".into(), complete(se_deduction));
     lines.insert("11".into(), agi_f);
     lines.insert("12".into(), complete(deduction));
+    lines.insert("senior_bonus".into(), line13b_f.clone());
+    lines.insert("13b".into(), line13b_f);
+    lines.insert("14".into(), line14_f);
     lines.insert("15".into(), taxable_f);
     lines.insert("16".into(), tax_f);
     lines.insert("sched8812_tentative".into(), tentative_f);
@@ -1045,6 +1098,32 @@ pub fn compute_1040(input: &Form1040Input, params: &TaxParams) -> ComputedReturn
              (per-condition amount for filing status {} from params/2025.json).",
             input.status.as_str()
         ));
+    }
+    if let FactResult::Complete(s) | FactResult::Placeholder(s) = &senior_f {
+        if s.deduction.cents() > 0 {
+            notes.push(format!(
+                "Schedule 1-A, Part V (enhanced deduction for seniors): \
+                 {} eligible person(s) x {} per person (Schedule 1-A line 35, \
+                 after the 6% modified-AGI phaseout) = {} on line 13b; \
+                 line 14 = line 12 + line 13b (line 13a, the QBI deduction, \
+                 is not computed in v1). Modified AGI is taken to be AGI in v1.",
+                s.eligible_persons, s.per_person, s.deduction
+            ));
+        } else if s.disqualifier == Some("mfs") {
+            let someone_65 = input.identity.as_ref().is_some_and(|id| {
+                id.person.is_age_65(params)
+                    || id.spouse.as_ref().is_some_and(|sp| sp.is_age_65(params))
+            });
+            if someone_65 {
+                notes.push(
+                    "Schedule 1-A, Part V (enhanced deduction for seniors) is \
+                     not available on this return: married taxpayers must file \
+                     jointly to claim it (Part V caution), so line 13b takes \
+                     no senior deduction."
+                        .to_string(),
+                );
+            }
+        }
     }
     if !input.dependents.is_empty() {
         notes.push(
@@ -2087,11 +2166,12 @@ mod tests {
         assert_eq!(map.year, 2025);
         assert!(!map.derivation.is_empty());
         let amounts: Vec<_> = map.entries.iter().filter(|e| e.kind == "amount").collect();
-        // 29 mapped amount fields: 1a 1z 2a 2b 3a 3b 7 8 9 10 11a 11b 12e
-        // 14 15 16 19 21 22 23 24 25a 25d 27 28 32 33 34 37 — engine line 11
-        // feeds both 11a and 11b, line 12 feeds 12e and 14, and line 24
-        // is fed by the engine's own line 24 (= 22 + 23).
-        assert_eq!(amounts.len(), 29);
+        // 30 mapped amount fields: 1a 1z 2a 2b 3a 3b 7 8 9 10 11a 11b 12e
+        // 13b 14 15 16 19 21 22 23 24 25a 25d 27 28 32 33 34 37 — engine
+        // line 11 feeds both 11a and 11b, line 12 feeds 12e, line 13b
+        // feeds 13b, line 14 feeds 14 (= 12 + 13b in the engine), and
+        // line 24 is fed by the engine's own line 24 (= 22 + 23).
+        assert_eq!(amounts.len(), 30);
         for e in &map.entries {
             assert!(e.qname.starts_with("topmostSubform[0]."), "{}", e.qname);
             assert!(!e.note.is_empty(), "every entry documents its evidence");
@@ -2103,15 +2183,16 @@ mod tests {
                 .map(|e| e.source_line().to_string())
         };
         assert_eq!(src("24").as_deref(), Some("24"));
-        assert_eq!(src("14").as_deref(), Some("12"));
+        assert_eq!(src("13b").as_deref(), Some("13b"));
+        assert_eq!(src("14").as_deref(), Some("14"));
     }
 
     /// A complete lines map with benign values; 34/37 set per test.
     fn complete_lines(overpaid: i64, owed: i64) -> BTreeMap<String, FactResult<Money>> {
         let mut lines = BTreeMap::new();
         for l in [
-            "1a", "1z", "2a", "2b", "3a", "3b", "7", "8", "9", "10", "11", "12", "15", "16", "19",
-            "21", "22", "23", "24", "25a", "25d", "27", "28", "32", "33",
+            "1a", "1z", "2a", "2b", "3a", "3b", "7", "8", "9", "10", "11", "12", "13b", "14", "15",
+            "16", "19", "21", "22", "23", "24", "25a", "25d", "27", "28", "32", "33",
         ] {
             lines.insert(l.to_string(), FactResult::Complete(Money::from_cents(100)));
         }
@@ -2665,6 +2746,113 @@ mod tests {
         // The golden input without identity keeps the base amount.
         let r = compute_1040(&golden_input(), &params);
         assert_eq!(r.lines["12"].value().copied().unwrap().cents(), 1_575_000);
+    }
+
+    fn senior_person(dob: &str) -> PersonIdentity {
+        PersonIdentity {
+            ssn: Some("123456789".into()),
+            date_of_birth: Some(dob.into()),
+            ..Default::default()
+        }
+    }
+
+    fn case008_input() -> Form1040Input {
+        let mut input = golden_input();
+        input.status = FilingStatus::Mfj;
+        input.w2s[0].wages = Money::from_cents(7_000_000);
+        input.w2s[0].federal_withholding = Money::from_cents(600_000);
+        let mut spouse = senior_person("1960-11-15");
+        spouse.ssn = Some("987654321".into());
+        input.identity = Some(TaxpayerIdentity {
+            person: senior_person("1958-05-01"),
+            spouse: Some(spouse),
+            ..Default::default()
+        });
+        input
+    }
+
+    /// Golden case 008 (benchmark/cases/f1040/2025/008-identity-65plus)
+    /// after the Schedule 1-A lane: MFJ, both spouses 65+ with SSNs,
+    /// AGI $70,000 — under the $150,000 Part V threshold, so each
+    /// spouse takes the full $6,000 (Schedule 1-A line 35) and line
+    /// 13b = $12,000. Line 14 = 34,700 + 12,000 = $46,700; taxable
+    /// $23,300 → Tax Table MFJ $2,333; refund 6,000 − 2,333 = $3,667.
+    #[test]
+    fn golden_identity_65plus_with_senior_bonus() {
+        let params = TaxParams::load_2025().unwrap();
+        let r = compute_1040(&case008_input(), &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("12"), 3_470_000, "31,500 + 2 x 1,600 age additions");
+        assert_eq!(line("senior_bonus"), 1_200_000, "Schedule 1-A line 37");
+        assert_eq!(line("13b"), 1_200_000, "2 x $6,000, no phaseout");
+        assert_eq!(line("14"), 4_670_000, "12 + 13b");
+        assert_eq!(line("15"), 2_330_000, "taxable $23,300");
+        assert_eq!(line("16"), 233_300, "tax $2,333 (Tax Table MFJ)");
+        assert_eq!(r.line16_method.as_deref(), Some("tax_table"));
+        assert_eq!(line("34"), 366_700, "refund $3,667");
+        assert_eq!(line("37"), 0);
+    }
+
+    /// Golden case 010 (benchmark/cases/f1040/2025/010-senior-phaseout):
+    /// MFJ, both spouses 65+, W-2 $200,000 / $25,000 withheld. MAGI
+    /// $200,000 is $50,000 over the $150,000 threshold; the 6%
+    /// phaseout takes $3,000 off EACH person's $6,000 (Schedule 1-A
+    /// lines 33–35), so line 13b = 2 × $3,000 = $6,000. Taxable
+    /// 200,000 − 34,700 − 6,000 = $159,300 → Tax Computation Worksheet:
+    /// 2,385 + 8,772 + 13,717 = $24,874; refund $126.
+    #[test]
+    fn golden_senior_phaseout() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut input = case008_input();
+        input.w2s[0].wages = Money::from_cents(20_000_000);
+        input.w2s[0].federal_withholding = Money::from_cents(2_500_000);
+        let r = compute_1040(&input, &params);
+        assert!(r.complete);
+        let line = |n: &str| r.lines[n].value().copied().unwrap().cents();
+        assert_eq!(line("11"), 20_000_000, "AGI $200,000");
+        assert_eq!(line("12"), 3_470_000);
+        assert_eq!(line("senior_bonus"), 600_000);
+        assert_eq!(line("13b"), 600_000, "2 x ($6,000 - $3,000 phaseout)");
+        assert_eq!(line("14"), 4_070_000);
+        assert_eq!(line("15"), 15_930_000, "taxable $159,300");
+        assert_eq!(line("16"), 2_487_400, "tax $24,874 (Tax Computation)");
+        assert_eq!(r.line16_method.as_deref(), Some("tax_computation"));
+        assert_eq!(line("34"), 12_600, "refund $126.00");
+        assert_eq!(line("37"), 0);
+    }
+
+    #[test]
+    fn senior_bonus_completeness_follows_agi_only_when_eligible() {
+        let params = TaxParams::load_2025().unwrap();
+        // Eligible senior + poisoned 1099-B: the phaseout needs AGI,
+        // so 13b/14 inherit the poison (15/16 already do).
+        let mut input = case008_input();
+        input.f1099_bs = case002_input().f1099_bs;
+        input.f1099_bs[0].transactions[0].cost_basis = None;
+        let r = compute_1040(&input, &params);
+        assert!(!r.complete);
+        for line in ["13b", "14", "senior_bonus"] {
+            assert_eq!(
+                r.lines[line],
+                FactResult::Incomplete,
+                "line {line} must be incomplete"
+            );
+        }
+        assert_eq!(r.lines["12"].value().copied().unwrap().cents(), 3_470_000);
+        // No identity at all + the same poison: no one can be
+        // eligible, so 13b is a stated zero and 14 = line 12, both
+        // Complete (the EIC zero-disqualifier treatment).
+        let mut input = case002_input();
+        input.f1099_bs[0].transactions[0].cost_basis = None;
+        let r = compute_1040(&input, &params);
+        assert_eq!(r.lines["13b"], FactResult::Complete(Money::ZERO));
+        assert_eq!(r.lines["senior_bonus"], FactResult::Complete(Money::ZERO));
+        assert_eq!(
+            r.lines["14"],
+            FactResult::Complete(Money::from_cents(1_575_000)),
+            "line 14 = line 12 when 13b is a stated zero"
+        );
     }
 
     #[test]
