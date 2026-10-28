@@ -14,6 +14,15 @@ you drive it. Load ONE working skill per request:
 - A prepared return needs an independent check → **tax-reviewer**
 - Anything about submitting, e-filing, or filing status → **tax-filing-guide**
 
+**Residency decides the form.** A nonresident-alien student (F-1 /
+J-1 visa, in the first 5 calendar years in that status) files
+**Form 1040-NR**, not Form 1040 — computing their return on the
+resident engine would be wrong, not approximate. tax-intake asks
+the residency question first and stores the route with
+`tax return set-nra`; a return with an nra block computes on
+Form 1040-NR only. Dual-status years and nonresident state returns
+are out of scope (see `docs/KNOWN_LIMITS.md`).
+
 ## Setup (every session)
 
 1. Run `tax doctor`. If a required check fails, follow its `hint` exactly

@@ -1371,6 +1371,8 @@ mod tests {
 
     fn base_input() -> Form1040Input {
         Form1040Input {
+            f1042ss: Vec::new(),
+            nra: None,
             status: FilingStatus::Single,
             w2s: vec![W2Input {
                 employer_ein: "12-3456789".into(),

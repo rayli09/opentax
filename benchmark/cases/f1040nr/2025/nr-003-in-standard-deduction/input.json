@@ -1,0 +1,23 @@
+{
+ "interest_income": "0",
+ "nra": {
+  "calendar_years_in_status_including_current": 3,
+  "citizenship": "IN",
+  "first_calendar_year_in_status": 2023,
+  "visa_type": "F-1"
+ },
+ "ordinary_dividends": "0",
+ "status": "single",
+ "w2s": [
+  {
+   "employer_ein": "12-3456789",
+   "employer_name": "State University",
+   "federal_withholding": "180000",
+   "medicare_tax": "0",
+   "medicare_wages": "2000000",
+   "social_security_tax": "0",
+   "social_security_wages": "2000000",
+   "wages": "2000000"
+  }
+ ]
+}

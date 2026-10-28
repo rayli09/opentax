@@ -1,0 +1,34 @@
+{
+ "f1042ss": [
+  {
+   "exemption_code": "04",
+   "federal_withholding": "0",
+   "gross_income": "400000",
+   "income_code": 15,
+   "payer_name": "State University",
+   "treaty_article": "Article 20",
+   "treaty_country": "CN"
+  }
+ ],
+ "interest_income": "0",
+ "nra": {
+  "calendar_years_in_status_including_current": 2,
+  "citizenship": "CN",
+  "first_calendar_year_in_status": 2024,
+  "visa_type": "F-1"
+ },
+ "ordinary_dividends": "0",
+ "status": "single",
+ "w2s": [
+  {
+   "employer_ein": "12-3456789",
+   "employer_name": "State University",
+   "federal_withholding": "20000",
+   "medicare_tax": "0",
+   "medicare_wages": "650000",
+   "social_security_tax": "0",
+   "social_security_wages": "650000",
+   "wages": "650000"
+  }
+ ]
+}

@@ -10,10 +10,12 @@ pub use tax_core::FilingStatus;
 use tax_core::{FactResult, Money, TaxParams};
 
 pub mod ca540;
+pub mod f1040nr;
 pub mod mef;
 pub mod packet;
 pub mod worksheets;
 pub use ca540::{compute_ca540, CaComputed, CaEitc, CaFinding};
+pub use f1040nr::{compute_1040nr, NrComputed, NrFinding, ScheduleOiEntry};
 pub use worksheets::{
     capital_loss_carryover, classify_dependent, classify_eic_child, combine_schedule_d,
     deductible_part_of_se_tax, earned_income_credit, eic_age_test, eic_childless_age_outcome,
@@ -205,6 +207,60 @@ impl I1099NecInput {
     /// Schedule C net profit (loss) for this engagement: Box 1 − expenses.
     pub fn net_profit(&self) -> Money {
         self.nonemployee_compensation - self.expenses
+    }
+}
+
+/// One Form 1042-S (Foreign Person's U.S. Source Income Subject to
+/// Withholding), as issued to a nonresident alien student. Money =
+/// cents. Only income codes 15 (scholarship or fellowship grants) and
+/// 20 (compensation during studying and training) are modeled by the
+/// Form 1040-NR engine (Instructions for Form 1042-S, Appendix A);
+/// any other code is recorded but makes the NR section `Incomplete`
+/// with a loud finding — never silently taxed or dropped.
+///
+/// The treaty fields are recorded verbatim from the form: box 3a
+/// exemption code (`"04"` = exempt or reduced withholding under a tax
+/// treaty, Instructions for Form 1042-S, Appendix B) and the treaty
+/// country / article the payer cited (boxes 15h/15i area). They decide
+/// whether the amount is ALREADY treaty-exempt (the employer split
+/// the income: the exempt part is on the 1042-S, the taxable part on
+/// Form W-2) or must be claimed on the return — see
+/// [`crate::f1040nr`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct F1042sInput {
+    /// Recipient name, when transcribed (identification only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient_name: Option<String>,
+    /// Withholding agent (payer) name, e.g. the university.
+    pub payer_name: String,
+    /// Box 1: income code (15 scholarship/fellowship grants,
+    /// 20 compensation during studying and training).
+    pub income_code: u32,
+    /// Box 2: gross income.
+    pub gross_income: Money,
+    /// Box 7a (chapter 3 tax withheld, in the total-withheld sense of
+    /// the form): federal tax withheld → Form 1040-NR line 25g.
+    pub federal_withholding: Money,
+    /// Box 3a: exemption code, recorded verbatim (e.g. `"04"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exemption_code: Option<String>,
+    /// Treaty country the withholding was figured under, when the
+    /// form states one (recorded verbatim).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub treaty_country: Option<String>,
+    /// Treaty article cited on the form, when stated (verbatim).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub treaty_article: Option<String>,
+}
+
+impl F1042sInput {
+    /// Whether this record presents its income as already exempt
+    /// under a tax treaty: exemption code "04" (exempt or reduced
+    /// withholding under tax treaty) or a treaty article cited on the
+    /// form. (Income code 01, "effectively connected income", is the
+    /// opposite marker: fully taxable ECI.)
+    pub fn indicates_treaty_exemption(&self) -> bool {
+        self.exemption_code.as_deref() == Some("04") || self.treaty_article.is_some()
     }
 }
 
@@ -557,6 +613,11 @@ pub struct Form1040Input {
     pub f1099_bs: Vec<I1099BInput>,
     #[serde(default)]
     pub f1099_necs: Vec<I1099NecInput>,
+    /// Forms 1042-S (nonresident alien income documents). Ignored by
+    /// the resident Form 1040 computation; consumed by the Form
+    /// 1040-NR engine ([`crate::f1040nr`]) when an `nra` block is set.
+    #[serde(default)]
+    pub f1042ss: Vec<F1042sInput>,
     /// Dependents claimed on the return (Schedule 8812 credits only).
     #[serde(default)]
     pub dependents: Vec<DependentInput>,
@@ -574,6 +635,15 @@ pub struct Form1040Input {
     /// before. Set with `tax return set-state`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state: Option<StateBlock>,
+    /// Nonresident-alien (student) selection (optional): when set,
+    /// the return belongs on Form 1040-NR and the NR engine
+    /// ([`f1040nr::compute_1040nr`]) computes it INSTEAD of the
+    /// resident Form 1040. The resident computation ignores the
+    /// block; the CLI routes on its presence. A state block and an
+    /// nra block are incompatible in v1 (the California selection is
+    /// a full-year-resident Form 540). Set with `tax return set-nra`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nra: Option<NraBlock>,
 }
 
 /// A state return selection: which state's return to compute, and the
@@ -588,6 +658,183 @@ pub struct StateBlock {
     pub state: String,
     /// Residency: `"full_year"` in v1.
     pub residency: String,
+}
+
+/// The Form 8843 facts stored on a return (lane NRA-2 fills the
+/// form from these). Every field is optional and stored verbatim:
+/// an absent fact makes the 8843 data incomplete, never invented.
+/// Students complete Part I (days of presence, Form 8843 lines 4a)
+/// and Part III (lines 9–10: academic institution and program
+/// director, name / address / telephone).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Form8843Data {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub school_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub school_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub school_phone: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub director_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub director_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub director_phone: Option<String>,
+    /// Form 8843 line 4a, first column: days present in the tax year.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub days_present_current_year: Option<u32>,
+    /// Form 8843 line 4a: days present in the first prior year.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub days_present_prior_year_1: Option<u32>,
+    /// Form 8843 line 4a: days present in the second prior year.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub days_present_prior_year_2: Option<u32>,
+}
+
+/// A nonresident-alien (student) selection: when set, the return is
+/// computed on Form 1040-NR ([`crate::f1040nr`]) instead of Form
+/// 1040. Stored on the return (`tax return set-nra`) and carried in
+/// golden-case inputs. v1 models STUDENTS ONLY — F-1 and J-1
+/// (student category) visa holders inside their exempt-individual
+/// years — filing SINGLE.
+///
+/// The determination rule is the Pub 519 (2025), chapter 1,
+/// "Students" rule, simplified: a student is an exempt individual
+/// when they have not been exempt (as a student, teacher or trainee)
+/// for any part of MORE THAN 5 calendar years, counting any part of
+/// a calendar year as a whole year. Pub 519 keeps a
+/// facts-and-circumstances exception past five years (the student
+/// establishes they do not intend to reside permanently in the
+/// United States and has substantially complied with the visa);
+/// v1 does NOT determine that exception. Teachers/trainees (the
+/// J-1 two-of-six-years rule) are out of scope, as is any prior
+/// exempt year in a different category — see docs/KNOWN_LIMITS.md.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NraBlock {
+    /// Visa type: `"F-1"` or `"J-1"` (students only, in v1).
+    pub visa_type: String,
+    /// Country of citizenship, ISO 3166-1 alpha-2 (e.g. `"CN"`,
+    /// `"IN"`). CN and IN get treaty modeling from
+    /// `params/2025-treaties.json`; any other country computes with
+    /// no treaty benefits, under a `treaty_not_modeled` warning.
+    pub citizenship: String,
+    /// The first calendar year the filer was present in this status
+    /// (any part of the year counts as the whole year).
+    pub first_calendar_year_in_status: u32,
+    /// How many calendar years, INCLUDING the tax year, the filer
+    /// has been in this status (any part of a year counts). Must be
+    /// consistent with `first_calendar_year_in_status` and the tax
+    /// year, and at most 5 for the v1 exempt-individual route.
+    pub calendar_years_in_status_including_current: u32,
+    /// Form 8843 facts, stored verbatim for the forms lane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form_8843: Option<Form8843Data>,
+}
+
+/// The residency determination the engine acts on, produced by
+/// [`NraBlock::determination`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NraDetermination {
+    /// True: the filer is an exempt individual (students, first five
+    /// calendar years as modeled) and files Form 1040-NR.
+    pub exempt_individual: bool,
+    /// True when the citizenship has treaty provisions in the params
+    /// file (CN / IN for TY2025).
+    pub treaty_modeled: bool,
+}
+
+impl NraBlock {
+    /// Visa types v1 models (students only).
+    pub const SUPPORTED_VISAS: [&'static str; 2] = ["F-1", "J-1"];
+    /// Pub 519 (2025), chapter 1: a student is not an exempt
+    /// individual once they have been exempt for any part of more
+    /// than 5 calendar years (the no-permanent-intent exception
+    /// aside, which v1 does not determine).
+    pub const MAX_EXEMPT_CALENDAR_YEARS: u32 = 5;
+
+    /// Normalize the citizenship to an uppercase ISO alpha-2 code.
+    pub fn normalized_citizenship(&self) -> Option<String> {
+        let c = self.citizenship.trim().to_uppercase();
+        if c.len() == 2 && c.chars().all(|ch| ch.is_ascii_alphabetic()) {
+            Some(c)
+        } else {
+            None
+        }
+    }
+
+    /// Validate the block for tax year `tax_year` and produce the
+    /// determination. Any problem is an explicit error — v1 refuses
+    /// rather than guessing a residency status:
+    /// - a visa other than F-1 / J-1 is not a modeled student visa;
+    /// - more than 5 calendar years in status leaves the filer
+    ///   outside the modeled exempt-individual rule — most such
+    ///   filers are resident aliens under the substantial presence
+    ///   test (the regular Form 1040 route) or dual-status, both
+    ///   outside this route;
+    /// - the year facts must be mutually consistent.
+    pub fn determination(
+        &self,
+        tax_year: u32,
+        treaties: &tax_core::TreatyParams,
+    ) -> Result<NraDetermination, String> {
+        if !Self::SUPPORTED_VISAS.contains(&self.visa_type.as_str()) {
+            return Err(format!(
+                "unsupported visa type {:?} for the Form 1040-NR student route: v1 models \
+                 students on an F-1 or J-1 visa only (teachers, trainees, and other \
+                 nonimmigrant categories are not implemented)",
+                self.visa_type
+            ));
+        }
+        if self.normalized_citizenship().is_none() {
+            return Err(format!(
+                "citizenship {:?} is not an ISO 3166-1 alpha-2 country code (e.g. \"CN\", \"IN\")",
+                self.citizenship
+            ));
+        }
+        let years = self.calendar_years_in_status_including_current;
+        if years == 0 {
+            return Err(
+                "calendar_years_in_status_including_current must be at least 1 (the tax \
+                 year itself counts)"
+                    .to_string(),
+            );
+        }
+        if self.first_calendar_year_in_status > tax_year {
+            return Err(format!(
+                "first_calendar_year_in_status {} is after the tax year {tax_year}",
+                self.first_calendar_year_in_status
+            ));
+        }
+        let implied_years = tax_year - self.first_calendar_year_in_status + 1;
+        if implied_years != years {
+            return Err(format!(
+                "inconsistent year facts: first calendar year in status {} implies {} \
+                 calendar year(s) in status including {tax_year}, but \
+                 calendar_years_in_status_including_current says {years} — correct the \
+                 block rather than letting the engine guess",
+                self.first_calendar_year_in_status, implied_years
+            ));
+        }
+        if years > Self::MAX_EXEMPT_CALENDAR_YEARS {
+            return Err(format!(
+                "calendar years in status ({years}) exceed the 5-calendar-year \
+                 exempt-individual limit for students (Pub 519 (2025), chapter 1, \
+                 'Students': an individual is not an exempt individual as a student \
+                 after being exempt for any part of more than 5 calendar years): this \
+                 filer is likely a resident alien for tax purposes under the \
+                 substantial presence test and belongs on the regular Form 1040 route. \
+                 Pub 519 keeps a facts-and-circumstances exception (no intent to reside \
+                 permanently plus substantial visa compliance) and dual-status returns \
+                 exist; neither is determined by v1, so the Form 1040-NR route refuses \
+                 rather than guessing"
+            ));
+        }
+        let code = self.normalized_citizenship().expect("validated above");
+        Ok(NraDetermination {
+            exempt_individual: true,
+            treaty_modeled: treaties.country(&code).is_some(),
+        })
+    }
 }
 
 impl StateBlock {
@@ -1734,6 +1981,8 @@ mod tests {
 
     fn golden_input() -> Form1040Input {
         Form1040Input {
+            f1042ss: Vec::new(),
+            nra: None,
             status: FilingStatus::Single,
             w2s: vec![W2Input {
                 employer_ein: "12-3456789".into(),

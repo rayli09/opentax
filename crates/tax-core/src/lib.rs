@@ -1112,6 +1112,67 @@ impl CaParams {
     }
 }
 
+/// The student-article treaty provisions the Form 1040-NR engine
+/// models, for one country, from `params/2025-treaties.json`. Only the
+/// provisions recorded here are modeled; every figure carries its
+/// citation in the data file's `source` fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CountryTreaty {
+    pub country_name: String,
+    /// Cap on the exemption for income from personal services
+    /// (employment), e.g. $5,000 under Article 20(c) of the U.S.–China
+    /// treaty. `None` when the treaty's student article has no such
+    /// exemption (e.g. India).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personal_services_exemption_cents: Option<i64>,
+    /// The treaty clause granting the personal-services exemption.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personal_services_article: Option<String>,
+    /// Whether the student article exempts scholarship / fellowship
+    /// grants (Form 1042-S income code 15) from a government,
+    /// scientific, educational or other tax-exempt organization
+    /// (China: yes, Article 20(b), uncapped; India: no — Article 21(2)
+    /// gives only the reliefs available to residents).
+    pub scholarship_grants_exempt: bool,
+    /// The treaty clause behind `scholarship_grants_exempt`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scholarship_article: Option<String>,
+    /// Whether the student article entitles the filer to the standard
+    /// deduction on Form 1040-NR line 12 (India: yes, Article 21(2),
+    /// per the Instructions for Form 1040-NR (2025), Line 12).
+    pub standard_deduction: bool,
+    /// The treaty clause behind `standard_deduction`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard_deduction_article: Option<String>,
+    /// Citation for this country's provisions.
+    pub source: String,
+}
+
+/// Treaty parameters for TY2025, embedded from
+/// `params/2025-treaties.json`, keyed by ISO 3166-1 alpha-2 country
+/// code. A country absent from the map has NO modeled treaty
+/// provisions: the Form 1040-NR engine proceeds without treaty
+/// benefits and warns (`treaty_not_modeled`), never inventing one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TreatyParams {
+    pub year: u32,
+    pub source: String,
+    pub countries: std::collections::BTreeMap<String, CountryTreaty>,
+}
+
+impl TreatyParams {
+    /// TY2025 treaty parameters, embedded from
+    /// `params/2025-treaties.json`.
+    pub fn load_2025() -> Result<TreatyParams, serde_json::Error> {
+        serde_json::from_str(include_str!("../params/2025-treaties.json"))
+    }
+
+    /// The modeled provisions for an ISO alpha-2 country code.
+    pub fn country(&self, code: &str) -> Option<&CountryTreaty> {
+        self.countries.get(code)
+    }
+}
+
 /// One row of the California Tax Table: for taxable income in
 /// `[from_dollars, to_dollars)` the tax is the whole-dollar amount.
 /// The printed table's filing-status columns are "1 or 3" (single /

@@ -822,6 +822,8 @@ mod tests {
 
     fn base(status: FilingStatus) -> Form1040Input {
         Form1040Input {
+            f1042ss: Vec::new(),
+            nra: None,
             status,
             w2s: vec![],
             interest_income: Money::ZERO,
