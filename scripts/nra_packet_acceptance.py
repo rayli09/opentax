@@ -1,48 +1,7 @@
 #!/usr/bin/env python3
-"""Acceptance test for the nonresident-alien forms in
-`tax return export --type packet` (and the single-form `--type pdf`).
+"""Nonresident packet acceptance: check golden computed lines, normal export gate, and labeled raster draft pages, blockers and representative values. Requires pypdf, Ghostscript and Tesseract."""
 
-Builds the NR-002 golden-case facts (CN citizen, F-1, first calendar
-year in status; W-2 $3,000 with $500 withheld + treaty-exempt Form
-1042-S wages of $5,000) through the real CLI -- create / form add /
-set-identity / set-nra (the golden input.json carries no identity or
-Form 8843 facts, so those are added exactly as a user's CLI flow
-would) -- runs the packet export against the blank TY2025 templates
-in spikes/pdf-fill/fixtures/, then reads the filled PDFs back with
-pypdf and asserts the NRA-1 engine values landed in the geometrically
-verified fields:
-
-  Form 1040-NR       1a 3000.00, 1k 5000.00, 16 303.00, 25a 500.00,
-                     25g 0.00, 33 500.00, 34 197.00 (37 stays blank);
-                     filing status Single; occupation prints
-  Schedule OI        item A CN, item E F-1, item H 2025 = 200 days,
-                     item L row 1 = CN / 20(c) / 5000.00, line 1(e)
-                     total 5000.00
-  Form 8843          Part III line 9/10 carry the stored school and
-                     director facts; line 4a 2025 = 200, line 4b = 200;
-                     line 12 No; addresses blank by the form's own
-                     instruction (it is attached to the 1040-NR)
-
-and that manifest.json reports all three forms filled, with the
-route entry stating the resident/CA forms are not part of an NR
-packet. The full SSN appears ONLY inside the filled PDFs -- never in
-the export output or the manifest.
-
-Further scenarios: a no-treaty NR return (DE citizen, no Form 8843
-facts) reports f1040soi as not_applicable while f8843 stays filled
-with hand-complete notes; a forms-dir missing f1040soi.pdf /
-f8843.pdf reports them as loud missing_template entries; the
-single-form `--type pdf` export fills the 1040-NR alone; `--type
-mef` stays an explicit not_implemented error; and a return with an
-unmodeled 1042-S income code makes the packet export refuse, naming
-the incomplete Form 1040-NR lines.
-
-Usage:
-    python3 scripts/nra_packet_acceptance.py [--bin PATH] [--forms-dir DIR]
-
-The `tax` binary defaults to $CARGO_TARGET_DIR/debug/tax, then
-target/debug/tax. Requires pypdf (pip install pypdf).
-"""
+from draft_checks import verify_packet
 
 import argparse
 import json
@@ -98,6 +57,7 @@ NR002_IDENTITY = {
     "first_name": "Case",
     "last_name": "Tester",
     "ssn": "123456789",
+    "date_of_birth": "1998-01-01",
     "occupation": "Student",
     "address": {
         "street": "1 College Ave",
@@ -120,8 +80,8 @@ NR002_NRA = {
         "director_address": "200 Program Hall, Berkeley, CA 94720",
         "director_phone": "510-555-0101",
         "days_present_current_year": 200,
-        "days_present_prior_year_1": None,
-        "days_present_prior_year_2": None,
+        "days_present_prior_year_1": 0,
+        "days_present_prior_year_2": 0,
     },
 }
 
@@ -430,7 +390,7 @@ def case_incomplete_refused(bin_path, store, forms_dir, tmp):
     out_dir = os.path.join(tmp, "pkt-incomplete")
     code, out = run_tax_raw(
         bin_path, store, "return", "export", "--return", rid, "--type", "packet",
-        "--forms-dir", forms_dir, "--out-dir", out_dir,
+        "--forms-dir", forms_dir, "--out-dir", out_dir, "--draft",
     )
     check(code != 0 or "return_incomplete" in out, "incomplete NR packet export fails")
     check(
@@ -464,11 +424,52 @@ def main():
             )
     with tempfile.TemporaryDirectory() as tmp:
         store = os.path.join(tmp, "store")
-        case_nr002_packet(bin_path, store, args.forms_dir, tmp)
-        case_no_treaty(bin_path, store, args.forms_dir, tmp)
-        case_missing_template(bin_path, store, args.forms_dir, tmp)
-        case_single_pdf_and_mef(bin_path, store, args.forms_dir, tmp)
+        rid = build_nr002(bin_path, store, tmp)
+        view = run_tax(bin_path, store, "return", "get", "--return", rid)
+        check(view["readiness"]["status"] == "unsupported", "NR return is unsupported for normal export")
+        with open(os.path.join(NR_CASES, "nr-002-cn-split-1042s", "correct.json")) as fh:
+            expected = json.load(fh)["nr_lines"]
+        for line, cents in expected.items():
+            check(view["lines"][line].get("cents") == cents, f"NR line {line} matches golden value")
+        out_dir = os.path.join(tmp, "nr-draft")
+        draft = run_tax(bin_path, store, "return", "export", "--return", rid, "--type", "packet", "--draft", "--forms-dir", args.forms_dir, "--out-dir", out_dir)
+        manifest = verify_packet(out_dir, draft, {"f1040nr.pdf": ["3000.00", "5000.00"]})
+        check(manifest["form"] == "1040-NR", "NR draft identifies the route")
+        check(any(b["code"] == "nra_required_facts_not_modeled" for b in manifest["readiness"]["blockers"]), "NR draft retains unmodeled-facts blocker")
+        check({f["form"] for f in manifest["forms"] if f["status"] == "filled"} >= {"f1040nr", "f1040soi", "f8843"}, "NR draft includes all three forms")
+        code, out = run_tax_raw(bin_path, store, "return", "export", "--return", rid, "--type", "pdf", "--template", os.path.join(args.forms_dir, "f1040nr.pdf"), "--out", os.path.join(tmp, "no.pdf"))
+        check(code != 0 and "return_not_ready" in out, "NR normal PDF export is gated")
+        code, out = run_tax_raw(bin_path, store, "return", "export", "--return", rid, "--type", "mef", "--out", os.path.join(tmp, "no.xml"))
+        check(code != 0 and "not_implemented" in out, "NR MeF remains unavailable")
         case_incomplete_refused(bin_path, store, args.forms_dir, tmp)
+        # The sparse draft remains marked and reports each absent template.
+        sparse = os.path.join(tmp, "nr-sparse-forms")
+        os.makedirs(sparse)
+        shutil.copy(os.path.join(args.forms_dir, "f1040nr.pdf"), os.path.join(sparse, "f1040nr.pdf"))
+        sparse_out = os.path.join(tmp, "nr-sparse-draft")
+        sparse_result = run_tax(bin_path, store, "return", "export", "--return", rid, "--type", "packet", "--draft", "--forms-dir", sparse, "--out-dir", sparse_out)
+        sparse_manifest = verify_packet(sparse_out, sparse_result, {"f1040nr.pdf": ["3000.00"]})
+        statuses = {f["form"]: f["status"] for f in sparse_manifest["forms"]}
+        check(statuses["f1040soi"] == "missing_template" and statuses["f8843"] == "missing_template", "NR draft reports missing templates")
+        single = os.path.join(tmp, "nr-single-draft.pdf")
+        single_result = run_tax(bin_path, store, "return", "export", "--return", rid, "--type", "pdf", "--draft", "--template", os.path.join(args.forms_dir, "f1040nr.pdf"), "--out", single)
+        single_reader = PdfReader(single)
+        check(single_result["draft"] and all("DRAFT - NOT FOR FILING" in p.extract_text() for p in single_reader.pages), "single NR draft marks every page")
+        with open(single + ".manifest.json") as fh:
+            single_manifest = json.load(fh)
+        check(single_manifest["readiness"] == single_result["readiness"], "single NR draft sidecar contains blockers")
+        created = run_tax(bin_path, store, "return", "create", "--status", "single")
+        de = created["returnId"]
+        run_tax(bin_path, store, "form", "add", "--return", de, "--node-type", "w2", "--data", json.dumps({"employer_ein":"12-3456789", "wages":"800000", "federal_withholding":"30000"}))
+        de_nra = {"visa_type":"F-1", "citizenship":"DE", "first_calendar_year_in_status":2024, "calendar_years_in_status_including_current":2}
+        run_tax(bin_path, store, "return", "set-nra", "--return", de, "--file", write_json(tmp, "de.json", de_nra))
+        de_out = os.path.join(tmp, "de-draft")
+        de_result = run_tax(bin_path, store, "return", "export", "--return", de, "--type", "packet", "--draft", "--forms-dir", args.forms_dir, "--out-dir", de_out)
+        de_manifest = verify_packet(de_out, de_result, {})
+        de_status = {f["form"]: f["status"] for f in de_manifest["forms"]}
+        check(de_status["f1040soi"] == "not_applicable" and de_status["f8843"] == "filled", "no-treaty draft reports applicability")
+        check(any(b["code"] == "treaty_not_modeled" for b in de_result["readiness"]["blockers"]), "no-treaty draft reports missing treaty model")
+
     if FAILURES:
         print(f"\nnra_packet_acceptance: {len(FAILURES)} FAILURE(S)")
         return 1

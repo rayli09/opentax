@@ -51,6 +51,33 @@ tax return validate --return <id>
 tax return export --return <id> --type packet --forms-dir <dir> --out-dir <dir>
 ```
 
+`return get`, `return validate`, and JSON export include a `readiness`
+object. Its status is `draft`, `needs_input`, `unsupported`, or
+`ready_for_review`, with actionable `blockers`. `complete` still describes
+computed lines and `valid` retains its legacy error-only meaning; neither
+indicates readiness. `ready_for_review` is a limited software check, not a
+legal correctness guarantee, human review, or evidence of filing. PDF, packet and MeF exports require `ready_for_review`. JSON remains available as a draft.
+For a PDF or packet review copy, add `--draft`: Ghostscript (`gs`) must be
+installed. This explicitly removes XFA in a temporary copy, renders every
+page, and creates a noninteractive raster PDF with a prominent `DRAFT - NOT
+FOR FILING` banner on every page. A manifest records readiness and blockers;
+single PDFs receive a `.manifest.json` sidecar. Draft targets must not already
+exist. Incomplete computed lines still prevent PDF generation. This is a
+deliberate change to the export interface.
+
+New form entries containing unmodeled fields are rejected. Legacy entries
+with such fields block readiness. Identity intake must explicitly include
+`blind`, `can_be_claimed_as_dependent`, and `digital_assets` as booleans (and spouse `blind` where applicable);
+older identities need to be recorded again because their defaults cannot prove
+that those facts were answered. California returns also remain unsupported for
+readiness until the missing state filing facts are modeled.
+
+Readiness is conservative: dependent qualification is not fully modeled, and
+nonresident forms, 1099-B reporting, 1099-NEC business facts, and resident 1042-S entries need facts or computations the application does not yet model, so those
+returns are marked `unsupported` and can produce only explicitly labeled
+PDF drafts through the CLI. Other unresolved validation findings may require review or
+input even when computed lines are complete. See [known limits](docs/KNOWN_LIMITS.md).
+
 Money is **integer cents as a string** — `"5000000"` is $50,000.00.
 No floats anywhere in the filed path.
 

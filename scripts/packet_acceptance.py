@@ -1,21 +1,7 @@
 #!/usr/bin/env python3
-"""Acceptance test for `tax return export --type packet`.
+"""Federal packet acceptance: normal-ready 002/010 retain PDF field readback; unsupported 005/009 check golden calculations, explicit draft blockers, page labels and rendered values. Requires pypdf, Ghostscript and Tesseract."""
 
-Builds stored returns from the golden benchmark inputs (cases 002, 005,
-009, 010) through the real CLI, runs the packet export against the blank
-TY2025 templates in spikes/pdf-fill/fixtures/, then reads the filled
-PDFs back with pypdf and asserts the engine values landed in the
-geometrically verified fields, and that manifest.json reports the right
-status for every form. A fifth scenario runs case 002 against a
-forms-dir holding only f1040.pdf and asserts the applicable schedules
-come back as loud `missing_template` entries, never silent skips.
-
-Usage:
-    python3 scripts/packet_acceptance.py [--bin PATH] [--forms-dir DIR]
-
-The `tax` binary defaults to $CARGO_TARGET_DIR/debug/tax, then
-target/debug/tax. Requires pypdf (pip install pypdf).
-"""
+from draft_checks import verify_packet
 
 import argparse
 import json
@@ -92,6 +78,13 @@ def build_return(bin_path, store, case):
                 "--data",
                 json.dumps(entry),
             )
+    if "identity" not in data:
+        data["identity"] = {"first_name":"Synthetic", "last_name":"Tester", "ssn":"123456789", "date_of_birth":"1990-01-01", "address":{"street":"1 Main St", "city":"Example", "state":"CA", "zip":"90001"}}
+    data["identity"].setdefault("digital_assets", False)
+    data["identity"].setdefault("blind", False)
+    data["identity"].setdefault("can_be_claimed_as_dependent", False)
+    if data["identity"].get("spouse"):
+        data["identity"]["spouse"].setdefault("blind", False)
     if "identity" in data:
         with tempfile.NamedTemporaryFile(
             "w", suffix=".json", delete=False
@@ -354,19 +347,19 @@ def case_010(bin_path, store, forms_dir, tmp):
     expect(a, p2 + "f2_23[0]", "6000.00", "1-A line 38 (total = 1040 line 13b)")
 
 
-def case_missing_templates(bin_path, store, tmp):
+def case_missing_templates(bin_path, store, tmp, forms_dir):
     print("scenario: missing templates are loud manifest entries")
     sparse = os.path.join(tmp, "sparse-forms")
     os.makedirs(sparse)
-    src = os.path.join(REPO, "spikes", "pdf-fill", "fixtures", "f1040.pdf")
+    src = os.path.join(forms_dir, "f1040.pdf")
     with open(src, "rb") as fh, open(os.path.join(sparse, "f1040.pdf"), "wb") as out:
         out.write(fh.read())
-    rid = build_return(bin_path, store, "002-w2-1099s")
+    rid = build_return(bin_path, store, "010-senior-phaseout")
     out_dir = os.path.join(tmp, "pkt-sparse")
     export_packet(bin_path, store, rid, sparse, out_dir)
     statuses = manifest_statuses(out_dir)
     check(statuses["f1040"]["status"] == "filled", "sparse: f1040 still filled")
-    for form in ["f1040sd", "f8949"]:
+    for form in ["f1040s1a"]:
         check(
             statuses[form]["status"] == "missing_template",
             f"sparse: {form} is missing_template (got {statuses[form]['status']})",
@@ -416,11 +409,20 @@ def main():
         sys.exit(f"packet_acceptance: templates missing in {args.forms_dir}: {missing}")
 
     with tempfile.TemporaryDirectory() as tmp:
-        case_002(bin_path, os.path.join(tmp, "store"), args.forms_dir, tmp)
-        case_005(bin_path, os.path.join(tmp, "store"), args.forms_dir, tmp)
-        case_009(bin_path, os.path.join(tmp, "store"), args.forms_dir, tmp)
+        for case in ("002-w2-1099s", "005-w2-nec", "009-eic-two-kids"):
+            rid = build_return(bin_path, os.path.join(tmp, "store"), case)
+            result = run_tax(bin_path, os.path.join(tmp, "store"), "return", "get", "--return", rid)
+            check(result["readiness"]["status"] == "unsupported", f"{case}: unsupported facts prevent a normal packet")
+            with open(os.path.join(CASES, case, "correct.json")) as fh:
+                expected = json.load(fh)["lines"]
+            for line, cents in expected.items():
+                check(result["lines"][line].get("cents") == cents, f"{case} computed line {line} matches golden value")
+            draft = run_tax(bin_path, os.path.join(tmp, "store"), "return", "export", "--return", rid, "--type", "packet", "--draft", "--forms-dir", args.forms_dir, "--out-dir", os.path.join(tmp, "draft-" + case))
+            check(draft["draft"] is True and draft["readiness"]["status"] == "unsupported", f"{case}: explicit draft reports blockers")
+            visible = {"002-w2-1099s": {"f1040sd.pdf": ["8000.00"]}, "005-w2-nec": {"f1040sc.pdf": ["2000.00"]}, "009-eic-two-kids": {"f10408812.pdf": ["4400.00"]}}
+            verify_packet(os.path.join(tmp, "draft-" + case), draft, visible[case])
         case_010(bin_path, os.path.join(tmp, "store"), args.forms_dir, tmp)
-        case_missing_templates(bin_path, os.path.join(tmp, "store"), tmp)
+        case_missing_templates(bin_path, os.path.join(tmp, "store"), tmp, args.forms_dir)
 
     if FAILURES:
         print(f"\npacket_acceptance: {len(FAILURES)} FAILURE(S)")

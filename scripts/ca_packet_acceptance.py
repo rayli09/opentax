@@ -1,38 +1,7 @@
 #!/usr/bin/env python3
-"""Acceptance test for the California forms in `tax return export --type packet`.
+"""California packet acceptance: check golden 540 calculations and rendered draft output for the dependent case, and normal federal-only packet behavior. Requires pypdf, Ghostscript and Tesseract."""
 
-Builds the CA-002 golden case (MFJ, $28,000 CA wages, two young
-children) through the real CLI -- create / form add / set-identity /
-set-state -- runs the packet export against the blank TY2025 templates
-in spikes/pdf-fill/fixtures/ (federal IRS forms + the FTB Form 540),
-then reads the filled f540.pdf back with pypdf and asserts the CA-1
-engine values landed in the geometrically verified fields:
-
-  line 13/17/19  28000.00 / 28000.00 / 16588.00
-  line 31        166.00 (Tax Table box checked)
-  line 32        1256.00
-  line 71        200.00
-  line 75        207.00  (CalEITC)
-  line 76        1064.00 (YCTC)
-  line 78        1471.00
-  line 97        1471.00 (refund; line 100 stays blank)
-
-and that manifest.json reports f540 = filled and f540ca =
-not_applicable with the "no California adjustments" note. Identity
-assertions: the taxpayer name prints, and the full SSNs appear ONLY
-inside the filled PDF -- never in the export output or the manifest.
-
-Two further scenarios: a federal-only return's packet gains f540 /
-f540ca as not_applicable entries, and a forms-dir missing f540.pdf
-reports the Form 540 as a loud missing_template (Schedule CA stays
-not_applicable -- it needs no template).
-
-Usage:
-    python3 scripts/ca_packet_acceptance.py [--bin PATH] [--forms-dir DIR]
-
-The `tax` binary defaults to $CARGO_TARGET_DIR/debug/tax, then
-target/debug/tax. Requires pypdf (pip install pypdf).
-"""
+from draft_checks import verify_packet
 
 import argparse
 import json
@@ -111,6 +80,14 @@ def build_return(bin_path, store, cases_dir, case):
                 "--data",
                 json.dumps(entry),
             )
+    if "identity" not in data:
+        data["identity"] = {"first_name":"Synthetic", "last_name":"Tester", "ssn":"123456789", "date_of_birth":"1990-01-01"}
+    data["identity"].setdefault("digital_assets", False)
+    data["identity"].setdefault("blind", False)
+    data["identity"].setdefault("can_be_claimed_as_dependent", False)
+    if data["identity"].get("spouse"):
+        data["identity"]["spouse"].setdefault("blind", False)
+    data["identity"].setdefault("address", {"street":"1 Main St", "city":"Example", "state":"CA", "zip":"90001"})
     if "identity" in data:
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
             json.dump(data["identity"], fh)
@@ -344,9 +321,30 @@ def main():
             )
     with tempfile.TemporaryDirectory() as tmp:
         store = os.path.join(tmp, "store")
-        case_ca_002(bin_path, store, args.forms_dir, tmp)
+        rid = build_return(bin_path, store, CA_CASES, "ca-002-family-caleitc")
+        result = run_tax(bin_path, store, "return", "get", "--return", rid)
+        check(result["readiness"]["status"] == "unsupported", "CA family: qualification is explicitly unsupported")
+        with open(os.path.join(CA_CASES, "ca-002-family-caleitc", "correct.json")) as fh:
+            expected = json.load(fh)
+        for line, cents in expected["state_lines"].items():
+            check(result["state"]["lines"][line].get("cents") == cents, f"CA family line {line} matches golden value")
+        out_dir = os.path.join(tmp, "draft-ca")
+        draft = run_tax(bin_path, store, "return", "export", "--return", rid, "--type", "packet", "--draft", "--forms-dir", args.forms_dir, "--out-dir", out_dir)
+        check(draft["draft"] and draft["readiness"]["status"] == "unsupported", "CA family draft reports blockers")
+        check(manifest_statuses(out_dir)["f540"]["status"] == "filled", "CA family draft includes Form 540")
+        verify_packet(out_dir, draft, {"f540.pdf": ["28000.00"]})
         case_federal_only(bin_path, store, args.forms_dir, tmp)
-        case_missing_template(bin_path, store, args.forms_dir, tmp)
+        sparse = os.path.join(tmp, "ca-sparse-forms")
+        os.makedirs(sparse)
+        for name in os.listdir(args.forms_dir):
+            if name != "f540.pdf":
+                shutil.copy(os.path.join(args.forms_dir, name), os.path.join(sparse, name))
+        sparse_out = os.path.join(tmp, "ca-sparse-draft")
+        sparse_result = run_tax(bin_path, store, "return", "export", "--return", rid, "--type", "packet", "--draft", "--forms-dir", sparse, "--out-dir", sparse_out)
+        sparse_manifest = verify_packet(sparse_out, sparse_result, {})
+        sparse_status = {f["form"]: f["status"] for f in sparse_manifest["forms"]}
+        check(sparse_status["f540"] == "missing_template", "CA draft explicitly reports missing Form 540 template")
+        check(sparse_status["f540ca"] == "not_applicable", "CA draft retains Schedule CA applicability")
     if FAILURES:
         print(f"\nca_packet_acceptance: {len(FAILURES)} FAILURE(S)")
         return 1

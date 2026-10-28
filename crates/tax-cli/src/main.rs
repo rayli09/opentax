@@ -4,6 +4,8 @@
 //! text on a TTY; errors as `{"success":false,"error","code"}` on stderr
 //! with exit 1. State is a local directory store (default `.opentax/`).
 
+mod draft;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -149,7 +151,7 @@ enum ReturnAction {
         r#return: String,
     },
     /// Store the taxpayer identity block from a JSON file (names, SSNs,
-    /// DOBs, address, occupations). SSNs are normalized to digits,
+    /// DOBs, address, occupations and digital-assets answer). SSNs are normalized to digits,
     /// stored locally only, and echoed back masked.
     SetIdentity {
         #[arg(long)]
@@ -236,6 +238,9 @@ enum ReturnAction {
         forms_dir: Option<PathBuf>,
         #[arg(long)]
         out_dir: Option<PathBuf>,
+        /// Create a visibly marked, flattened PDF review copy (requires Ghostscript).
+        #[arg(long)]
+        draft: bool,
     },
 }
 
@@ -393,6 +398,12 @@ struct StoredReturn {
     /// returns stored before identity existed load unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     taxpayer: Option<TaxpayerIdentity>,
+    /// True only when the input explicitly supplied both taxpayer boolean facts
+    /// and, when a spouse was supplied, the spouse blindness fact.
+    #[serde(default)]
+    identity_facts_confirmed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    digital_assets: Option<bool>,
     /// State return selection (`return set-state`). Optional:
     /// returns stored before state support existed load unchanged,
     /// and a return with no selection computes federally only.
@@ -1718,10 +1729,11 @@ fn schema_json() -> Value {
                 "ssn": {"type": "string", "optional": true},
                 "date_of_birth": {"type": "string", "format": "YYYY-MM-DD", "optional": true, "note": "born before 1961-01-02 counts as age 65 for TY2025"},
                 "occupation": {"type": "string", "optional": true},
-                "blind": {"type": "boolean", "default": false},
+                "blind": {"type": "boolean", "note": "must be explicitly provided for readiness"},
                 "address": {"type": "object", "items": "MailingAddress", "optional": true},
                 "spouse": {"type": "object", "items": "PersonIdentity", "optional": true, "note": "meaningful for mfj/mfs; validation warns when present for single/hoh"},
-                "can_be_claimed_as_dependent": {"type": "boolean", "default": false, "note": "fills the Form 1040 line 12a checkbox; the dependent-filer standard-deduction limitation itself is NOT computed in v1 (validation warns)"}
+                "can_be_claimed_as_dependent": {"type": "boolean", "note": "must be explicitly provided for readiness; the dependent-filer standard-deduction limitation is not computed"},
+                "digital_assets": {"type": "boolean", "note": "explicit Form 1040 digital-assets answer; required for resident readiness and preserved independently of income"}
             },
             "PersonIdentity": {
                 "first_name": {"type": "string", "optional": true},
@@ -1729,7 +1741,7 @@ fn schema_json() -> Value {
                 "ssn": {"type": "string", "optional": true},
                 "date_of_birth": {"type": "string", "format": "YYYY-MM-DD", "optional": true},
                 "occupation": {"type": "string", "optional": true},
-                "blind": {"type": "boolean", "default": false}
+                "blind": {"type": "boolean", "note": "must be explicitly provided for readiness"}
             },
             "MailingAddress": {
                 "street": {"type": "string", "optional": true},
@@ -2002,6 +2014,421 @@ fn validate_nr(ret: &StoredReturn, params: &TaxParams) -> CResult<Out> {
     ))
 }
 
+fn validate_resident(ret: &StoredReturn, params: &TaxParams) -> CResult<Out> {
+    let mut findings: Vec<Value> = Vec::new();
+    if ret.entries.is_empty() {
+        findings.push(json!({"code": "return_empty", "severity": "error",
+                    "message": "no documents have been added to this return", "field": null}));
+    }
+    if ret.other_income.is_none() {
+        findings.push(json!({"code": "other_income_not_recorded", "severity": "warning",
+                    "message": "interest/dividend income not recorded; totals cannot be validated as complete", "field": null}));
+    }
+    match &ret.taxpayer {
+        None => {
+            findings.push(json!({"code": "identity_not_set", "severity": "info",
+                        "message": "identity not set — age/blind standard-deduction additions not checked (set it with `tax return set-identity`); line 12 is the base standard deduction only",
+                        "field": null, "entry": null}));
+        }
+        Some(identity) => {
+            if identity.spouse.is_some() && matches!(ret.status.as_str(), "single" | "hoh") {
+                findings.push(json!({"code": "identity_spouse_unexpected", "severity": "warning",
+                            "message": format!("a spouse identity block is stored but the filing status is {}; the spouse block is meaningful only for mfj/mfs and its standard-deduction conditions are not counted", ret.status),
+                            "field": null, "entry": null}));
+            }
+            if identity.can_be_claimed_as_dependent {
+                findings.push(json!({"code": "dependent_filer_std_ded_not_computed", "severity": "warning",
+                            "message": "can_be_claimed_as_dependent is set: the dependent-filer standard deduction limitation (greater of $1,350 or earned income + $450, capped at the regular standard deduction) is not computed in v1 — line 12 does not apply it",
+                            "field": null, "entry": null}));
+            }
+        }
+    }
+    // Earned income credit findings (v1 scope). The per-
+    // dependent EIC SSN warning flows in below via
+    // validate_dependent.
+    let vdeps = stored_dependents(ret)?;
+    if ret.status == "mfs" && !vdeps.is_empty() {
+        findings.push(json!({"code": "eic_mfs", "severity": "warning",
+                    "message": "filing status is married filing separately: v1 allows no earned income credit for MFS (the separated-spouse exception is not modeled) — line 27 is 0",
+                    "field": null, "entry": null}));
+    }
+    if vdeps.is_empty()
+        && ret
+            .taxpayer
+            .as_ref()
+            .and_then(|t| t.person.date_of_birth.as_deref())
+            .is_none()
+    {
+        findings.push(json!({"code": "eic_childless_age_unknown", "severity": "info",
+                    "message": "no dependents are stored and no taxpayer date of birth is set: the no-children earned income credit (age 25-64 test) cannot be determined, so line 27 is 0 — set the taxpayer date of birth with `tax return set-identity` if the childless credit may apply",
+                    "field": null, "entry": null}));
+    }
+    // Schedule 1-A, Part V findings (enhanced deduction for
+    // seniors, Form 1040 line 13b). Same judgment-call pattern
+    // as the childless EIC: the deduction is a stated zero
+    // when no date of birth is on file.
+    let taxpayer_dob = ret
+        .taxpayer
+        .as_ref()
+        .and_then(|t| t.person.date_of_birth.as_deref());
+    if ret.status == "mfs" {
+        let someone_65 = ret.taxpayer.as_ref().is_some_and(|t| {
+            t.person.is_age_65(params) || t.spouse.as_ref().is_some_and(|s| s.is_age_65(params))
+        });
+        if someone_65 {
+            findings.push(json!({"code": "senior_bonus_mfs", "severity": "warning",
+                        "message": "filing status is married filing separately: the Schedule 1-A Part V enhanced deduction for seniors requires married taxpayers to file jointly (Part V caution) — line 13b takes no senior deduction",
+                        "field": null, "entry": null}));
+        }
+    } else if taxpayer_dob.is_none() {
+        findings.push(json!({"code": "senior_bonus_age_unknown", "severity": "info",
+                    "message": "no taxpayer date of birth is set: the Schedule 1-A Part V enhanced deduction for seniors (born before January 2, 1961, with a valid SSN) cannot be determined, so line 13b takes no senior deduction — set the identity with `tax return set-identity` if it may apply",
+                    "field": null, "entry": null}));
+    }
+    if let Some(other) = &ret.other_income {
+        // The investment-income total is exact only when the
+        // full engine path runs (other_income recorded).
+        let vbs = stored_bs(ret)?;
+        let vints = stored_ints(ret)?;
+        let vdivs = stored_divs(ret)?;
+        let vstatus = FilingStatus::parse(&ret.status).unwrap_or(FilingStatus::Single);
+        let exempt: i64 = vints.iter().map(|f| f.tax_exempt_interest.cents()).sum();
+        let line2b =
+            other.interest.cents() + vints.iter().map(|f| f.interest_income.cents()).sum::<i64>();
+        let line3b = other.dividends.cents()
+            + vdivs
+                .iter()
+                .map(|f| f.total_ordinary_dividends.cents())
+                .sum::<i64>();
+        let (_, _, line7f, _, _) = partial_b_nets(&vbs, vstatus, params);
+        // Skip the finding when line 7 is not even computable.
+        if let Some(gain) = line7f.value() {
+            let inv = exempt + line2b + line3b + gain.cents().max(0);
+            if inv > params.eic_investment_income_limit_cents {
+                findings.push(json!({"code": "eic_investment_income_limit", "severity": "info",
+                            "message": "investment income (lines 2a + 2b + 3b + the positive part of line 7) exceeds the TY2025 limit of $11,950 (IRC 32(i)): no earned income credit is allowed — line 27 is 0",
+                            "field": null, "entry": null}));
+            }
+        }
+    }
+    for (i, w2) in stored_w2s(ret)?.iter().enumerate() {
+        for f in tax_doc::validate_w2(w2, params) {
+            findings.push(json!({"code": f.code, "severity": f.severity,
+                        "message": f.message, "field": f.field, "entry": format!("w2_{:02}", i + 1)}));
+        }
+    }
+    for (i, div) in stored_divs(ret)?.iter().enumerate() {
+        for f in validate_1099_div(div) {
+            findings.push(json!({"code": f.code, "severity": f.severity,
+                        "message": f.message, "field": null, "entry": format!("1099div_{:02}", i + 1)}));
+        }
+    }
+    for form in stored_bs(ret)? {
+        for txn in &form.transactions {
+            if txn.gain().is_none() {
+                findings.push(json!({"code": "1099b_txn_incomplete", "severity": "warning",
+                            "message": format!("1099-B from {}: transaction '{}' is missing proceeds or cost basis; capital-gain lines are incomplete", form.payer_name, txn.description),
+                            "field": null, "entry": null}));
+            }
+        }
+    }
+    for (i, dep) in stored_dependents(ret)?.iter().enumerate() {
+        for f in validate_dependent(dep) {
+            findings.push(json!({"code": f.code, "severity": f.severity,
+                        "message": f.message, "field": null, "entry": format!("dependent_{:02}", i + 1)}));
+        }
+    }
+    if !stored_w2s(ret)?.is_empty() && !stored_necs(ret)?.is_empty() {
+        findings.push(json!({"code": "nec_ss_wage_proxy", "severity": "info",
+                    "message": "return has both W-2 and 1099-NEC entries: the Schedule SE Social Security wage-base room is figured from total W-2 Box 1 wages as a proxy for Box 3 Social Security wages (Schedule SE line 8a). The two differ when Box 1 is reduced by pre-tax amounts that remain Social Security wages (e.g. 401(k) deferrals), in which case the SE tax's Social Security part can be overstated; Box 3, even when transcribed, is not used for this in v1 (docs/KNOWN_LIMITS.md)",
+                    "field": null, "entry": null}));
+    }
+    // State findings (California in v1): the engine's
+    // findings over the computed state section, plus the
+    // selection check itself.
+    if let Some(block) = &ret.state {
+        match block.validated() {
+            Err(e) => {
+                findings.push(json!({"code": "ca_state_unsupported", "severity": "error",
+                            "message": e, "field": null, "entry": null}));
+            }
+            Ok(()) => {
+                let view = compute_view(ret, params)?;
+                if let Some(sv) = &view.state {
+                    for f in &sv.findings {
+                        findings.push(json!({"code": f.code, "severity": f.severity,
+                                    "message": f.message, "field": null, "entry": f.entry}));
+                    }
+                }
+            }
+        }
+    }
+    let valid = !findings.iter().any(|f| f["severity"] == "error");
+    let human = findings
+        .iter()
+        .map(|f| {
+            format!(
+                "[{}] {}: {}",
+                f["severity"].as_str().unwrap_or(""),
+                f["code"].as_str().unwrap_or(""),
+                f["message"].as_str().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Out::ok(
+        json!({"returnId": ret.id, "valid": valid, "findings": findings}),
+        if human.is_empty() {
+            "no findings".to_string()
+        } else {
+            human
+        },
+    ))
+}
+
+// Detect ignored fields in both new and legacy raw entries. `employer_name`
+// is documented identification-only metadata in existing synthetic fixtures.
+fn unknown_entry_fields(kind: &str, value: &Value) -> Vec<String> {
+    let allowed: &[&str] = match kind {
+        "w2" => &[
+            "employer_ein",
+            "employer_name",
+            "wages",
+            "federal_withholding",
+            "social_security_wages",
+            "social_security_tax",
+            "medicare_wages",
+            "medicare_tax",
+            "state_wages",
+            "state_withholding",
+        ],
+        "1099-int" => &[
+            "payer_name",
+            "payer_ein",
+            "interest_income",
+            "tax_exempt_interest",
+            "federal_withholding",
+        ],
+        "1099-div" => &[
+            "payer_name",
+            "payer_ein",
+            "total_ordinary_dividends",
+            "qualified_dividends",
+            "federal_withholding",
+        ],
+        "1099-b" => &[
+            "payer_name",
+            "payer_ein",
+            "transactions",
+            "federal_withholding",
+        ],
+        "1099-nec" => &[
+            "payer_name",
+            "payer_ein",
+            "nonemployee_compensation",
+            "federal_withholding",
+            "expenses",
+            "state_withholding",
+        ],
+        "1042-s" => &[
+            "recipient_name",
+            "payer_name",
+            "income_code",
+            "gross_income",
+            "federal_withholding",
+            "exemption_code",
+            "treaty_country",
+            "treaty_article",
+        ],
+        "dependent" => &[
+            "name",
+            "ssn",
+            "relationship",
+            "age",
+            "months_lived_with_taxpayer",
+            "full_time_student",
+            "permanently_disabled",
+        ],
+        _ => return vec!["unknown node type".into()],
+    };
+    let mut unknown = value
+        .as_object()
+        .map(|m| {
+            m.keys()
+                .filter(|k| !allowed.contains(&k.as_str()))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if kind == "1099-b" {
+        let fields = [
+            "description",
+            "proceeds",
+            "cost_basis",
+            "adjustment",
+            "term",
+            "date_acquired",
+            "date_sold",
+            "adjustment_code",
+        ];
+        if let Some(txns) = value.get("transactions").and_then(Value::as_array) {
+            for (i, txn) in txns.iter().enumerate() {
+                if let Some(map) = txn.as_object() {
+                    unknown.extend(
+                        map.keys()
+                            .filter(|k| !fields.contains(&k.as_str()))
+                            .map(|k| format!("transactions[{i}].{k}")),
+                    );
+                }
+            }
+        }
+    }
+    unknown
+}
+
+// Readiness is intentionally stricter than numerical completeness and the legacy
+// `valid` flag. Findings remain visible as actionable blockers.
+fn readiness(ret: &StoredReturn, params: &TaxParams) -> CResult<Value> {
+    let validation = if ret.nra.is_some() {
+        validate_nr(ret, params)?
+    } else {
+        validate_resident(ret, params)?
+    };
+    let mut blockers = validation.value["findings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| {
+            !matches!(
+                f["code"].as_str().unwrap_or(""),
+                "w2_ss_rate_skipped"
+                    | "w2_medicare_rate_skipped"
+                    | "eic_investment_income_limit"
+                    | "senior_bonus_mfs"
+                    | "caleitc_investment_income_limit"
+                    | "treaty_wage_cap_reached"
+                    | "scholarship_taxable"
+                    | "nra_bank_interest_exempt"
+                    | "nra_standard_deduction_india"
+                    | "nra_no_standard_deduction"
+            )
+        })
+        .collect::<Vec<_>>();
+    if ret.nra.is_none() && ret.digital_assets.is_none() {
+        blockers.push(json!({"code":"digital_assets_answer_missing", "severity":"error", "message":"Record the Form 1040 digital-assets Yes/No answer explicitly with identity; the answer alone does not determine income treatment.", "field":null}));
+    }
+    if ret.taxpayer.is_some() && !ret.identity_facts_confirmed {
+        blockers.push(json!({"code":"identity_boolean_facts_missing", "severity":"error", "message":"Explicitly record blindness and whether the taxpayer may be claimed as a dependent; record spouse blindness when applicable. Older records cannot establish whether defaults were confirmed.", "field":null}));
+    }
+    if ret.state.is_some() {
+        blockers.push(json!({"code":"ca_filing_facts_not_modeled", "severity":"warning", "message":"California county, physical residence and other filing facts are not fully stored or modeled.", "field":null}));
+    }
+    for entry in &ret.entries {
+        let unknown = unknown_entry_fields(&entry.node_type, &entry.data);
+        if !unknown.is_empty() {
+            blockers.push(json!({"code":"unmodeled_entry_fields", "severity":"warning", "message":format!("{} has unmodeled fields: {}", entry.entry_id, unknown.join(", ")), "field":null, "entry":entry.entry_id}));
+        }
+    }
+    let present = |s: &Option<String>| s.as_ref().is_some_and(|v| !v.trim().is_empty());
+    if let Some(identity) = &ret.taxpayer {
+        let person = &identity.person;
+        let address = identity.address.as_ref();
+        if !present(&person.first_name)
+            || !present(&person.last_name)
+            || !present(&person.ssn)
+            || !present(&person.date_of_birth)
+            || !address.is_some_and(|a| {
+                present(&a.street) && present(&a.city) && present(&a.state) && present(&a.zip)
+            })
+            || (matches!(ret.status.as_str(), "mfj" | "mfs")
+                && !identity.spouse.as_ref().is_some_and(|p| {
+                    present(&p.first_name)
+                        && present(&p.last_name)
+                        && present(&p.ssn)
+                        && present(&p.date_of_birth)
+                }))
+        {
+            blockers.push(json!({"code": "identity_incomplete", "severity": "error", "message": "Record taxpayer name, identifying number, date of birth and mailing address; married returns also require spouse name, identifying number and date of birth.", "field": null}));
+        }
+    }
+    if ret.nra.is_none() && !stored_1042ss(ret)?.is_empty() {
+        blockers.push(json!({"code": "resident_1042s_not_modeled", "severity": "warning", "message": "Form 1042-S income and withholding are not included in the resident computation.", "field": null}));
+    }
+    if ret.nra.is_none()
+        && !stored_bs(ret)?
+            .iter()
+            .all(|form| form.transactions.is_empty())
+    {
+        blockers.push(json!({"code": "broker_reporting_not_fully_modeled", "severity": "warning", "message": "1099-B basis-reporting status and prior loss carryovers are not stored; 8949 continuation pages are not implemented. Transaction dates and adjustment codes can also be missing.", "field": null}));
+    }
+    if ret.nra.is_none() && !stored_necs(ret)?.is_empty() {
+        blockers.push(json!({"code": "schedule_c_facts_not_modeled", "severity": "warning", "message": "Schedule C business facts and the qualified business income deduction are not fully modeled.", "field": null}));
+    }
+    if ret.nra.is_some() {
+        blockers.push(json!({"code": "nra_required_facts_not_modeled", "severity": "warning", "message": "Form 8843 and Schedule OI require facts the application does not store, including entry date, passport details and other answers. These forms require manual completion; this route cannot be marked ready for review by the application.", "field": null}));
+    }
+    if !stored_dependents(ret)?.is_empty() {
+        blockers.push(json!({"code": "dependent_qualification_not_fully_modeled", "severity": "warning", "message": "Dependent qualification and credit eligibility are not fully modeled; independent review is required.", "field": null}));
+    }
+    match compute_view(ret, params) {
+        Ok(view) if !view.complete => blockers.push(json!({"code": "computed_lines_incomplete", "severity": "error", "message": "Computed federal or state lines are incomplete.", "field": null})),
+        Err(e) => blockers.push(json!({"code": e.code, "severity": "error", "message": e.message, "field": null})),
+        _ => {}
+    }
+    let unsupported = blockers.iter().any(|f| {
+        matches!(
+            f["code"].as_str().unwrap_or(""),
+            "unmodeled_entry_fields"
+                | "ca_filing_facts_not_modeled"
+                | "resident_1042s_not_modeled"
+                | "broker_reporting_not_fully_modeled"
+                | "schedule_c_facts_not_modeled"
+                | "nra_schedule_nec_not_modeled"
+                | "nra_credits_not_modeled"
+                | "nra_required_facts_not_modeled"
+                | "dependent_qualification_not_fully_modeled"
+                | "dependent_filer_std_ded_not_computed"
+                | "ca_nec_classification_not_modeled"
+                | "nra_state_conflict"
+                | "ca_state_unsupported"
+                | "nra_status_not_supported"
+                | "f1042s_income_code_not_modeled"
+                | "treaty_not_modeled"
+                | "nec_ss_wage_proxy"
+        )
+    });
+    let status = if unsupported {
+        "unsupported"
+    } else if ret.entries.is_empty() {
+        "draft"
+    } else if !blockers.is_empty() {
+        "needs_input"
+    } else {
+        "ready_for_review"
+    };
+    Ok(
+        json!({"status": status, "blockers": blockers, "note": "Ready for review does not guarantee correctness or constitute filing."}),
+    )
+}
+
+fn readiness_human(value: &Value) -> String {
+    let mut text = format!(
+        "readiness: {}",
+        value["status"].as_str().unwrap_or("unknown")
+    );
+    if let Some(blockers) = value["blockers"].as_array() {
+        for blocker in blockers {
+            text.push_str(&format!(
+                "\n  blocker {}: {}",
+                blocker["code"].as_str().unwrap_or("unknown"),
+                blocker["message"].as_str().unwrap_or("")
+            ));
+        }
+    }
+    text
+}
+
 fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
     let params = TaxParams::load_2025().map_err(json_err)?;
     match action {
@@ -2045,6 +2472,8 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 entries: Vec::new(),
                 other_income,
                 taxpayer: None,
+                identity_facts_confirmed: false,
+                digital_assets: None,
                 state: None,
                 nra: None,
             };
@@ -2057,6 +2486,8 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             let ret = load_return(&cli.store, &r#return)?;
             let view = compute_view(&ret, &params)?;
             let mut value = view_json(&view);
+            value["readiness"] = readiness(&ret, &params)?;
+            value["digital_assets"] = json!(ret.digital_assets);
             value["returnId"] = json!(ret.id);
             value["status"] = json!(ret.status);
             value["year"] = json!(ret.year);
@@ -2066,7 +2497,13 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 None => Value::Null,
             };
             let human = {
-                let mut s = format!("return {} — complete: {}\n", ret.id, view.complete);
+                let mut s = format!(
+                    "return {} — complete: {}; readiness: {}\n",
+                    ret.id,
+                    view.complete,
+                    value["readiness"]["status"].as_str().unwrap_or("unknown")
+                );
+                s.push_str(&format!("{}\n", readiness_human(&value["readiness"])));
                 if ret.taxpayer.is_some() {
                     s.push_str("  identity: set (SSNs masked in output)\n");
                 }
@@ -2092,188 +2529,100 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
         ReturnAction::Validate { r#return } => {
             let ret = load_return(&cli.store, &r#return)?;
             if ret.nra.is_some() {
-                return validate_nr(&ret, &params);
+                let mut result = validate_nr(&ret, &params)?;
+                result.value["readiness"] = readiness(&ret, &params)?;
+                result.human.push_str(&format!(
+                    "\n{}",
+                    readiness_human(&result.value["readiness"])
+                ));
+                return Ok(result);
             }
-            let mut findings: Vec<Value> = Vec::new();
-            if ret.entries.is_empty() {
-                findings.push(json!({"code": "return_empty", "severity": "error",
-                    "message": "no documents have been added to this return", "field": null}));
-            }
-            if ret.other_income.is_none() {
-                findings.push(json!({"code": "other_income_not_recorded", "severity": "warning",
-                    "message": "interest/dividend income not recorded; totals cannot be validated as complete", "field": null}));
-            }
-            match &ret.taxpayer {
-                None => {
-                    findings.push(json!({"code": "identity_not_set", "severity": "info",
-                        "message": "identity not set — age/blind standard-deduction additions not checked (set it with `tax return set-identity`); line 12 is the base standard deduction only",
-                        "field": null, "entry": null}));
-                }
-                Some(identity) => {
-                    if identity.spouse.is_some() && matches!(ret.status.as_str(), "single" | "hoh")
-                    {
-                        findings.push(json!({"code": "identity_spouse_unexpected", "severity": "warning",
-                            "message": format!("a spouse identity block is stored but the filing status is {}; the spouse block is meaningful only for mfj/mfs and its standard-deduction conditions are not counted", ret.status),
-                            "field": null, "entry": null}));
-                    }
-                    if identity.can_be_claimed_as_dependent {
-                        findings.push(json!({"code": "dependent_filer_std_ded_not_computed", "severity": "warning",
-                            "message": "can_be_claimed_as_dependent is set: the dependent-filer standard deduction limitation (greater of $1,350 or earned income + $450, capped at the regular standard deduction) is not computed in v1 — line 12 does not apply it",
-                            "field": null, "entry": null}));
-                    }
-                }
-            }
-            // Earned income credit findings (v1 scope). The per-
-            // dependent EIC SSN warning flows in below via
-            // validate_dependent.
-            let vdeps = stored_dependents(&ret)?;
-            if ret.status == "mfs" && !vdeps.is_empty() {
-                findings.push(json!({"code": "eic_mfs", "severity": "warning",
-                    "message": "filing status is married filing separately: v1 allows no earned income credit for MFS (the separated-spouse exception is not modeled) — line 27 is 0",
-                    "field": null, "entry": null}));
-            }
-            if vdeps.is_empty()
-                && ret
-                    .taxpayer
-                    .as_ref()
-                    .and_then(|t| t.person.date_of_birth.as_deref())
-                    .is_none()
-            {
-                findings.push(json!({"code": "eic_childless_age_unknown", "severity": "info",
-                    "message": "no dependents are stored and no taxpayer date of birth is set: the no-children earned income credit (age 25-64 test) cannot be determined, so line 27 is 0 — set the taxpayer date of birth with `tax return set-identity` if the childless credit may apply",
-                    "field": null, "entry": null}));
-            }
-            // Schedule 1-A, Part V findings (enhanced deduction for
-            // seniors, Form 1040 line 13b). Same judgment-call pattern
-            // as the childless EIC: the deduction is a stated zero
-            // when no date of birth is on file.
-            let taxpayer_dob = ret
-                .taxpayer
-                .as_ref()
-                .and_then(|t| t.person.date_of_birth.as_deref());
-            if ret.status == "mfs" {
-                let someone_65 = ret.taxpayer.as_ref().is_some_and(|t| {
-                    t.person.is_age_65(&params)
-                        || t.spouse.as_ref().is_some_and(|s| s.is_age_65(&params))
-                });
-                if someone_65 {
-                    findings.push(json!({"code": "senior_bonus_mfs", "severity": "warning",
-                        "message": "filing status is married filing separately: the Schedule 1-A Part V enhanced deduction for seniors requires married taxpayers to file jointly (Part V caution) — line 13b takes no senior deduction",
-                        "field": null, "entry": null}));
-                }
-            } else if taxpayer_dob.is_none() {
-                findings.push(json!({"code": "senior_bonus_age_unknown", "severity": "info",
-                    "message": "no taxpayer date of birth is set: the Schedule 1-A Part V enhanced deduction for seniors (born before January 2, 1961, with a valid SSN) cannot be determined, so line 13b takes no senior deduction — set the identity with `tax return set-identity` if it may apply",
-                    "field": null, "entry": null}));
-            }
-            if let Some(other) = &ret.other_income {
-                // The investment-income total is exact only when the
-                // full engine path runs (other_income recorded).
-                let vbs = stored_bs(&ret)?;
-                let vints = stored_ints(&ret)?;
-                let vdivs = stored_divs(&ret)?;
-                let vstatus = FilingStatus::parse(&ret.status).unwrap_or(FilingStatus::Single);
-                let exempt: i64 = vints.iter().map(|f| f.tax_exempt_interest.cents()).sum();
-                let line2b = other.interest.cents()
-                    + vints.iter().map(|f| f.interest_income.cents()).sum::<i64>();
-                let line3b = other.dividends.cents()
-                    + vdivs
-                        .iter()
-                        .map(|f| f.total_ordinary_dividends.cents())
-                        .sum::<i64>();
-                let (_, _, line7f, _, _) = partial_b_nets(&vbs, vstatus, &params);
-                // Skip the finding when line 7 is not even computable.
-                if let Some(gain) = line7f.value() {
-                    let inv = exempt + line2b + line3b + gain.cents().max(0);
-                    if inv > params.eic_investment_income_limit_cents {
-                        findings.push(json!({"code": "eic_investment_income_limit", "severity": "info",
-                            "message": "investment income (lines 2a + 2b + 3b + the positive part of line 7) exceeds the TY2025 limit of $11,950 (IRC 32(i)): no earned income credit is allowed — line 27 is 0",
-                            "field": null, "entry": null}));
-                    }
-                }
-            }
-            for (i, w2) in stored_w2s(&ret)?.iter().enumerate() {
-                for f in tax_doc::validate_w2(w2, &params) {
-                    findings.push(json!({"code": f.code, "severity": f.severity,
-                        "message": f.message, "field": f.field, "entry": format!("w2_{:02}", i + 1)}));
-                }
-            }
-            for (i, div) in stored_divs(&ret)?.iter().enumerate() {
-                for f in validate_1099_div(div) {
-                    findings.push(json!({"code": f.code, "severity": f.severity,
-                        "message": f.message, "field": null, "entry": format!("1099div_{:02}", i + 1)}));
-                }
-            }
-            for form in stored_bs(&ret)? {
-                for txn in &form.transactions {
-                    if txn.gain().is_none() {
-                        findings.push(json!({"code": "1099b_txn_incomplete", "severity": "warning",
-                            "message": format!("1099-B from {}: transaction '{}' is missing proceeds or cost basis; capital-gain lines are incomplete", form.payer_name, txn.description),
-                            "field": null, "entry": null}));
-                    }
-                }
-            }
-            for (i, dep) in stored_dependents(&ret)?.iter().enumerate() {
-                for f in validate_dependent(dep) {
-                    findings.push(json!({"code": f.code, "severity": f.severity,
-                        "message": f.message, "field": null, "entry": format!("dependent_{:02}", i + 1)}));
-                }
-            }
-            if !stored_w2s(&ret)?.is_empty() && !stored_necs(&ret)?.is_empty() {
-                findings.push(json!({"code": "nec_ss_wage_proxy", "severity": "info",
-                    "message": "return has both W-2 and 1099-NEC entries: the Schedule SE Social Security wage-base room is figured from total W-2 Box 1 wages as a proxy for Box 3 Social Security wages (Schedule SE line 8a). The two differ when Box 1 is reduced by pre-tax amounts that remain Social Security wages (e.g. 401(k) deferrals), in which case the SE tax's Social Security part can be overstated; Box 3, even when transcribed, is not used for this in v1 (docs/KNOWN_LIMITS.md)",
-                    "field": null, "entry": null}));
-            }
-            // State findings (California in v1): the engine's
-            // findings over the computed state section, plus the
-            // selection check itself.
-            if let Some(block) = &ret.state {
-                match block.validated() {
-                    Err(e) => {
-                        findings.push(json!({"code": "ca_state_unsupported", "severity": "error",
-                            "message": e, "field": null, "entry": null}));
-                    }
-                    Ok(()) => {
-                        let view = compute_view(&ret, &params)?;
-                        if let Some(sv) = &view.state {
-                            for f in &sv.findings {
-                                findings.push(json!({"code": f.code, "severity": f.severity,
-                                    "message": f.message, "field": null, "entry": f.entry}));
-                            }
-                        }
-                    }
-                }
-            }
-            let valid = !findings.iter().any(|f| f["severity"] == "error");
-            let human = findings
-                .iter()
-                .map(|f| {
-                    format!(
-                        "[{}] {}: {}",
-                        f["severity"].as_str().unwrap_or(""),
-                        f["code"].as_str().unwrap_or(""),
-                        f["message"].as_str().unwrap_or("")
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            Ok(Out::ok(
-                json!({"returnId": ret.id, "valid": valid, "findings": findings}),
-                if human.is_empty() {
-                    "no findings".to_string()
-                } else {
-                    human
-                },
-            ))
+            let mut result = validate_resident(&ret, &params)?;
+            result.value["readiness"] = readiness(&ret, &params)?;
+            result.human.push_str(&format!(
+                "\n{}",
+                readiness_human(&result.value["readiness"])
+            ));
+            Ok(result)
         }
         ReturnAction::SetIdentity { r#return, file } => {
             let text = std::fs::read_to_string(&file).map_err(io_err)?;
-            let raw: TaxpayerIdentity = serde_json::from_str(&text).map_err(json_err)?;
+            let original: Value = serde_json::from_str(&text).map_err(json_err)?;
+            let person_fields = [
+                "first_name",
+                "last_name",
+                "ssn",
+                "date_of_birth",
+                "occupation",
+                "blind",
+            ];
+            let root_fields = [
+                "first_name",
+                "last_name",
+                "ssn",
+                "date_of_birth",
+                "occupation",
+                "blind",
+                "address",
+                "spouse",
+                "can_be_claimed_as_dependent",
+                "digital_assets",
+            ];
+            let address_fields = ["street", "apt", "city", "state", "zip"];
+            let mut unknown = Vec::new();
+            if let Some(map) = original.as_object() {
+                unknown.extend(
+                    map.keys()
+                        .filter(|k| !root_fields.contains(&k.as_str()))
+                        .cloned(),
+                );
+                for (key, allowed) in [
+                    ("spouse", &person_fields[..]),
+                    ("address", &address_fields[..]),
+                ] {
+                    if let Some(child) = map.get(key).and_then(Value::as_object) {
+                        unknown.extend(
+                            child
+                                .keys()
+                                .filter(|k| !allowed.contains(&k.as_str()))
+                                .map(|k| format!("{key}.{k}")),
+                        );
+                    }
+                }
+            }
+            if !unknown.is_empty() {
+                return Err(CliErr::new(
+                    "unsupported_fields",
+                    format!("Unmodeled identity fields: {}", unknown.join(", ")),
+                ));
+            }
+            let explicit = original.get("blind").and_then(Value::as_bool).is_some()
+                && original
+                    .get("can_be_claimed_as_dependent")
+                    .and_then(Value::as_bool)
+                    .is_some()
+                && original
+                    .get("spouse")
+                    .filter(|v| !v.is_null())
+                    .is_none_or(|v| v.get("blind").and_then(Value::as_bool).is_some());
+            let digital_assets = match original.get("digital_assets") {
+                None | Some(Value::Null) => None,
+                Some(Value::Bool(answer)) => Some(*answer),
+                Some(_) => {
+                    return Err(CliErr::new(
+                        "invalid_input",
+                        "digital_assets must be a boolean",
+                    ))
+                }
+            };
+            let raw: TaxpayerIdentity = serde_json::from_value(original).map_err(json_err)?;
             let identity = raw
                 .normalized()
                 .map_err(|e| CliErr::new("invalid_input", e))?;
             let mut ret = load_return(&cli.store, &r#return)?;
             ret.taxpayer = Some(identity.clone());
+            ret.identity_facts_confirmed = explicit;
+            ret.digital_assets = digital_assets;
             save_return(&cli.store, &ret)?;
             let masked = masked_identity_json(&identity);
             let human = format!(
@@ -2293,7 +2642,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     .unwrap_or_else(|| "not set".to_string()),
             );
             Ok(Out::ok(
-                json!({"returnId": ret.id, "taxpayer": masked}),
+                json!({"returnId": ret.id, "taxpayer": masked, "digital_assets": ret.digital_assets}),
                 human,
             ))
         }
@@ -2478,6 +2827,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             out,
             forms_dir,
             out_dir,
+            draft,
         } => {
             let ret = load_return(&cli.store, &r#return)?;
             if ret.nra.is_some() && export_type == "mef" {
@@ -2486,15 +2836,48 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     "export --type mef is not available for a Form 1040-NR return in \
                      v1: the MeF exporter emits the resident Form 1040 package, and \
                      the Form 1040-NR MeF schema package is separate and not \
-                     implemented. `return export --type json`, `--type pdf`, and \
-                     `--type packet` work for Form 1040-NR returns"
+                     implemented. JSON export is available; PDF and packet \
+                     review copies require `--draft` for Form 1040-NR returns"
                         .to_string(),
                 ));
+            }
+            if draft {
+                if !matches!(export_type.as_str(), "pdf" | "packet") {
+                    return Err(CliErr::new(
+                        "invalid_draft_type",
+                        "--draft is available only for pdf and packet exports",
+                    ));
+                }
+                return draft_export(
+                    &ret,
+                    &params,
+                    &export_type,
+                    template.as_ref(),
+                    out.as_ref(),
+                    forms_dir.as_ref(),
+                    out_dir.as_ref(),
+                );
+            }
+            if matches!(export_type.as_str(), "pdf" | "packet" | "mef") {
+                let state = readiness(&ret, &params)?;
+                if state["status"] != "ready_for_review" {
+                    return Err(CliErr::with_extra("return_not_ready", "Return is not ready for review; use JSON export for a draft and inspect readiness blockers. Existing output paths are unchanged and may contain stale artifacts from an earlier export.", json!({"readiness": state})));
+                }
+            }
+            if matches!(export_type.as_str(), "pdf" | "mef")
+                && out.as_ref().is_some_and(|p| p.exists())
+            {
+                return Err(CliErr::new("output_exists", "Output already exists; choose a new path to avoid overwriting an earlier artifact or template."));
+            }
+            if export_type == "packet" && out_dir.as_ref().is_some_and(|p| p.exists()) {
+                return Err(CliErr::new("output_exists", "Packet output directory already exists; choose a new directory to avoid stale forms or overwriting templates."));
             }
             match export_type.as_str() {
                 "json" => {
                     let view = compute_view(&ret, &params)?;
                     let mut value = view_json(&view);
+                    value["readiness"] = readiness(&ret, &params)?;
+                    value["digital_assets"] = json!(ret.digital_assets);
                     value["returnId"] = json!(ret.id);
                     value["status_filing"] = json!(ret.status);
                     value["year"] = json!(ret.year);
@@ -2508,8 +2891,12 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     )
                     .map_err(io_err)?;
                     Ok(Out::ok(
-                        json!({"status": "exported", "format": "json", "path": path.display().to_string(), "complete": view.complete}),
-                        format!("exported JSON to {}", path.display()),
+                        json!({"status": "exported", "format": "json", "path": path.display().to_string(), "complete": view.complete, "readiness": value["readiness"]}),
+                        format!(
+                            "exported JSON to {}\n{}",
+                            path.display(),
+                            readiness_human(&value["readiness"])
+                        ),
                     ))
                 }
                 "mef" => mef_export(&ret, &params, out.as_ref()),
@@ -2530,7 +2917,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     let status = FilingStatus::parse(&ret.status)
                         .map_err(|e| CliErr::new("invalid_status", e))?;
                     let dependents = stored_dependents(&ret)?;
-                    let plan = build_fill_values_with_dependents(
+                    let mut plan = build_fill_values_with_dependents(
                         &view.lines,
                         status,
                         &dependents,
@@ -2548,6 +2935,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                             json!({"incomplete_lines": incomplete}),
                         )
                     })?;
+                    add_digital_asset_field(&mut plan, ret.digital_assets);
                     let values: std::collections::HashMap<String, String> = plan
                         .values
                         .iter()
@@ -2602,6 +2990,182 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             }
         }
     }
+}
+
+fn add_digital_asset_field(plan: &mut tax_forms::FillPlan, answer: Option<bool>) {
+    if let Some(answer) = answer {
+        plan.values.push(tax_forms::FillValue {
+            line: "digital_assets".into(),
+            field: format!(
+                "topmostSubform[0].Page1[0].c1_10[{}]",
+                if answer { 0 } else { 1 }
+            ),
+            value: if answer { "1" } else { "2" }.into(),
+            display_value: None,
+            section: Some("digital_assets".into()),
+        });
+    }
+}
+
+struct DraftWork(PathBuf);
+impl Drop for DraftWork {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn draft_export(
+    ret: &StoredReturn,
+    params: &TaxParams,
+    kind: &str,
+    template: Option<&PathBuf>,
+    out: Option<&PathBuf>,
+    forms_dir: Option<&PathBuf>,
+    out_dir: Option<&PathBuf>,
+) -> CResult<Out> {
+    let state = readiness(ret, params)?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| CliErr::new("draft_failed", e.to_string()))?
+        .as_nanos();
+    let work = DraftWork(
+        std::env::temp_dir().join(format!("opentax-draft-{}-{nonce}", std::process::id())),
+    );
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&work.0).map_err(io_err)?;
+    let original = work.0.join("filled");
+    let (sources, target) = if kind == "pdf" {
+        let template = template
+            .ok_or_else(|| CliErr::new("missing_template", "draft pdf requires --template"))?;
+        let target = out.ok_or_else(|| CliErr::new("missing_out", "draft pdf requires --out"))?;
+        if target.exists() {
+            return Err(CliErr::new(
+                "draft_output_exists",
+                "draft output already exists",
+            ));
+        }
+        let templates = work.0.join("templates");
+        std::fs::create_dir(&templates).map_err(io_err)?;
+        let name = if ret.nra.is_some() {
+            "f1040nr.pdf"
+        } else {
+            "f1040.pdf"
+        };
+        std::fs::copy(template, templates.join(name)).map_err(io_err)?;
+        packet_export(ret, params, Some(&templates), Some(&original))?;
+        (vec![name.to_string()], target.clone())
+    } else {
+        let forms = forms_dir
+            .ok_or_else(|| CliErr::new("missing_forms_dir", "draft packet requires --forms-dir"))?;
+        let target = out_dir
+            .ok_or_else(|| CliErr::new("missing_out_dir", "draft packet requires --out-dir"))?;
+        if target.exists() {
+            return Err(CliErr::new(
+                "draft_output_exists",
+                "draft packet directory already exists",
+            ));
+        }
+        packet_export(ret, params, Some(forms), Some(&original))?;
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(&original).map_err(io_err)? {
+            let entry = entry.map_err(io_err)?;
+            let path = entry.path();
+            if path.extension().is_some_and(|s| s == "pdf") {
+                names.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+        names.sort();
+        (names, target.clone())
+    };
+    if sources.is_empty() {
+        return Err(CliErr::new("draft_failed", "no PDF was generated"));
+    }
+    let staging = work.0.join("draft");
+    std::fs::create_dir(&staging).map_err(io_err)?;
+    for (i, name) in sources.iter().enumerate() {
+        let render = work.0.join(format!("render-{i}"));
+        std::fs::create_dir(&render).map_err(io_err)?;
+        draft::rasterize(&original.join(name), &staging.join(name), &render)
+            .map_err(|e| CliErr::new("draft_failed", e))?;
+    }
+    let manifest_path = original.join("manifest.json");
+    let mut manifest: Value =
+        serde_json::from_slice(&std::fs::read(manifest_path).map_err(io_err)?).map_err(json_err)?;
+    manifest["draft"] = json!(true);
+    manifest["notice"] = json!("DRAFT - NOT FOR FILING. Rasterized review copy; consult blockers before relying on any value.");
+    manifest["readiness"] = state.clone();
+    if kind == "pdf" {
+        manifest["files"] = json!([target.file_name().unwrap_or_default().to_string_lossy()]);
+    }
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest).map_err(json_err)?;
+    if kind == "packet" {
+        std::fs::write(staging.join("manifest.json"), manifest_bytes).map_err(io_err)?;
+        std::fs::rename(&staging, &target)
+            .or_else(|_| -> std::io::Result<()> {
+                std::fs::create_dir(&target)?;
+                let copied = (|| -> std::io::Result<()> {
+                    for entry in std::fs::read_dir(&staging)? {
+                        let entry = entry?;
+                        std::fs::copy(entry.path(), target.join(entry.file_name()))?;
+                    }
+                    Ok(())
+                })();
+                if copied.is_err() {
+                    let _ = std::fs::remove_dir_all(&target);
+                }
+                copied
+            })
+            .map_err(io_err)?;
+    } else {
+        let sidecar = PathBuf::from(format!("{}.manifest.json", target.display()));
+        if sidecar.exists() {
+            return Err(CliErr::new(
+                "draft_output_exists",
+                "draft manifest already exists",
+            ));
+        }
+        use std::io::Write;
+        let mut manifest_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&sidecar)
+            .map_err(io_err)?;
+        if let Err(e) = manifest_file.write_all(&manifest_bytes) {
+            let _ = std::fs::remove_file(&sidecar);
+            return Err(io_err(e));
+        }
+        let mut dest = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&target)
+        {
+            Ok(file) => file,
+            Err(e) => {
+                let _ = std::fs::remove_file(&sidecar);
+                return Err(io_err(e));
+            }
+        };
+        let copied = std::fs::File::open(staging.join(&sources[0]))
+            .and_then(|mut source| std::io::copy(&mut source, &mut dest));
+        if let Err(e) = copied {
+            let _ = std::fs::remove_file(&target);
+            let _ = std::fs::remove_file(&sidecar);
+            return Err(io_err(e));
+        }
+    }
+    Ok(Out::ok(
+        json!({"success":true, "type":kind, "draft":true, "output":target, "readiness":state}),
+        format!(
+            "DRAFT - NOT FOR FILING: {}\n{}",
+            target.display(),
+            readiness_human(&state)
+        ),
+    ))
 }
 
 /// Rebuild the engine input for a stored return (the same construction
@@ -2717,7 +3281,7 @@ fn packet_export(
     // Form 1040 — the existing fill path, with the packet's template
     // convention (forms-dir/f1040.pdf).
     {
-        let plan = build_fill_values_with_dependents(
+        let mut plan = build_fill_values_with_dependents(
             &computed.lines,
             status,
             &input.dependents,
@@ -2735,6 +3299,7 @@ fn packet_export(
                 json!({"incomplete_lines": incomplete}),
             )
         })?;
+        add_digital_asset_field(&mut plan, ret.digital_assets);
         let template = forms_dir.join("f1040.pdf");
         if !template.exists() {
             record(
@@ -3165,8 +3730,15 @@ fn mef_export(ret: &StoredReturn, params: &TaxParams, out: Option<&PathBuf>) -> 
     }
     let input = form_input(ret)?;
     let computed = compute_1040(&input, params);
-    let export = build_mef(&input, &computed, params, ret.year, &utc_now_iso())
-        .map_err(|e| CliErr::new(e.code, e.message))?;
+    let export = build_mef(
+        &input,
+        &computed,
+        params,
+        ret.year,
+        &utc_now_iso(),
+        ret.digital_assets,
+    )
+    .map_err(|e| CliErr::new(e.code, e.message))?;
     if let Some(parent) = out_path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(io_err)?;
@@ -3231,6 +3803,13 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
                 buf
             };
             let value: Value = serde_json::from_str(&text).map_err(json_err)?;
+            let unknown = unknown_entry_fields(&node_type, &value);
+            if !unknown.is_empty() {
+                return Err(CliErr::new(
+                    "unsupported_fields",
+                    format!("Unmodeled fields: {}", unknown.join(", ")),
+                ));
+            }
             // Validate against the typed struct before storing anything.
             // A dependent's SSN, when present, is validated and stored
             // normalized (digits only); the stored JSON is rewritten
@@ -4044,6 +4623,7 @@ fn cmd_return_ref(cli: &Cli, action: &ReturnAction) -> CResult<Out> {
             out,
             forms_dir,
             out_dir,
+            draft,
         } => cmd_return(
             cli,
             ReturnAction::Export {
@@ -4053,6 +4633,7 @@ fn cmd_return_ref(cli: &Cli, action: &ReturnAction) -> CResult<Out> {
                 out: out.clone(),
                 forms_dir: forms_dir.clone(),
                 out_dir: out_dir.clone(),
+                draft: *draft,
             },
         ),
     }
@@ -4110,6 +4691,186 @@ fn main() {
 mod tests {
     use super::*;
 
+    // Test-only renderer entry: exercised explicitly by scripts/renderer_acceptance.py.
+    // It does not add a CLI route or bypass the production readiness gate.
+    #[test]
+    fn render_mapping_fixtures() {
+        let (Ok(root), Ok(templates)) = (
+            std::env::var("OPENTAX_RENDER_TEST_OUTPUT"),
+            std::env::var("OPENTAX_RENDER_TEST_FORMS"),
+        ) else {
+            return;
+        };
+        let root = PathBuf::from(root);
+        let templates = PathBuf::from(templates);
+        let project = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let params = TaxParams::load_2025().unwrap();
+        for (group, case) in [
+            ("f1040", "002-w2-1099s"),
+            ("f1040", "005-w2-nec"),
+            ("f1040", "009-eic-two-kids"),
+            ("ca540", "ca-002-family-caleitc"),
+            ("f1040nr", "nr-002-cn-split-1042s"),
+        ] {
+            let path = project
+                .join("benchmark/cases")
+                .join(group)
+                .join("2025")
+                .join(case)
+                .join("input.json");
+            let raw: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+            let mut entries = Vec::new();
+            for (key, kind) in [
+                ("w2s", "w2"),
+                ("f1099_ints", "1099-int"),
+                ("f1099_divs", "1099-div"),
+                ("f1099_bs", "1099-b"),
+                ("f1099_necs", "1099-nec"),
+                ("f1042ss", "1042-s"),
+                ("dependents", "dependent"),
+            ] {
+                if let Some(items) = raw[key].as_array() {
+                    for (index, data) in items.iter().enumerate() {
+                        entries.push(StoredEntry {
+                            entry_id: format!("{kind}_{index}"),
+                            node_type: kind.into(),
+                            data: data.clone(),
+                        });
+                    }
+                }
+            }
+            let identity = if group == "f1040nr" {
+                Some(serde_json::from_value(json!({"first_name":"Case", "last_name":"Tester", "ssn":"123456789", "occupation":"Student", "address":{"street":"1 College Ave", "city":"Berkeley", "state":"CA", "zip":"94720"}})).unwrap())
+            } else {
+                raw.get("identity")
+                    .cloned()
+                    .map(|v| serde_json::from_value(v).unwrap())
+            };
+            let nra = if group == "f1040nr" {
+                Some(serde_json::from_value(json!({"visa_type":"F-1", "citizenship":"CN", "first_calendar_year_in_status":2025, "calendar_years_in_status_including_current":1, "form_8843":{"school_name":"State University", "school_address":"100 University Dr, Berkeley, CA 94720", "school_phone":"510-555-0100", "director_name":"Dr. Director", "director_address":"200 Program Hall, Berkeley, CA 94720", "director_phone":"510-555-0101", "days_present_current_year":200}})).unwrap())
+            } else {
+                None
+            };
+            let mut ret = StoredReturn {
+                id: case.into(),
+                year: 2025,
+                status: raw["status"].as_str().unwrap().into(),
+                entries,
+                other_income: Some(OtherIncome {
+                    interest: serde_json::from_value(raw["interest_income"].clone()).unwrap(),
+                    dividends: serde_json::from_value(raw["ordinary_dividends"].clone()).unwrap(),
+                }),
+                taxpayer: identity,
+                identity_facts_confirmed: true,
+                digital_assets: Some(false),
+                state: raw
+                    .get("state")
+                    .cloned()
+                    .map(|v| serde_json::from_value(v).unwrap()),
+                nra,
+            };
+            let out = root.join(case);
+            let result = packet_export(&ret, &params, Some(&templates), Some(&out))
+                .ok()
+                .expect("test renderer packet");
+            std::fs::write(
+                out.join("result.json"),
+                serde_json::to_vec(&result.value).unwrap(),
+            )
+            .unwrap();
+            if group == "ca540" {
+                let sparse = root.join("ca-sparse-templates");
+                std::fs::create_dir(&sparse).unwrap();
+                for entry in std::fs::read_dir(&templates).unwrap() {
+                    let entry = entry.unwrap();
+                    if entry.file_name() != "f540.pdf" && entry.path().is_file() {
+                        std::fs::copy(entry.path(), sparse.join(entry.file_name())).unwrap();
+                    }
+                }
+                packet_export(&ret, &params, Some(&sparse), Some(&root.join("ca-sparse")))
+                    .ok()
+                    .expect("CA sparse packet");
+            }
+            if group == "f1040nr" {
+                let sparse = root.join("nr-sparse-templates");
+                std::fs::create_dir(&sparse).unwrap();
+                std::fs::copy(templates.join("f1040nr.pdf"), sparse.join("f1040nr.pdf")).unwrap();
+                packet_export(&ret, &params, Some(&sparse), Some(&root.join("nr-sparse")))
+                    .ok()
+                    .expect("NR sparse packet");
+                nr_pdf_export(
+                    &ret,
+                    &params,
+                    &templates.join("f1040nr.pdf"),
+                    &root.join("nr-single.pdf"),
+                )
+                .ok()
+                .expect("NR single PDF");
+                let mut no_treaty = ret.clone();
+                no_treaty.entries = vec![StoredEntry {
+                    entry_id: "w2_01".into(),
+                    node_type: "w2".into(),
+                    data: json!({"employer_ein":"12-3456789", "wages":"800000", "federal_withholding":"30000"}),
+                }];
+                no_treaty.taxpayer = None;
+                no_treaty.nra = Some(serde_json::from_value(json!({"visa_type":"F-1", "citizenship":"DE", "first_calendar_year_in_status":2024, "calendar_years_in_status_including_current":2})).unwrap());
+                packet_export(
+                    &no_treaty,
+                    &params,
+                    Some(&templates),
+                    Some(&root.join("nr-no-treaty")),
+                )
+                .ok()
+                .expect("NR no treaty packet");
+                let mut incomplete = ret.clone();
+                incomplete
+                    .entries
+                    .iter_mut()
+                    .find(|e| e.node_type == "1042-s")
+                    .unwrap()
+                    .data["income_code"] = json!(50);
+                let failed = packet_export(
+                    &incomplete,
+                    &params,
+                    Some(&templates),
+                    Some(&root.join("nr-incomplete")),
+                )
+                .err()
+                .expect("NR incomplete refused");
+                assert_eq!(failed.code, "return_incomplete");
+                assert!(failed.message.contains("Form 1040-NR lines incomplete"));
+                assert!(!root.join("nr-incomplete/manifest.json").exists());
+            }
+            if group == "f1040" {
+                ret.taxpayer = Some(serde_json::from_value(json!({"first_name":"Spike", "last_name":"Tester", "ssn":"123456789", "date_of_birth":"1990-05-01", "occupation":"Engineer", "address":{"street":"1 Main St", "city":"Springfield", "state":"IL", "zip":"62701"}})).unwrap());
+                if case == "009-eic-two-kids" {
+                    let mut step = ret.clone();
+                    step.entries.retain(|entry| entry.node_type != "dependent");
+                    step.entries.push(StoredEntry { entry_id:"dependent_01".into(), node_type:"dependent".into(), data:json!({"name":"Kid Step", "ssn":"123456789", "relationship":"stepchild", "age":10, "months_lived_with_taxpayer":12}) });
+                    let step_dir = root.join("stepchild");
+                    std::fs::create_dir(&step_dir).unwrap();
+                    let report = mef_export(&step, &params, Some(&step_dir.join("mef.xml")))
+                        .ok()
+                        .expect("stepchild MeF");
+                    std::fs::write(
+                        step_dir.join("result.json"),
+                        serde_json::to_vec(&report.value).unwrap(),
+                    )
+                    .unwrap();
+                }
+                let xml = out.join("mef.xml");
+                let report = mef_export(&ret, &params, Some(&xml))
+                    .ok()
+                    .expect("test renderer MeF");
+                std::fs::write(
+                    out.join("mef-result.json"),
+                    serde_json::to_vec(&report.value).unwrap(),
+                )
+                .unwrap();
+            }
+        }
+    }
+
     fn spike_identity() -> TaxpayerIdentity {
         TaxpayerIdentity {
             person: PersonIdentity {
@@ -4161,6 +4922,286 @@ mod tests {
         assert!(bad.normalized().is_err());
     }
 
+    fn readiness_fixture() -> StoredReturn {
+        let identity: TaxpayerIdentity = serde_json::from_value(json!({
+            "first_name": "Synthetic", "last_name": "Example", "ssn": "123456789",
+            "date_of_birth": "1980-01-01", "address": {"street": "1 Example Road", "city": "Example", "state": "CA", "zip": "90001"}
+        })).unwrap();
+        StoredReturn {
+            id: "synthetic".into(),
+            year: 2025,
+            status: "single".into(),
+            entries: vec![StoredEntry {
+                entry_id: "w2_01".into(),
+                node_type: "w2".into(),
+                data: json!({
+                    "employer_ein": "12-3456789", "wages": "5000000", "federal_withholding": "400000",
+                    "social_security_wages": "5000000", "social_security_tax": "310000",
+                    "medicare_wages": "5000000", "medicare_tax": "72500"
+                }),
+            }],
+            other_income: Some(OtherIncome {
+                interest: Money::ZERO,
+                dividends: Money::ZERO,
+            }),
+            taxpayer: Some(identity),
+            identity_facts_confirmed: true,
+            digital_assets: Some(false),
+            state: None,
+            nra: None,
+        }
+    }
+
+    #[test]
+    fn readiness_checks_identity_and_dependents() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut ret = readiness_fixture();
+        let ready = readiness(&ret, &params).ok().unwrap();
+        assert_eq!(ready["status"], "ready_for_review", "{ready}");
+        ret.other_income.as_mut().unwrap().interest = Money::from_cents(2_000_000);
+        let informative = readiness(&ret, &params).ok().unwrap();
+        assert_eq!(informative["status"], "ready_for_review", "{informative}");
+        ret.taxpayer.as_mut().unwrap().person.first_name = None;
+        let missing = readiness(&ret, &params).ok().unwrap();
+        assert_eq!(missing["status"], "needs_input");
+        assert!(missing["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "identity_incomplete"));
+        ret.entries.push(StoredEntry { entry_id: "dependent_01".into(), node_type: "dependent".into(), data: json!({"name":"Synthetic Child", "relationship":"child", "age":10, "months_lived_with_taxpayer":12}) });
+        let unsupported = readiness(&ret, &params).ok().unwrap();
+        assert_eq!(unsupported["status"], "unsupported");
+        assert!(unsupported["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "dependent_qualification_not_fully_modeled"));
+    }
+
+    #[test]
+    fn legacy_unknown_fields_and_unconfirmed_identity_block() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut ret = readiness_fixture();
+        ret.digital_assets = None;
+        let state = readiness(&ret, &params).ok().unwrap();
+        assert!(state["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "digital_assets_answer_missing"));
+        ret.digital_assets = Some(false);
+        ret.identity_facts_confirmed = false;
+        let state = readiness(&ret, &params).ok().unwrap();
+        assert_eq!(state["status"], "needs_input");
+        assert!(state["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "identity_boolean_facts_missing"));
+        ret.identity_facts_confirmed = true;
+        ret.entries[0].data["unmodeled_wages"] = json!("10000");
+        let state = readiness(&ret, &params).ok().unwrap();
+        assert_eq!(state["status"], "unsupported");
+        assert!(state["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "unmodeled_entry_fields"));
+        assert_eq!(
+            unknown_entry_fields(
+                "1099-b",
+                &json!({"transactions":[{"description":"x", "unknown":"x"}]})
+            ),
+            vec!["transactions[0].unknown"]
+        );
+        assert_eq!(
+            unknown_entry_fields("1099-div", &json!({"capital_gain_distributions":"10000"})),
+            vec!["capital_gain_distributions"]
+        );
+    }
+
+    #[test]
+    fn resident_unmodeled_documents_block_readiness() {
+        let params = TaxParams::load_2025().unwrap();
+        let examples = [
+            (
+                "1042-s",
+                json!({"payer_name":"University", "income_code":20, "gross_income":"10000", "federal_withholding":"0"}),
+                "resident_1042s_not_modeled",
+            ),
+            (
+                "1099-b",
+                json!({"payer_name":"Broker", "federal_withholding":"0", "transactions":[{"description":"Stock", "proceeds":"10000", "cost_basis":"5000", "term":"long"}]}),
+                "broker_reporting_not_fully_modeled",
+            ),
+            (
+                "1099-nec",
+                json!({"payer_name":"Client", "nonemployee_compensation":"10000", "federal_withholding":"0", "expenses":"0"}),
+                "schedule_c_facts_not_modeled",
+            ),
+        ];
+        for (kind, data, code) in examples {
+            let mut ret = readiness_fixture();
+            if kind == "1099-nec" {
+                ret.entries.clear();
+            }
+            ret.entries.push(StoredEntry {
+                entry_id: "synthetic".into(),
+                node_type: kind.into(),
+                data,
+            });
+            let state = readiness(&ret, &params).ok().unwrap();
+            assert_eq!(state["status"], "unsupported", "{state}");
+            assert!(
+                state["blockers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|f| f["code"] == code),
+                "{state}"
+            );
+        }
+    }
+
+    #[test]
+    fn nra_unmodeled_income_is_a_blocker_even_when_lines_complete() {
+        let params = TaxParams::load_2025().unwrap();
+        let mut ret = readiness_fixture();
+        ret.nra = Some(serde_json::from_value(json!({"visa_type":"F-1", "citizenship":"CN", "first_calendar_year_in_status":2025, "calendar_years_in_status_including_current":1})).unwrap());
+        ret.other_income.as_mut().unwrap().dividends = Money::from_cents(10000);
+        let result = readiness(&ret, &params).ok().unwrap();
+        assert_eq!(result["status"], "unsupported");
+        assert!(result["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "nra_schedule_nec_not_modeled"));
+        ret.other_income.as_mut().unwrap().dividends = Money::ZERO;
+        let entries = [
+            (
+                "1099-div",
+                json!({"payer_name":"Fund", "qualified_dividends":"0", "total_ordinary_dividends":"10000", "federal_withholding":"0"}),
+            ),
+            (
+                "1099-b",
+                json!({"payer_name":"Broker", "federal_withholding":"0", "transactions":[{"description":"Stock", "proceeds":"10000", "cost_basis":"5000", "term":"long"}]}),
+            ),
+            (
+                "1099-nec",
+                json!({"payer_name":"Client", "nonemployee_compensation":"10000", "federal_withholding":"0", "expenses":"0"}),
+            ),
+        ];
+        for (kind, data) in entries {
+            ret.entries.push(StoredEntry {
+                entry_id: "synthetic_income".into(),
+                node_type: kind.into(),
+                data,
+            });
+            let result = readiness(&ret, &params).ok().unwrap();
+            assert_eq!(result["status"], "unsupported");
+            assert!(
+                result["blockers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|f| f["code"] == "nra_schedule_nec_not_modeled"),
+                "{kind}: {result}"
+            );
+            ret.entries.pop();
+        }
+        let no_income = readiness(&ret, &params).ok().unwrap();
+        assert!(!no_income["blockers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["code"] == "nra_schedule_nec_not_modeled"));
+        assert_eq!(no_income["status"], "unsupported"); // 8843/OI facts are not stored.
+    }
+
+    #[test]
+    fn draft_json_exports_but_filing_exports_are_gated() {
+        let store = std::env::temp_dir().join(format!("opentax-readiness-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let mut ret = readiness_fixture();
+        ret.taxpayer = None;
+        save_return(&store, &ret).ok().unwrap();
+        let cli = Cli {
+            output: OutputMode::Json,
+            store: store.clone(),
+            skills_dir: PathBuf::from("skills"),
+            command: Commands::Doctor,
+        };
+        let export = |kind: &str| ReturnAction::Export {
+            r#return: ret.id.clone(),
+            export_type: kind.into(),
+            template: None,
+            out: None,
+            forms_dir: None,
+            out_dir: None,
+            draft: false,
+        };
+        let draft = cmd_return(&cli, export("json")).ok().unwrap();
+        assert_eq!(draft.value["readiness"]["status"], "needs_input");
+        for kind in ["pdf", "packet"] {
+            assert_eq!(
+                cmd_return(&cli, export(kind)).err().unwrap().code,
+                "return_not_ready"
+            );
+        }
+        assert_eq!(
+            cmd_return(&cli, export("mef")).err().unwrap().code,
+            "return_not_ready"
+        );
+        ret.taxpayer = readiness_fixture().taxpayer;
+        save_return(&store, &ret).ok().unwrap();
+        assert_eq!(
+            cmd_return(&cli, export("packet")).err().unwrap().code,
+            "missing_forms_dir"
+        );
+        let existing = store.join("existing.pdf");
+        std::fs::write(&existing, b"original synthetic template").unwrap();
+        let action = ReturnAction::Export {
+            r#return: ret.id.clone(),
+            export_type: "pdf".into(),
+            template: Some(existing.clone()),
+            out: Some(existing.clone()),
+            forms_dir: None,
+            out_dir: None,
+            draft: false,
+        };
+        assert_eq!(
+            cmd_return(&cli, action).err().unwrap().code,
+            "output_exists"
+        );
+        assert_eq!(
+            std::fs::read(&existing).unwrap(),
+            b"original synthetic template"
+        );
+
+        let _ = std::fs::remove_dir_all(store);
+    }
+
+    #[test]
+    fn empty_return_is_draft_with_blockers() {
+        let ret = StoredReturn {
+            id: "synthetic".into(),
+            year: 2025,
+            status: "single".into(),
+            entries: vec![],
+            other_income: None,
+            taxpayer: None,
+            identity_facts_confirmed: false,
+            digital_assets: None,
+            state: None,
+            nra: None,
+        };
+        let params = TaxParams::load_2025().unwrap();
+        let result = readiness(&ret, &params).ok().expect("readiness");
+        assert_eq!(result["status"], "draft");
+        assert!(!result["blockers"].as_array().unwrap().is_empty());
+    }
+
     #[test]
     fn old_return_without_taxpayer_block_still_loads() {
         // A return.json written before the identity block existed.
@@ -4191,6 +5232,8 @@ mod tests {
                 dividends: Money::ZERO,
             }),
             taxpayer: Some(spike_identity()),
+            identity_facts_confirmed: true,
+            digital_assets: Some(false),
             state: None,
             nra: None,
         };
@@ -4201,6 +5244,8 @@ mod tests {
             entries: Vec::new(),
             other_income: None,
             taxpayer: None,
+            identity_facts_confirmed: false,
+            digital_assets: None,
             state: None,
             nra: None,
         };
@@ -4235,6 +5280,8 @@ mod tests {
             entries: Vec::new(),
             other_income: None,
             taxpayer: None,
+            identity_facts_confirmed: false,
+            digital_assets: None,
             state: None,
             nra: None,
         };
@@ -4285,6 +5332,8 @@ mod tests {
             entries: Vec::new(),
             other_income: None,
             taxpayer: None,
+            identity_facts_confirmed: false,
+            digital_assets: None,
             state: None,
             nra: None,
         };
@@ -4315,6 +5364,8 @@ mod tests {
             entries: Vec::new(),
             other_income: None,
             taxpayer: None,
+            identity_facts_confirmed: false,
+            digital_assets: None,
             state: None,
             nra: None,
         };
