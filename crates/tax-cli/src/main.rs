@@ -379,6 +379,12 @@ struct StoredReturn {
     /// and a return with no selection computes federally only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     state: Option<StateBlock>,
+    /// Nonresident-alien (student) selection (`return set-nra`).
+    /// Optional: returns stored before NRA support existed load
+    /// unchanged; when set, the return computes on Form 1040-NR
+    /// instead of Form 1040.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nra: Option<NraBlock>,
 }
 
 fn return_path(store: &Path, id: &str) -> PathBuf {
@@ -544,6 +550,14 @@ fn stored_necs(ret: &StoredReturn) -> CResult<Vec<I1099NecInput>> {
         .iter()
         .filter(|e| e.node_type == "1099-nec")
         .map(|e| serde_json::from_value::<I1099NecInput>(e.data.clone()).map_err(json_err))
+        .collect()
+}
+
+fn stored_1042ss(ret: &StoredReturn) -> CResult<Vec<F1042sInput>> {
+    ret.entries
+        .iter()
+        .filter(|e| e.node_type == "1042-s")
+        .map(|e| serde_json::from_value::<F1042sInput>(e.data.clone()).map_err(json_err))
         .collect()
 }
 
@@ -738,9 +752,11 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
             f1099_divs: stored_divs(ret)?,
             f1099_bs: stored_bs(ret)?,
             f1099_necs: stored_necs(ret)?,
+            f1042ss: stored_1042ss(ret)?,
             dependents: stored_dependents(ret)?,
             identity: ret.taxpayer.clone(),
             state: Some(block.clone()),
+            nra: ret.nra.clone(),
         };
         let fed = ComputedReturn {
             lines: view.lines.clone(),
@@ -800,9 +816,11 @@ fn compute_view_inner(ret: &StoredReturn, params: &TaxParams) -> CResult<Compute
                 f1099_divs: divs,
                 f1099_bs: bs,
                 f1099_necs: necs,
+                f1042ss: stored_1042ss(ret)?,
                 dependents: deps,
                 identity: ret.taxpayer.clone(),
                 state: ret.state.clone(),
+                nra: ret.nra.clone(),
             };
             let computed = compute_1040(&input, params);
             warnings.extend(computed.notes.iter().cloned());
@@ -2120,9 +2138,11 @@ fn form_input(ret: &StoredReturn) -> CResult<Form1040Input> {
         f1099_divs: stored_divs(ret)?,
         f1099_bs: stored_bs(ret)?,
         f1099_necs: stored_necs(ret)?,
+        f1042ss: stored_1042ss(ret)?,
         dependents: stored_dependents(ret)?,
         identity: ret.taxpayer.clone(),
         state: ret.state.clone(),
+        nra: ret.nra.clone(),
     })
 }
 

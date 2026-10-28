@@ -193,6 +193,8 @@ fn make_synthetic(path: &PathBuf) {
 /// Golden case 002 inputs (benchmark/cases/f1040/2025/002-w2-1099s).
 fn case002_input() -> Form1040Input {
     Form1040Input {
+        f1042ss: Vec::new(),
+        nra: None,
         status: FilingStatus::Single,
         w2s: vec![W2Input {
             employer_ein: "12-3456789".into(),
@@ -258,6 +260,8 @@ fn case002_input() -> Form1040Input {
 /// Golden case 005 inputs (benchmark/cases/f1040/2025/005-w2-nec).
 fn case005_input() -> Form1040Input {
     Form1040Input {
+        f1042ss: Vec::new(),
+        nra: None,
         status: FilingStatus::Single,
         w2s: vec![W2Input {
             employer_ein: "12-3456789".into(),
