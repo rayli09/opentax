@@ -1,0 +1,122 @@
+{
+ "form": "f1040soi",
+ "year": 2025,
+ "derivation": "Derived GEOMETRICALLY from the real TY2025 Schedule OI (Form 1040-NR) fillable PDF (IRS file f1040nro.pdf, https://www.irs.gov/pub/irs-pdf/f1040nro.pdf, 93,756 bytes; stored in fixtures under the canonical name f1040soi.pdf): widget /Rects (pypdf) matched against printed item labels from `pdftotext -bbox`, including the item H year labels (2023 x 65-84 / 2024 x 201-220 / 2025 x 354-372, fields immediately to their right) and the item L column header bands ((a) Country x 65-280, (b) article x 281-367, (c) months x 367-461, (d) amount x 461-576). Deliberately NOT mapped (stay blank, covered by packet manifest notes): item B (country of tax residence \u2014 not stored separately from citizenship), items C/D1/D2/F/I/J/K and L2/L3 (yes/no questions whose answers are not stored facts), item F's change-description field, item G entry/departure date tables (travel dates are not stored), item L column (c) (months claimed in prior years \u2014 not stored), and item M section 871(d) election boxes (no real-property election in scope).",
+ "entries": [
+  {
+   "key": "taxpayer.full_name",
+   "kind": "identity_text",
+   "line": "header_name",
+   "note": "'Name shown on Form 1040-NR' header field, Rect [36, 684, 446, 698]; filled with the stored identity's full name (first + last).",
+   "qname": "form1040-NR[0].Page1[0].f1_1[0]"
+  },
+  {
+   "key": "taxpayer.ssn",
+   "kind": "identity_ssn",
+   "line": "header_ssn",
+   "note": "'Your identifying number' header field, Rect [446, 684, 576, 698]; filled digits-only; the fill report value is masked.",
+   "qname": "form1040-NR[0].Page1[0].f1_2[0]"
+  },
+  {
+   "kind": "text",
+   "line": "citizenship",
+   "note": "Item A answer field ('Of what country or countries were you a citizen or national during the tax year?'), Rect [367, 672, 576, 684] on the printed item-A row (pdftotext -bbox). Filled with the nra block's citizenship exactly as stored (ISO alpha-2 code).",
+   "qname": "form1040-NR[0].Page1[0].f1_3[0]",
+   "key": "nra.citizenship"
+  },
+  {
+   "kind": "text",
+   "line": "visa_type",
+   "note": "Item E answer field ('enter your visa type ... immigration status on the last day of the tax year'), Rect [252, 576, 497, 588] on the printed item-E row. Filled with the nra block's visa type (the status the determination covers for the whole year).",
+   "qname": "form1040-NR[0].Page1[0].f1_5[0]",
+   "key": "nra.visa_type"
+  },
+  {
+   "kind": "text",
+   "line": "days_2023",
+   "note": "Item H, days present in 2023: field Rect [86, 420, 194, 432] immediately right of the printed '2023' label (x 65-84, pdftotext -bbox). Fed by Form8843Data.days_present_prior_year_2 when stored.",
+   "qname": "form1040-NR[0].Page1[0].f1_23[0]",
+   "key": "form_8843.days_present_prior_year_2"
+  },
+  {
+   "kind": "text",
+   "line": "days_2024",
+   "note": "Item H, days present in 2024: field Rect [223, 420, 331, 432] immediately right of the printed '2024' label (x 201-220). Fed by Form8843Data.days_present_prior_year_1 when stored.",
+   "qname": "form1040-NR[0].Page1[0].f1_24[0]",
+   "key": "form_8843.days_present_prior_year_1"
+  },
+  {
+   "kind": "text",
+   "line": "days_2025",
+   "note": "Item H, days present in 2025: field Rect [374, 420, 482, 432] immediately right of the printed '2025' label (x 354-372). Fed by Form8843Data.days_present_current_year when stored.",
+   "qname": "form1040-NR[0].Page1[0].f1_25[0]",
+   "key": "form_8843.days_present_current_year"
+  },
+  {
+   "kind": "text",
+   "line": "oi_l1_country",
+   "note": "Item L, row 1, column (a) Country: Rect in the (a) column band (x 65-280, under the printed '(a) Country' header); filled from the engine's Schedule OI entry 1 (treaty country as stored, ISO alpha-2).",
+   "qname": "form1040-NR[0].Page1[0].LineL1_Table[0].BodyRow1[0].f1_27[0]",
+   "key": "schedule_oi[1].country"
+  },
+  {
+   "kind": "text",
+   "line": "oi_l1_article",
+   "note": "Item L, row 1, column (b) Tax treaty article: Rect in the (b) column band (x 281-367); filled from the engine's Schedule OI entry 1 (article as cited, e.g. '20(c)').",
+   "qname": "form1040-NR[0].Page1[0].LineL1_Table[0].BodyRow1[0].f1_28[0]",
+   "key": "schedule_oi[1].treaty_article"
+  },
+  {
+   "kind": "amount",
+   "line": "oi_l1_amount",
+   "note": "Item L, row 1, column (d) Amount of exempt income in current tax year: Rect in the (d) column band (x 461-576); filled from the engine's Schedule OI entry 1. Column (c) (number of months claimed in prior tax years, f1_29/f1_33/f1_37) is deliberately NOT mapped: prior-year claim months are not stored.",
+   "qname": "form1040-NR[0].Page1[0].LineL1_Table[0].BodyRow1[0].f1_30[0]"
+  },
+  {
+   "kind": "text",
+   "line": "oi_l2_country",
+   "note": "Item L, row 2, column (a) Country: Rect in the (a) column band (x 65-280, under the printed '(a) Country' header); filled from the engine's Schedule OI entry 2 (treaty country as stored, ISO alpha-2).",
+   "qname": "form1040-NR[0].Page1[0].LineL1_Table[0].BodyRow2[0].f1_31[0]",
+   "key": "schedule_oi[2].country"
+  },
+  {
+   "kind": "text",
+   "line": "oi_l2_article",
+   "note": "Item L, row 2, column (b) Tax treaty article: Rect in the (b) column band (x 281-367); filled from the engine's Schedule OI entry 2 (article as cited, e.g. '20(c)').",
+   "qname": "form1040-NR[0].Page1[0].LineL1_Table[0].BodyRow2[0].f1_32[0]",
+   "key": "schedule_oi[2].treaty_article"
+  },
+  {
+   "kind": "amount",
+   "line": "oi_l2_amount",
+   "note": "Item L, row 2, column (d) Amount of exempt income in current tax year: Rect in the (d) column band (x 461-576); filled from the engine's Schedule OI entry 2. Column (c) (number of months claimed in prior tax years, f1_29/f1_33/f1_37) is deliberately NOT mapped: prior-year claim months are not stored.",
+   "qname": "form1040-NR[0].Page1[0].LineL1_Table[0].BodyRow2[0].f1_34[0]"
+  },
+  {
+   "kind": "text",
+   "line": "oi_l3_country",
+   "note": "Item L, row 3, column (a) Country: Rect in the (a) column band (x 65-280, under the printed '(a) Country' header); filled from the engine's Schedule OI entry 3 (treaty country as stored, ISO alpha-2).",
+   "qname": "form1040-NR[0].Page1[0].LineL1_Table[0].BodyRow3[0].f1_35[0]",
+   "key": "schedule_oi[3].country"
+  },
+  {
+   "kind": "text",
+   "line": "oi_l3_article",
+   "note": "Item L, row 3, column (b) Tax treaty article: Rect in the (b) column band (x 281-367); filled from the engine's Schedule OI entry 3 (article as cited, e.g. '20(c)').",
+   "qname": "form1040-NR[0].Page1[0].LineL1_Table[0].BodyRow3[0].f1_36[0]",
+   "key": "schedule_oi[3].treaty_article"
+  },
+  {
+   "kind": "amount",
+   "line": "oi_l3_amount",
+   "note": "Item L, row 3, column (d) Amount of exempt income in current tax year: Rect in the (d) column band (x 461-576); filled from the engine's Schedule OI entry 3. Column (c) (number of months claimed in prior tax years, f1_29/f1_33/f1_37) is deliberately NOT mapped: prior-year claim months are not stored.",
+   "qname": "form1040-NR[0].Page1[0].LineL1_Table[0].BodyRow3[0].f1_38[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "1k",
+   "note": "Item L, line 1(e) 'Total. Enter this amount on Form 1040-NR, line 1k': Rect [461, 180, 576, 192] on the printed 1(e) row. Fed by engine line 1k, which equals the sum of the item L rows.",
+   "qname": "form1040-NR[0].Page1[0].f1_39[0]"
+  }
+ ]
+}
