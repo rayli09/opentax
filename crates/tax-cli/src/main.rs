@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use tax_core::{CaParams, FactResult, FilingStatus, Money, TaxParams, TreatyParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::mef::build_mef;
-use tax_forms::packet::{build_ca_packet, build_packet, schedules_view};
+use tax_forms::packet::{build_ca_packet, build_nr_packet, build_packet, nr_mapped_incomplete, schedules_view};
 use tax_forms::{
     additional_standard_deduction, build_fill_values_with_dependents, compute_1040, compute_1040nr,
     compute_ca540, deductible_part_of_se_tax, eic_childless_age_outcome, eic_qualifying_children,
@@ -2478,15 +2478,15 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             out_dir,
         } => {
             let ret = load_return(&cli.store, &r#return)?;
-            if ret.nra.is_some() && export_type != "json" {
+            if ret.nra.is_some() && export_type == "mef" {
                 return Err(CliErr::new(
                     "not_implemented",
-                    format!(
-                        "export --type {export_type} is not available for a Form 1040-NR \
-                         return in v1: the pdf/packet/mef exporters fill the resident \
-                         Form 1040, and the Form 1040-NR / Form 8843 fill is a separate \
-                         forms lane. `return export --type json` works"
-                    ),
+                    "export --type mef is not available for a Form 1040-NR return in \
+                     v1: the MeF exporter emits the resident Form 1040 package, and \
+                     the Form 1040-NR MeF schema package is separate and not \
+                     implemented. `return export --type json`, `--type pdf`, and \
+                     `--type packet` work for Form 1040-NR returns"
+                        .to_string(),
                 ));
             }
             match export_type.as_str() {
@@ -2521,6 +2521,9 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     let out_path = out.as_ref().ok_or_else(|| {
                         CliErr::new("missing_out", "pdf export requires --out <output PDF path>")
                     })?;
+                    if ret.nra.is_some() {
+                        return nr_pdf_export(&ret, &params, template, out_path);
+                    }
                     let view = compute_view(&ret, &params)?;
                     let status = FilingStatus::parse(&ret.status)
                         .map_err(|e| CliErr::new("invalid_status", e))?;
@@ -2680,7 +2683,17 @@ fn packet_export(
                 extra["state_incomplete_lines"] = json!(state.incomplete);
             }
         }
+        if view.nra.is_some() {
+            message.push_str(&format!(
+                "; Form 1040-NR lines incomplete: {}",
+                view.incomplete.join(", ")
+            ));
+            extra["nra_incomplete_lines"] = json!(view.incomplete);
+        }
         return Err(CliErr::with_extra("return_incomplete", message, extra));
+    }
+    if ret.nra.is_some() {
+        return packet_export_nr(ret, params, forms_dir, out_dir);
     }
     let input = form_input(ret)?;
     let status = input.status;
@@ -2865,6 +2878,229 @@ fn packet_export(
                 "manifest": manifest_path.display().to_string(),
                 "forms": detail_forms,
                 "schedules": schedules_view(&input, &computed, params)}),
+        human_lines.join("\n"),
+    ))
+}
+
+/// Rebuild the engine input for a stored Form 1040-NR return (the
+/// same construction [`compute_view_nr`] uses; no recorded
+/// other-income is required — on the NR route those amounts only
+/// feed findings).
+fn nr_form_input(ret: &StoredReturn) -> CResult<Form1040Input> {
+    let status = FilingStatus::parse(&ret.status).map_err(|e| CliErr::new("invalid_status", e))?;
+    let (interest, dividends) = match &ret.other_income {
+        Some(o) => (o.interest, o.dividends),
+        None => (Money::ZERO, Money::ZERO),
+    };
+    Ok(Form1040Input {
+        status,
+        w2s: stored_w2s(ret)?,
+        interest_income: interest,
+        ordinary_dividends: dividends,
+        f1099_ints: stored_ints(ret)?,
+        f1099_divs: stored_divs(ret)?,
+        f1099_bs: stored_bs(ret)?,
+        f1099_necs: stored_necs(ret)?,
+        f1042ss: stored_1042ss(ret)?,
+        dependents: stored_dependents(ret)?,
+        identity: ret.taxpayer.clone(),
+        state: None,
+        nra: ret.nra.clone(),
+    })
+}
+
+/// `return export --type pdf` for a Form 1040-NR return: fill the
+/// 1040-NR alone from its geometrically verified field map (the
+/// resident path's single-form behavior, mirrored). Refuses when any
+/// MAPPED NR line is incomplete — an incomplete return is never
+/// exported, and never zero-filled.
+fn nr_pdf_export(
+    ret: &StoredReturn,
+    params: &TaxParams,
+    template: &PathBuf,
+    out_path: &PathBuf,
+) -> CResult<Out> {
+    let view = compute_view(ret, params)?;
+    let treaties = TreatyParams::load_2025().map_err(json_err)?;
+    let input = nr_form_input(ret)?;
+    let nr = compute_1040nr(&input, params, &treaties);
+    let incomplete = nr_mapped_incomplete(&nr);
+    if !incomplete.is_empty() {
+        return Err(CliErr::with_extra(
+            "return_incomplete",
+            format!(
+                "return {} is incomplete; mapped Form 1040-NR lines missing or incomplete: {}",
+                ret.id,
+                incomplete.join(", ")
+            ),
+            json!({"incomplete_lines": incomplete}),
+        ));
+    }
+    let _ = &view;
+    let forms = build_nr_packet(&input, &nr);
+    let main = forms
+        .iter()
+        .find(|f| f.form == "f1040nr")
+        .expect("build_nr_packet always yields the f1040nr form");
+    let values: std::collections::HashMap<String, String> = main
+        .values
+        .iter()
+        .map(|v| (v.field.clone(), v.value.clone()))
+        .collect();
+    let report: FillReport = PdferBackend
+        .fill_fields(template, &values, out_path)
+        .map_err(|e| CliErr::new("pdf_fill_failed", e.to_string()))?;
+    let mut all_warnings = report.warnings.clone();
+    all_warnings.extend(main.notes.iter().cloned());
+    let filled: Vec<Value> = main
+        .values
+        .iter()
+        .map(|v| {
+            let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
+            match &v.section {
+                Some(section) => json!({"line": Value::Null, "section": section,
+                    "field": v.field, "value": shown}),
+                None => json!({"line": v.line, "field": v.field, "value": shown}),
+            }
+        })
+        .collect();
+    Ok(Out::ok(
+        json!({"success": true, "type": "pdf", "form": "1040-NR",
+                "output": out_path.display().to_string(),
+                "backend": report.backend,
+                "filled": filled,
+                "skipped": [],
+                "warnings": all_warnings}),
+        format!(
+            "exported filled Form 1040-NR PDF to {} ({} fields, backend {})",
+            out_path.display(),
+            report.changed_fields.len(),
+            report.backend
+        ),
+    ))
+}
+
+/// `return export --type packet` for a Form 1040-NR return: Form
+/// 1040-NR + Schedule OI (when it has something to report) + Form
+/// 8843, each filled from its geometrically verified field map, plus
+/// the manifest. The caller has already verified overall
+/// completeness (an incomplete NR return errors there, naming the NR
+/// lines). The resident and California forms are never part of an NR
+/// packet.
+fn packet_export_nr(
+    ret: &StoredReturn,
+    params: &TaxParams,
+    forms_dir: &PathBuf,
+    out_dir: &PathBuf,
+) -> CResult<Out> {
+    let treaties = TreatyParams::load_2025().map_err(json_err)?;
+    let input = nr_form_input(ret)?;
+    let nr = compute_1040nr(&input, params, &treaties);
+    std::fs::create_dir_all(out_dir).map_err(io_err)?;
+
+    let mut manifest_forms: Vec<Value> = Vec::new();
+    let mut detail_forms: Vec<Value> = Vec::new();
+    let mut human_lines: Vec<String> = Vec::new();
+    let mut record = |manifest_entry: Value, detail_entry: Value, human: String| {
+        manifest_forms.push(manifest_entry);
+        detail_forms.push(detail_entry);
+        human_lines.push(human);
+    };
+
+    // The manifest states the route once, up front: an NR packet
+    // contains no resident or California forms.
+    record(
+        json!({"form": "route", "label": "Filing route", "status": "not_applicable",
+                "file": Value::Null,
+                "notes": ["Form 1040-NR route: the resident Form 1040, its schedules, and the California forms are not part of this packet (California does not honor federal tax treaties and Form 540NR is not implemented)"]}),
+        json!({"form": "route", "status": "not_applicable"}),
+        "route: Form 1040-NR packet (no resident/CA forms)".to_string(),
+    );
+
+    for form in build_nr_packet(&input, &nr) {
+        if !form.applicable {
+            let reason = form.not_applicable_reason.clone().unwrap_or_default();
+            record(
+                json!({"form": form.form, "label": form.label, "status": "not_applicable",
+                        "file": Value::Null, "notes": [reason.clone()]}),
+                json!({"form": form.form, "status": "not_applicable"}),
+                format!("{}: not applicable ({})", form.form, reason),
+            );
+            continue;
+        }
+        let template = forms_dir.join(format!("{}.pdf", form.form));
+        if !template.exists() {
+            let mut notes = form.notes.clone();
+            notes.insert(
+                0,
+                format!(
+                    "template not found: {} — supply the blank TY2025 {} PDF under this name in --forms-dir",
+                    template.display(),
+                    form.label
+                ),
+            );
+            record(
+                json!({"form": form.form, "label": form.label, "status": "missing_template",
+                        "file": Value::Null, "notes": notes}),
+                json!({"form": form.form, "status": "missing_template"}),
+                format!(
+                    "{}: MISSING TEMPLATE ({}.pdf not in --forms-dir)",
+                    form.form, form.form
+                ),
+            );
+            continue;
+        }
+        let values: std::collections::HashMap<String, String> = form
+            .values
+            .iter()
+            .map(|v| (v.field.clone(), v.value.clone()))
+            .collect();
+        let out_path = out_dir.join(&form.file_name);
+        let report: FillReport = PdferBackend
+            .fill_fields(&template, &values, &out_path)
+            .map_err(|e| CliErr::new("pdf_fill_failed", e.to_string()))?;
+        let filled: Vec<Value> = form
+            .values
+            .iter()
+            .map(|v| {
+                let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
+                json!({"line": v.line, "field": v.field, "value": shown})
+            })
+            .collect();
+        record(
+            json!({"form": form.form, "label": form.label, "status": "filled",
+                    "file": form.file_name, "notes": form.notes}),
+            json!({"form": form.form, "status": "filled", "file": form.file_name,
+                    "backend": report.backend, "filled": filled,
+                    "warnings": report.warnings}),
+            format!(
+                "{}: filled -> {} ({} fields)",
+                form.form,
+                form.file_name,
+                report.changed_fields.len()
+            ),
+        );
+    }
+
+    let manifest = json!({
+        "tax_year": ret.year,
+        "return_id": ret.id,
+        "form": "1040-NR",
+        "forms": manifest_forms,
+    });
+    let manifest_path = out_dir.join("manifest.json");
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).map_err(json_err)?,
+    )
+    .map_err(io_err)?;
+    human_lines.push(format!("manifest: {}", manifest_path.display()));
+    Ok(Out::ok(
+        json!({"success": true, "type": "packet", "form": "1040-NR",
+                "out_dir": out_dir.display().to_string(),
+                "manifest": manifest_path.display().to_string(),
+                "forms": detail_forms,
+                "nra": {"tax_method": nr.tax_method, "schedule_oi": nr.schedule_oi}}),
         human_lines.join("\n"),
     ))
 }
