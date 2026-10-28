@@ -446,7 +446,10 @@ pub fn compute_1040nr(
             entry: None,
         });
     }
-    if !input.f1099_divs.is_empty() || !input.f1099_bs.is_empty() || !input.f1099_necs.is_empty()
+    if !input.f1099_divs.is_empty()
+        || !input.f1099_bs.is_empty()
+        || !input.f1099_necs.is_empty()
+        || input.ordinary_dividends.cents() != 0
     {
         findings.push(NrFinding {
             code: "nra_schedule_nec_not_modeled",

@@ -10,17 +10,18 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
-use tax_core::{CaParams, FactResult, FilingStatus, Money, TaxParams};
+use tax_core::{CaParams, FactResult, FilingStatus, Money, TaxParams, TreatyParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::mef::build_mef;
 use tax_forms::packet::{build_ca_packet, build_packet, schedules_view};
 use tax_forms::{
-    additional_standard_deduction, build_fill_values_with_dependents, compute_1040, compute_ca540,
-    deductible_part_of_se_tax, eic_childless_age_outcome, eic_qualifying_children, mask_ssn,
-    normalize_ssn, schedule_c_net_profit, schedule_se_tax, senior_bonus_eligible_persons,
-    validate_1099_div, validate_dependent, CaFinding, ComputedReturn, DependentInput,
-    Form1040Input, I1099BInput, I1099DivInput, I1099IntInput, I1099NecInput, PersonIdentity,
-    StateBlock, TaxpayerIdentity, W2Input,
+    additional_standard_deduction, build_fill_values_with_dependents, compute_1040, compute_1040nr,
+    compute_ca540, deductible_part_of_se_tax, eic_childless_age_outcome, eic_qualifying_children,
+    mask_ssn, normalize_ssn, schedule_c_net_profit, schedule_se_tax,
+    senior_bonus_eligible_persons, validate_1099_div, validate_dependent, CaFinding,
+    ComputedReturn, DependentInput, F1042sInput, Form1040Input, I1099BInput, I1099DivInput,
+    I1099IntInput, I1099NecInput, NraBlock, NrFinding, PersonIdentity, ScheduleOiEntry, StateBlock,
+    TaxpayerIdentity, W2Input,
 };
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
@@ -169,6 +170,23 @@ enum ReturnAction {
         #[arg(long)]
         state: Option<String>,
         /// JSON file with the state block.
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Mark the return as a nonresident-alien STUDENT return, from a
+    /// JSON file: {"visa_type": "F-1", "citizenship": "CN",
+    /// "first_calendar_year_in_status": 2024,
+    /// "calendar_years_in_status_including_current": 2,
+    /// "form_8843": {...}}. The return is then computed on Form
+    /// 1040-NR instead of Form 1040. Students only (F-1 /
+    /// J-1), single filing status, at most 5 calendar years in
+    /// status — anything else is an explicit error. Incompatible with
+    /// a state selection. Re-running replaces the block. The exact
+    /// shape is in `tax schema NraBlock`.
+    SetNra {
+        #[arg(long)]
+        r#return: String,
+        /// JSON file with the nra block.
         #[arg(long)]
         file: PathBuf,
     },
@@ -493,14 +511,18 @@ fn list_returns(store: &Path, params: &TaxParams) -> Vec<Value> {
                     Ok(view) => json!(view.complete),
                     Err(_) => json!("error"),
                 };
-                json!({
+                let mut row = json!({
                     "id": ret.id,
                     "year": ret.year,
                     "status": ret.status,
                     "complete": complete,
                     "identity_set": ret.taxpayer.is_some(),
                     "state": ret.state.as_ref().map(|b| b.state.clone()),
-                })
+                });
+                if ret.nra.is_some() {
+                    row["form"] = json!("1040-NR");
+                }
+                row
             }
             Err(_) => json!({
                 "id": id,
@@ -652,6 +674,25 @@ struct ComputedView {
     /// The computed state section (California Form 540 in v1),
     /// present only when the return has a state block stored.
     state: Option<StateView>,
+    /// The computed Form 1040-NR section, present only when the
+    /// return has an nra block stored. When present, `lines` IS the
+    /// NR line map (the resident Form 1040 is not computed at all).
+    nra: Option<NrView>,
+}
+
+/// The computed Form 1040-NR section of a stored return: the NR
+/// lines in the same FactResult representation as the federal lines,
+/// plus the determination, the Schedule OI data, and the engine's
+/// findings for `return validate`.
+struct NrView {
+    block: NraBlock,
+    lines: BTreeMap<String, FactResult<Money>>,
+    notes: Vec<String>,
+    findings: Vec<NrFinding>,
+    tax_method: Option<String>,
+    schedule_oi: Vec<ScheduleOiEntry>,
+    exempt_individual: bool,
+    treaty_modeled: bool,
 }
 
 /// The computed state section of a stored return: the state form's
@@ -729,6 +770,9 @@ fn incomplete_lines(lines: &BTreeMap<String, FactResult<Money>>) -> Vec<String> 
 /// the conjunction: a return whose federal side is complete but
 /// whose California section is not is not complete.
 fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView> {
+    if let Some(block) = &ret.nra {
+        return compute_view_nr(ret, block, params);
+    }
     let mut view = compute_view_inner(ret, params)?;
     if let Some(block) = &ret.state {
         block
@@ -779,6 +823,87 @@ fn compute_view(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView>
     Ok(view)
 }
 
+/// The computed view of a nonresident-alien student return: the
+/// Form 1040-NR engine INSTEAD of the resident engine. A state block
+/// alongside the nra block is an explicit error (the California
+/// selection is a full-year-resident Form 540; California does not
+/// honor federal treaties, and Form 540NR is not implemented).
+fn compute_view_nr(
+    ret: &StoredReturn,
+    block: &NraBlock,
+    params: &TaxParams,
+) -> CResult<ComputedView> {
+    if ret.state.is_some() {
+        return Err(CliErr::new(
+            "nra_state_conflict",
+            "this return has both a state selection and an nra block: the California \
+             selection is a full-year-resident Form 540, which is incompatible with the \
+             Form 1040-NR route (California does not honor federal tax treaties and \
+             taxes nonresidents on Form 540NR, which v1 does not implement)",
+        ));
+    }
+    let treaties = TreatyParams::load_2025().map_err(json_err)?;
+    let determination = block
+        .determination(ret.year, &treaties)
+        .map_err(|e| CliErr::new("nra_determination_failed", e))?;
+    let status = FilingStatus::parse(&ret.status).map_err(|e| CliErr::new("invalid_status", e))?;
+    let (interest, dividends) = match &ret.other_income {
+        Some(o) => (o.interest, o.dividends),
+        None => (Money::ZERO, Money::ZERO),
+    };
+    let input = Form1040Input {
+        status,
+        w2s: stored_w2s(ret)?,
+        interest_income: interest,
+        ordinary_dividends: dividends,
+        f1099_ints: stored_ints(ret)?,
+        f1099_divs: stored_divs(ret)?,
+        f1099_bs: stored_bs(ret)?,
+        f1099_necs: stored_necs(ret)?,
+        f1042ss: stored_1042ss(ret)?,
+        dependents: stored_dependents(ret)?,
+        identity: ret.taxpayer.clone(),
+        state: None,
+        nra: Some(block.clone()),
+    };
+    let nr = compute_1040nr(&input, params, &treaties);
+    let mut warnings = nr.notes.clone();
+    let (lines, complete) = if ret.entries.is_empty() {
+        // Mirror the federal view's rule: an untouched return is not
+        // "complete with zeros" — no documents have been recorded.
+        warnings.push("no documents have been added to this return".to_string());
+        (
+            nr.lines
+                .keys()
+                .map(|k| (k.clone(), FactResult::Incomplete))
+                .collect::<BTreeMap<_, _>>(),
+            false,
+        )
+    } else {
+        (nr.lines.clone(), nr.complete)
+    };
+    let incomplete = incomplete_lines(&lines);
+    Ok(ComputedView {
+        lines,
+        complete,
+        incomplete,
+        warnings,
+        line16_method: nr.tax_method.clone(),
+        schedules: None,
+        state: None,
+        nra: Some(NrView {
+            block: block.clone(),
+            lines: nr.lines,
+            notes: nr.notes,
+            findings: nr.findings,
+            tax_method: nr.tax_method,
+            schedule_oi: nr.schedule_oi,
+            exempt_individual: determination.exempt_individual,
+            treaty_modeled: determination.treaty_modeled,
+        }),
+    })
+}
+
 fn compute_view_inner(ret: &StoredReturn, params: &TaxParams) -> CResult<ComputedView> {
     let w2s = stored_w2s(ret)?;
     let ints = stored_ints(ret)?;
@@ -802,6 +927,7 @@ fn compute_view_inner(ret: &StoredReturn, params: &TaxParams) -> CResult<Compute
             line16_method: None,
             schedules: None,
             state: None,
+            nra: None,
         });
     }
 
@@ -833,6 +959,7 @@ fn compute_view_inner(ret: &StoredReturn, params: &TaxParams) -> CResult<Compute
                 line16_method: computed.line16_method.clone(),
                 schedules: Some(schedules),
                 state: None,
+                nra: None,
             })
         }
         None => {
@@ -1007,6 +1134,7 @@ fn compute_view_inner(ret: &StoredReturn, params: &TaxParams) -> CResult<Compute
                 line16_method: None,
                 schedules: None,
                 state: None,
+                nra: None,
             })
         }
     }
@@ -1040,6 +1168,26 @@ fn view_json(view: &ComputedView) -> Value {
             "incomplete": sv.incomplete,
             "line31_method": sv.line31_method,
             "notes": sv.notes,
+        });
+    }
+    if let Some(nv) = &view.nra {
+        // The return computes on Form 1040-NR: "lines" above IS the
+        // NR line map, and this object carries the route's metadata.
+        // Money in schedule_oi serializes as integer cents strings,
+        // like everywhere else in the CLI.
+        value["form"] = json!("1040-NR");
+        value["nra"] = json!({
+            "visa_type": nv.block.visa_type,
+            "citizenship": nv.block.citizenship,
+            "first_calendar_year_in_status": nv.block.first_calendar_year_in_status,
+            "calendar_years_in_status_including_current":
+                nv.block.calendar_years_in_status_including_current,
+            "form_8843_stored": nv.block.form_8843.is_some(),
+            "exempt_individual": nv.exempt_individual,
+            "treaty_modeled": nv.treaty_modeled,
+            "tax_method": nv.tax_method,
+            "schedule_oi": serde_json::to_value(&nv.schedule_oi).unwrap_or(Value::Null),
+            "notes": nv.notes,
         });
     }
     value
@@ -1099,6 +1247,26 @@ fn cmd_doctor(cli: &Cli) -> CResult<Out> {
             true,
             "California params or the extracted CA Tax / EITC tables failed to load".to_string(),
             "reinstall opentax; params/2025-ca*.json are embedded at build time",
+        ),
+    }
+    match TreatyParams::load_2025() {
+        Ok(p) => push(
+            "treaty_params_2025",
+            true,
+            true,
+            format!(
+                "TY{} treaty parameters loaded ({} countries modeled)",
+                p.year,
+                p.countries.len()
+            ),
+            "",
+        ),
+        Err(e) => push(
+            "treaty_params_2025",
+            false,
+            true,
+            e.to_string(),
+            "reinstall opentax; params/2025-treaties.json is embedded at build time",
         ),
     }
     // Store writable probe.
@@ -1231,8 +1399,49 @@ fn run_golden(input_text: &str, correct_text: &str) -> CResult<(bool, Vec<String
     let input: Form1040Input = serde_json::from_str(input_text).map_err(json_err)?;
     let correct: Value = serde_json::from_str(correct_text).map_err(json_err)?;
     let params = TaxParams::load_2025().map_err(json_err)?;
-    let computed = compute_1040(&input, &params);
     let mut mismatches = Vec::new();
+    // Nonresident-alien cases: correct.json carries an "nr_lines"
+    // object of Form 1040-NR line -> expected cents, derived from
+    // the IRS sources cited in the case. The input carries an "nra"
+    // block; the resident engine is not run at all.
+    if let Some(nr_lines) = correct.get("nr_lines").and_then(|l| l.as_object()) {
+        if input.nra.is_none() {
+            mismatches.push(
+                "correct.json asserts nr_lines but input.json has no \"nra\" block".to_string(),
+            );
+        }
+        let treaties = TreatyParams::load_2025().map_err(json_err)?;
+        let nr = compute_1040nr(&input, &params, &treaties);
+        for (line, expected) in nr_lines {
+            let Some(expected_cents) = expected.as_i64() else {
+                continue;
+            };
+            match nr.lines.get(line) {
+                Some(fr) => match fr.value() {
+                    Some(v) if v.cents() == expected_cents => {}
+                    Some(v) => mismatches.push(format!(
+                        "nr line {line}: expected {expected_cents} cents, got {} cents",
+                        v.cents()
+                    )),
+                    None => mismatches.push(format!(
+                        "nr line {line}: expected {expected_cents} cents, got incomplete"
+                    )),
+                },
+                None => mismatches.push(format!("nr line {line}: not computed")),
+            }
+        }
+        if let Some(expected_method) = correct.get("nr_tax_method").and_then(|m| m.as_str()) {
+            match nr.tax_method.as_deref() {
+                Some(actual) if actual == expected_method => {}
+                other => mismatches.push(format!(
+                    "nr_tax_method: expected {expected_method}, got {}",
+                    other.unwrap_or("<none>")
+                )),
+            }
+        }
+        return Ok((mismatches.is_empty(), mismatches));
+    }
+    let computed = compute_1040(&input, &params);
     if let Some(lines) = correct.get("lines").and_then(|l| l.as_object()) {
         for (line, expected) in lines {
             let Some(expected_cents) = expected.as_i64() else {
@@ -1376,15 +1585,44 @@ fn cmd_selftest() -> CResult<Out> {
         }
     }
 
+    // Nonresident-alien student cases live in their own tree
+    // (benchmark/cases/f1040nr/2025/<case>/); the input carries an
+    // "nra" block and correct.json asserts "nr_lines". On-disk only.
+    let nr_base = Path::new("benchmark/cases/f1040nr/2025");
+    if nr_base.is_dir() {
+        let mut names: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(nr_base).map_err(io_err)? {
+            let entry = entry.map_err(io_err)?;
+            let dir = entry.path();
+            if dir.is_dir() && dir.join("input.json").exists() && dir.join("correct.json").exists()
+            {
+                names.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+        names.sort();
+        for name in names {
+            let dir = nr_base.join(&name);
+            cases.push((
+                format!("f1040nr:{name}"),
+                std::fs::read_to_string(dir.join("input.json")).map_err(io_err)?,
+                std::fs::read_to_string(dir.join("correct.json")).map_err(io_err)?,
+                dir.display().to_string(),
+            ));
+        }
+    }
+
     let mut results: Vec<Value> = Vec::new();
     let mut all_pass = true;
     let mut all_mismatches: Vec<String> = Vec::new();
     for (name, input, correct, origin) in &cases {
         let (pass, mismatches) = run_golden(input, correct)?;
-        let label = name.strip_prefix("ca540:").map_or_else(
-            || format!("f1040/2025/{name}"),
-            |n| format!("ca540/2025/{n}"),
-        );
+        let label = if let Some(n) = name.strip_prefix("ca540:") {
+            format!("ca540/2025/{n}")
+        } else if let Some(n) = name.strip_prefix("f1040nr:") {
+            format!("f1040nr/2025/{n}")
+        } else {
+            format!("f1040/2025/{name}")
+        };
         if !pass {
             all_pass = false;
             all_mismatches.extend(
@@ -1433,7 +1671,39 @@ fn schema_json() -> Value {
                 "f1099_necs": {"type": "array", "items": "I1099NecInput"},
                 "dependents": {"type": "array", "items": "DependentInput"},
                 "identity": {"type": "object", "items": "TaxpayerIdentity", "optional": true, "note": "the same block `return set-identity` stores; drives the age-65/blind standard-deduction additions, the Schedule 1-A Part V enhanced deduction for seniors (line 13b), and the PDF identity fields"},
-                "state": {"type": "object", "items": "StateBlock", "optional": true, "note": "the same block `return set-state` stores; when set, the state section is computed alongside the federal return and `return get` gains a \"state\" object. Absent = federal only, computed exactly as before"}
+                "state": {"type": "object", "items": "StateBlock", "optional": true, "note": "the same block `return set-state` stores; when set, the state section is computed alongside the federal return and `return get` gains a \"state\" object. Absent = federal only, computed exactly as before"},
+                "f1042ss": {"type": "array", "items": "F1042sInput", "optional": true, "note": "Form 1042-S entries (foreign person's U.S. source income); consumed by the Form 1040-NR section when an \"nra\" block is set — the resident engine ignores them in v1"},
+                "nra": {"type": "object", "items": "NraBlock", "optional": true, "note": "the same block `return set-nra` stores; when set, `return get` computes Form 1040-NR INSTEAD of the resident Form 1040: \"lines\" is the NR line map and the object gains \"form\": \"1040-NR\" and an \"nra\" object (determination, tax method, Schedule OI data, notes). Absent = resident behavior exactly as before. Incompatible with a StateBlock (explicit error)"}
+            },
+            "NraBlock": {
+                "note": "Set with `tax return set-nra --return <id> --file nra.json`. v1 is the STUDENT route: F-1 / J-1 visa holders in their exempt-individual years (at most 5 calendar years in status — any part of a calendar year counts, Pub 519 (2025)), filing status single. More than 5 years, another visa, or another filing status is refused with an explicit error (likely resident alien; dual-status not implemented). Citizenship CN / IN carry treaty modeling (params/2025-treaties.json); any other country computes with NO treaty benefits and a treaty_not_modeled warning.",
+                "visa_type": {"type": "string", "values": ["F-1", "J-1"]},
+                "citizenship": {"type": "string", "note": "ISO 3166-1 alpha-2 country code (CN, IN modeled); case-insensitive, stored uppercase"},
+                "first_calendar_year_in_status": {"type": "integer"},
+                "calendar_years_in_status_including_current": {"type": "integer", "minimum": 1, "maximum": 5},
+                "form_8843": {"type": "object", "items": "Form8843Data", "optional": true, "note": "facts for Form 8843, stored verbatim for the forms lane; optional individually and as a whole — absent facts are reported incomplete, never invented"}
+            },
+            "Form8843Data": {
+                "school_name": {"type": "string", "optional": true},
+                "school_address": {"type": "string", "optional": true},
+                "school_phone": {"type": "string", "optional": true},
+                "director_name": {"type": "string", "optional": true},
+                "director_address": {"type": "string", "optional": true},
+                "director_phone": {"type": "string", "optional": true},
+                "days_present_current_year": {"type": "integer", "optional": true},
+                "days_present_prior_year_1": {"type": "integer", "optional": true},
+                "days_present_prior_year_2": {"type": "integer", "optional": true}
+            },
+            "F1042sInput": {
+                "note": "One Form 1042-S as printed. Money is integer cents as strings. Income code 20 (compensation during studying and training) and 15 (scholarship or fellowship grants) are modeled on the Form 1040-NR route; any other code is recorded but makes the NR section incomplete with a loud finding. exemption_code is recorded verbatim (\"04\" = exempt under a tax treaty, Instructions for Form 1042-S); an exemption_code of \"04\" or a treaty_article marks the amount as already treaty-excluded by the payer.",
+                "recipient_name": {"type": "string", "optional": true},
+                "payer_name": {"type": "string"},
+                "income_code": {"type": "integer", "note": "Form 1042-S box 1 income code (Instructions for Form 1042-S, Appendix A)"},
+                "gross_income": {"type": "money_cents_string", "form": "1042-S Box 2"},
+                "federal_withholding": {"type": "money_cents_string", "form": "1042-S withholding (box 7a)", "note": "flows to Form 1040-NR line 25g"},
+                "exemption_code": {"type": "string", "optional": true, "form": "1042-S Box 3a"},
+                "treaty_country": {"type": "string", "optional": true},
+                "treaty_article": {"type": "string", "optional": true}
             },
             "StateBlock": {
                 "note": "Set with `tax return set-state --return <id> --state CA --file state.json`. v1 supports exactly one combination; anything else is an explicit error (other states, Form 540NR, and part-year residency are not implemented).",
@@ -1557,6 +1827,11 @@ fn node_templates() -> Vec<(String, bool, Value)> {
             json!({"payer_name": "", "nonemployee_compensation": "0", "federal_withholding": "0", "expenses": "0", "state_withholding": "0"}),
         ),
         (
+            "1042-s".to_string(),
+            true,
+            json!({"payer_name": "", "income_code": 20, "gross_income": "0", "federal_withholding": "0", "exemption_code": null, "treaty_country": null, "treaty_article": null, "recipient_name": null}),
+        ),
+        (
             "dependent".to_string(),
             true,
             json!({"name": "", "ssn": null, "relationship": "child", "age": 0, "months_lived_with_taxpayer": 12, "full_time_student": false, "permanently_disabled": false}),
@@ -1610,6 +1885,110 @@ fn new_return_id(year: u32) -> String {
     format!("r{year}-{secs}-{}", std::process::id())
 }
 
+/// `return validate` for a nonresident-alien student return: the
+/// Form 1040-NR engine's findings (determination, treaty, FICA,
+/// unmodeled documents), the W-2 transcription cross-checks, and the
+/// Form 8843 data check. The resident findings (EIC, senior bonus,
+/// Schedule SE proxies, state findings) do not apply to this route
+/// and are not emitted.
+fn validate_nr(ret: &StoredReturn, params: &TaxParams) -> CResult<Out> {
+    let mut findings: Vec<Value> = Vec::new();
+    if ret.entries.is_empty() {
+        findings.push(json!({"code": "return_empty", "severity": "error",
+            "message": "no documents have been added to this return", "field": null, "entry": null}));
+    }
+    if ret.state.is_some() {
+        findings.push(json!({"code": "nra_state_conflict", "severity": "error",
+            "message": "this return has both a state selection and an nra block: the California selection is a full-year-resident Form 540, incompatible with the Form 1040-NR route (California does not honor federal tax treaties; Form 540NR is not implemented)", "field": null, "entry": null}));
+    }
+    if ret.taxpayer.is_none() {
+        findings.push(json!({"code": "identity_not_set", "severity": "info",
+            "message": "identity not set — the filled Form 1040-NR and Form 8843 will lack the filer's name and identifying number (set it with `tax return set-identity`)", "field": null, "entry": null}));
+    }
+    match compute_view(ret, params) {
+        Ok(view) => {
+            if let Some(nv) = &view.nra {
+                for f in &nv.findings {
+                    findings.push(json!({"code": f.code, "severity": f.severity,
+                        "message": f.message, "field": null, "entry": f.entry}));
+                }
+            }
+        }
+        Err(e) => {
+            findings.push(json!({"code": e.code, "severity": "error",
+                "message": e.message, "field": null, "entry": null}));
+        }
+    }
+    for (i, w2) in stored_w2s(ret)?.iter().enumerate() {
+        for f in tax_doc::validate_w2(w2, params) {
+            findings.push(json!({"code": f.code, "severity": f.severity,
+                "message": f.message, "field": f.field, "entry": format!("w2_{:02}", i + 1)}));
+        }
+    }
+    // Form 8843 data: the form must accompany the return (and is
+    // filed even with no income). v1 stores the facts; the forms
+    // lane fills it. Missing facts are reported, never invented.
+    let block = ret.nra.as_ref().expect("validate_nr routes on the nra block");
+    match &block.form_8843 {
+        None => {
+            findings.push(json!({"code": "form_8843_data_missing", "severity": "info",
+                "message": "no Form 8843 data is stored: an exempt individual must file a fully completed Form 8843 for the year (Pub 519 (2025), chapter 1) — store the facts in the nra block's form_8843 object (school and program-director name/address/phone, days present in the current and two prior years)", "field": null, "entry": null}));
+        }
+        Some(d) => {
+            let mut missing: Vec<&str> = Vec::new();
+            if d.school_name.is_none() {
+                missing.push("school_name");
+            }
+            if d.school_address.is_none() {
+                missing.push("school_address");
+            }
+            if d.director_name.is_none() {
+                missing.push("director_name");
+            }
+            if d.director_address.is_none() {
+                missing.push("director_address");
+            }
+            if d.director_phone.is_none() {
+                missing.push("director_phone");
+            }
+            if d.days_present_current_year.is_none() {
+                missing.push("days_present_current_year");
+            }
+            if d.days_present_prior_year_1.is_none() {
+                missing.push("days_present_prior_year_1");
+            }
+            if d.days_present_prior_year_2.is_none() {
+                missing.push("days_present_prior_year_2");
+            }
+            if !missing.is_empty() {
+                findings.push(json!({"code": "form_8843_data_incomplete", "severity": "info",
+                    "message": format!("the stored Form 8843 data is missing: {} — the form cannot be completed until these facts are recorded (they are never invented)", missing.join(", ")), "field": null, "entry": null}));
+            }
+        }
+    }
+    let valid = !findings.iter().any(|f| f["severity"] == "error");
+    let human = findings
+        .iter()
+        .map(|f| {
+            format!(
+                "[{}] {}: {}",
+                f["severity"].as_str().unwrap_or(""),
+                f["code"].as_str().unwrap_or(""),
+                f["message"].as_str().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(Out::ok(
+        json!({"returnId": ret.id, "form": "1040-NR", "valid": valid, "findings": findings}),
+        if human.is_empty() {
+            "no findings".to_string()
+        } else {
+            human
+        },
+    ))
+}
+
 fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
     let params = TaxParams::load_2025().map_err(json_err)?;
     match action {
@@ -1654,6 +2033,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 other_income,
                 taxpayer: None,
                 state: None,
+                nra: None,
             };
             save_return(&cli.store, &ret)?;
             let value = json!({"returnId": ret.id, "year": ret.year, "status": ret.status});
@@ -1698,6 +2078,9 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
         }
         ReturnAction::Validate { r#return } => {
             let ret = load_return(&cli.store, &r#return)?;
+            if ret.nra.is_some() {
+                return validate_nr(&ret, &params);
+            }
             let mut findings: Vec<Value> = Vec::new();
             if ret.entries.is_empty() {
                 findings.push(json!({"code": "return_empty", "severity": "error",
@@ -1947,6 +2330,75 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             );
             Ok(Out::ok(value, human))
         }
+        ReturnAction::SetNra { r#return, file } => {
+            let text = std::fs::read_to_string(&file).map_err(io_err)?;
+            let block: NraBlock = serde_json::from_str(&text).map_err(json_err)?;
+            let mut ret = load_return(&cli.store, &r#return)?;
+            if ret.state.is_some() {
+                return Err(CliErr::new(
+                    "nra_state_conflict",
+                    "this return already has a state selection: the California selection \
+                     is a full-year-resident Form 540, which is incompatible with the \
+                     Form 1040-NR route (California does not honor federal tax treaties \
+                     and taxes nonresidents on Form 540NR, which v1 does not implement). \
+                     The nra block was NOT stored",
+                ));
+            }
+            if ret.status != "single" {
+                return Err(CliErr::new(
+                    "nra_status_not_supported",
+                    format!(
+                        "the Form 1040-NR student route supports filing status single \
+                         only in v1; this return is {} — the nra block was NOT stored",
+                        ret.status
+                    ),
+                ));
+            }
+            let treaties = TreatyParams::load_2025().map_err(json_err)?;
+            let determination = block
+                .determination(ret.year, &treaties)
+                .map_err(|e| CliErr::new("nra_determination_failed", e))?;
+            // Store the block with the citizenship normalized to the
+            // uppercase ISO code the determination validated.
+            let mut block = block;
+            block.citizenship = block
+                .normalized_citizenship()
+                .expect("determination validated the citizenship");
+            let replaced = ret.nra.is_some();
+            ret.nra = Some(block.clone());
+            save_return(&cli.store, &ret)?;
+            let mut value = json!({
+                "returnId": ret.id,
+                "form": "1040-NR",
+                "nra": serde_json::to_value(&block).map_err(json_err)?,
+                "determination": {
+                    "exempt_individual": determination.exempt_individual,
+                    "treaty_modeled": determination.treaty_modeled,
+                },
+            });
+            if replaced {
+                value["replaced"] = json!(true);
+            }
+            let human = format!(
+                "nonresident-alien student block stored on return {}: {} visa, \
+                 citizenship {}, calendar year {} of {} in status — the return now \
+                 computes on Form 1040-NR (exempt individual: {}; treaty modeled: \
+                 {}){}",
+                ret.id,
+                block.visa_type,
+                block.citizenship,
+                block.calendar_years_in_status_including_current,
+                tax_forms::NraBlock::MAX_EXEMPT_CALENDAR_YEARS,
+                determination.exempt_individual,
+                determination.treaty_modeled,
+                if replaced {
+                    " (replaced previous block)"
+                } else {
+                    ""
+                },
+            );
+            Ok(Out::ok(value, human))
+        }
         ReturnAction::SetOtherIncome {
             r#return,
             interest_cents,
@@ -2005,6 +2457,17 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             out_dir,
         } => {
             let ret = load_return(&cli.store, &r#return)?;
+            if ret.nra.is_some() && export_type != "json" {
+                return Err(CliErr::new(
+                    "not_implemented",
+                    format!(
+                        "export --type {export_type} is not available for a Form 1040-NR \
+                         return in v1: the pdf/packet/mef exporters fill the resident \
+                         Form 1040, and the Form 1040-NR / Form 8843 fill is a separate \
+                         forms lane. `return export --type json` works"
+                    ),
+                ));
+            }
             match export_type.as_str() {
                 "json" => {
                     let view = compute_view(&ret, &params)?;
@@ -2489,11 +2952,12 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
                 "1099-div" => "1099div",
                 "1099-b" => "1099b",
                 "1099-nec" => "1099nec",
+                "1042-s" => "f1042s",
                 "dependent" => "dependent",
                 _ => {
                     return Ok(Out::ok(
                         json!({"status": "not_implemented", "node_type": node_type,
-                                "detail": "v1 stores and computes w2, 1099-int, 1099-div, 1099-b, 1099-nec, and dependent entries (see `tax node list`)"}),
+                                "detail": "v1 stores and computes w2, 1099-int, 1099-div, 1099-b, 1099-nec, 1042-s, and dependent entries (see `tax node list`)"}),
                         format!("adding {node_type}: not implemented in v1"),
                     ));
                 }
@@ -2530,6 +2994,10 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
                 }
                 "1099-nec" => {
                     let _: I1099NecInput =
+                        serde_json::from_value(value.clone()).map_err(json_err)?;
+                }
+                "1042-s" => {
+                    let _: F1042sInput =
                         serde_json::from_value(value.clone()).map_err(json_err)?;
                 }
                 "dependent" => {
@@ -2741,6 +3209,110 @@ fn line16_derivation(method: Option<&str>) -> String {
 /// computed state section (Form 540 printed line numbers, plus the
 /// internal `caleitc_*` keys). The state counterpart of
 /// [`cmd_explain`]; the return must have the state selected.
+fn cmd_explain_nr(
+    cli: &Cli,
+    id: &str,
+    line: Option<String>,
+    fact: Option<String>,
+) -> CResult<Out> {
+    let fact_map: &[(&str, &str)] = &[
+        ("wages", "1a"),
+        ("treaty_exempt_income", "1k"),
+        ("total_income", "9"),
+        ("agi", "11a"),
+        ("standard_deduction", "12"),
+        ("taxable_income", "15"),
+        ("tax", "16"),
+        ("total_tax", "24"),
+        ("w2_withholding", "25a"),
+        ("f1042s_withholding", "25g"),
+        ("total_payments", "33"),
+        ("overpaid", "34"),
+        ("refund", "34"),
+        ("amount_owed", "37"),
+        ("eci_wages_gross", "eci_wages_gross"),
+        ("treaty_wage_exclusion", "treaty_wage_exclusion"),
+        ("treaty_claim_on_return", "treaty_claim_on_return"),
+        ("taxable_scholarship", "taxable_scholarship"),
+        ("scholarship", "taxable_scholarship"),
+    ];
+    let line_no = if let Some(l) = &line {
+        l.clone()
+    } else if let Some(f) = &fact {
+        fact_map
+            .iter()
+            .find(|(name, _)| *name == f.as_str())
+            .map(|(_, l)| l.to_string())
+            .ok_or_else(|| CliErr::new("unknown_fact", format!("unknown NR fact '{f}'")))?
+    } else {
+        return Err(CliErr::new("invalid_input", "provide --line or --fact"));
+    };
+
+    let params = TaxParams::load_2025().map_err(json_err)?;
+    let ret = load_return(&cli.store, id)?;
+    let view = compute_view(&ret, &params)?;
+    let nv = view.nra.as_ref().ok_or_else(|| {
+        CliErr::new(
+            "nra_not_selected",
+            "the return has no computed Form 1040-NR section",
+        )
+    })?;
+    let fr = nv.lines.get(&line_no).cloned().ok_or_else(|| {
+        CliErr::new(
+            "unsupported_line",
+            format!("Form 1040-NR line {line_no} is not computed in v1"),
+        )
+    })?;
+
+    let (derivation, citation) = match line_no.as_str() {
+        "1a" => ("taxable wages: total W-2 box 1 plus the taxable part of Form 1042-S income code 20, MINUS the treaty personal-services exemption claimed on this return. Wages exempt under a treaty are never reported on line 1a (they are on line 1k); when the employer split the pay with Form 8233, the exempt part is on the 1042-S and the W-2 already excludes it".to_string(), "Form 1040-NR (2025), line 1a; Instructions for Form 1040-NR (2025), Line 1a and 'Amounts Exempt Under a Treaty' (worked examples 1 and 2)".to_string()),
+        "1k" => ("total income exempt by a treaty: the wage exemption (Schedule OI, item L) plus any treaty-exempt scholarship, from the computed Schedule OI data".to_string(), "Form 1040-NR (2025), line 1k; Instructions for Form 1040-NR (2025), Line 1k".to_string()),
+        "1z" => ("total of lines 1a through 1h; in v1 only line 1a is nonzero (lines 1b-1h are not modeled)".to_string(), "Form 1040-NR (2025), line 1z".to_string()),
+        "8" => ("additional income from Schedule 1 (Form 1040), line 10: in v1 the taxable scholarship or fellowship grants of Schedule 1, line 8r (Form 1042-S income code 15 amounts the treaty does not exempt)".to_string(), "Form 1040-NR (2025), line 8; Instructions for Form 1040-NR (2025), Line 1a TIP (Schedule 1, line 8r)".to_string()),
+        "9" => ("total effectively connected income: lines 1z + 2b + 3b + 4b + 5b + 7a + 8; in v1 only 1z and 8 can be nonzero (bank interest is excluded for nonresident aliens; dividends and capital gains belong on Schedule NEC, not modeled)".to_string(), "Form 1040-NR (2025), line 9".to_string()),
+        "11a" | "11b" => ("adjusted gross income: line 9 minus line 10 (adjustments from Schedule 1); no Schedule 1 adjustments are modeled in v1, so AGI equals line 9".to_string(), "Form 1040-NR (2025), lines 11a/11b".to_string()),
+        "12" => ("deductions: ZERO for most nonresident aliens (no standard deduction). For a student from India eligible under Article 21(2) of the U.S.-India treaty, the Form 1040 standard deduction amount for the filing status instead (itemized deductions on Schedule A are not computed in v1)".to_string(), "Form 1040-NR (2025), line 12; Instructions for Form 1040-NR (2025), Line 12".to_string()),
+        "14" => ("total deductions: line 12 (lines 13a-13c are zero in v1)".to_string(), "Form 1040-NR (2025), line 14".to_string()),
+        "15" => ("taxable income: line 11b minus line 14, floored at zero".to_string(), "Form 1040-NR (2025), line 15".to_string()),
+        "16" => (match nv.tax_method.as_deref() {
+            Some("tax_computation") => "tax from the Tax Computation Worksheet (single brackets in params/2025.json): line 15 is $100,000 or more".to_string(),
+            _ => "tax from the TY2025 Tax Table (params/2025-tax-table.json): line 15 is under $100,000, so the table applies. Form 1040-NR uses the same table as Form 1040".to_string(),
+        }, "Form 1040-NR (2025), line 16; Instructions for Form 1040-NR (2025), Line 16 (referring to the Instructions for Form 1040, Line 16)".to_string()),
+        "18" => ("line 16 plus line 17 (Schedule 2, line 3 — zero in v1)".to_string(), "Form 1040-NR (2025), line 18".to_string()),
+        "22" => ("line 18 minus line 21 (nonrefundable credits): zero in v1 — no credits are computed on the student route, so line 22 equals line 18".to_string(), "Form 1040-NR (2025), line 22".to_string()),
+        "24" => ("total tax: line 22 plus line 23d (Schedule NEC tax and other taxes — zero in v1; Schedule NEC is not modeled)".to_string(), "Form 1040-NR (2025), line 24".to_string()),
+        "25a" => ("federal income tax withheld on Forms W-2 (box 2), summed over all stored W-2 entries".to_string(), "Form 1040-NR (2025), line 25a".to_string()),
+        "25d" => ("total of lines 25a-25c; in v1 only W-2 withholding (25a) is nonzero".to_string(), "Form 1040-NR (2025), line 25d".to_string()),
+        "25g" => ("federal income tax withheld on Forms 1042-S, summed over all stored 1042-S entries".to_string(), "Form 1040-NR (2025), line 25g".to_string()),
+        "32" => ("total other payments and refundable credits (lines 28-31): zero in v1 — the additional child tax credit is not computed on the student route".to_string(), "Form 1040-NR (2025), line 32".to_string()),
+        "33" => ("total payments: lines 25d + 25e + 25f + 25g + 26 + 32; in v1, W-2 withholding (25a, via 25d) plus Form 1042-S withholding (25g)".to_string(), "Form 1040-NR (2025), line 33".to_string()),
+        "34" => ("overpaid: line 33 minus line 24 when payments exceed total tax, else 0".to_string(), "Form 1040-NR (2025), line 34".to_string()),
+        "37" => ("amount owed: line 24 minus line 33 when total tax exceeds payments, else 0".to_string(), "Form 1040-NR (2025), line 37".to_string()),
+        "eci_wages_gross" => ("gross effectively connected wages before any treaty exemption: total W-2 box 1 plus total Form 1042-S income code 20 gross (internal key)".to_string(), "engine internal key (Form 1040-NR (2025), line 1 components)".to_string()),
+        "treaty_wage_exclusion" => ("the total personal-services treaty exemption: the part the payer already excluded on a treaty-marked Form 1042-S plus the part claimed on this return against W-2 wages, capped by the treaty amount (internal key)".to_string(), "engine internal key (treaty params in params/2025-treaties.json)".to_string()),
+        "treaty_claim_on_return" => ("the part of the treaty wage exemption claimed on this return: the treaty cap minus the already-excluded Form 1042-S part, floored at zero and capped by the W-2 wages (internal key)".to_string(), "engine internal key; Instructions for Form 1040-NR (2025), 'Amounts Exempt Under a Treaty', example 2".to_string()),
+        "taxable_scholarship" => ("the taxable scholarship or fellowship grants: Form 1042-S income code 15 gross minus the part exempt under the treaty (internal key; flows to line 8 via Schedule 1, line 8r)".to_string(), "engine internal key (Schedule 1 (Form 1040), line 8r)".to_string()),
+        _ => ("computed directly from stored inputs".to_string(), "Form 1040-NR (2025) and its instructions".to_string()),
+    };
+
+    let mut value = json!({
+        "returnId": ret.id,
+        "form": "1040-NR",
+        "line": line_no,
+        "result": line_json(&fr),
+        "derivation": derivation,
+        "citation": citation,
+    });
+    if line_no == "16" {
+        value["tax_method"] = json!(nv.tax_method);
+    }
+    let human = format!(
+        "Form 1040-NR line {line_no}: {} — {derivation} [{citation}]",
+        line_json(&fr)
+    );
+    Ok(Out::ok(value, human))
+}
+
 fn cmd_explain_state(
     cli: &Cli,
     id: &str,
@@ -2889,6 +3461,9 @@ fn cmd_explain(
 ) -> CResult<Out> {
     if let Some(state) = &state {
         return cmd_explain_state(cli, id, line, fact, state);
+    }
+    if load_return(&cli.store, id)?.nra.is_some() {
+        return cmd_explain_nr(cli, id, line, fact);
     }
     let fact_map: &[(&str, &str)] = &[
         ("wages", "1a"),
@@ -3097,6 +3672,7 @@ fn run(cli: &Cli) -> CResult<Out> {
             | ReturnAction::Validate { .. }
             | ReturnAction::SetIdentity { .. }
             | ReturnAction::SetState { .. }
+            | ReturnAction::SetNra { .. }
             | ReturnAction::SetOtherIncome { .. }
             | ReturnAction::List
             | ReturnAction::Export { .. } => {
@@ -3185,6 +3761,13 @@ fn cmd_return_ref(cli: &Cli, action: &ReturnAction) -> CResult<Out> {
             ReturnAction::SetState {
                 r#return: r#return.clone(),
                 state: state.clone(),
+                file: file.clone(),
+            },
+        ),
+        ReturnAction::SetNra { r#return, file } => cmd_return(
+            cli,
+            ReturnAction::SetNra {
+                r#return: r#return.clone(),
                 file: file.clone(),
             },
         ),
@@ -3356,6 +3939,7 @@ mod tests {
             }),
             taxpayer: Some(spike_identity()),
             state: None,
+            nra: None,
         };
         let partial = StoredReturn {
             id: "r2025-200-2".to_string(),
@@ -3365,6 +3949,7 @@ mod tests {
             other_income: None,
             taxpayer: None,
             state: None,
+            nra: None,
         };
         assert!(save_return(&store, &complete).is_ok());
         assert!(save_return(&store, &partial).is_ok());
@@ -3398,6 +3983,7 @@ mod tests {
             other_income: None,
             taxpayer: None,
             state: None,
+            nra: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         // Before: the direct amounts are unrecorded, so the view stays
@@ -3447,6 +4033,7 @@ mod tests {
             other_income: None,
             taxpayer: None,
             state: None,
+            nra: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         let (_, replaced) = set_other_income(&store, &ret.id, 10_000, 20_000)
@@ -3476,6 +4063,7 @@ mod tests {
             other_income: None,
             taxpayer: None,
             state: None,
+            nra: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         let err = set_other_income(&store, &ret.id, -1, 0).unwrap_err();
