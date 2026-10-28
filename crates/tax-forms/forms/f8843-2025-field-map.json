@@ -1,0 +1,140 @@
+{
+ "form": "f8843",
+ "year": 2025,
+ "derivation": "Derived GEOMETRICALLY from the real TY2025 f8843.pdf (IRS fillable form, https://www.irs.gov/pub/irs-pdf/f8843.pdf, 108,330 bytes): widget /Rects (pypdf) matched against the printed captions from `pdftotext -bbox` / `-layout` on the blank form, including the line-4a day columns (printed order 2025 / 2024 / 2023) and the line-11 visa-year labels (2019/2020 on the first printed row, 2021/2022/2023/2024 on the second). Deliberately NOT mapped (stay blank, covered by packet manifest notes): the fiscal-year header fields (f1_01-f1_03; a calendar-year filer leaves them blank); BOTH address fields (f1_07 'Address in country of residence', f1_08 'Address in the United States') \u2014 the form's own margin instruction says to fill in addresses ONLY when filing Form 8843 by itself, and in the packet the 8843 is attached to the Form 1040-NR that carries the address; line 3a (passport-issuing country \u2014 not stored separately from citizenship) and line 3b (passport number \u2014 identity stores no passport number); Part II (teachers and trainees \u2014 this route is students only); line 13 (whether the filer applied for lawful permanent residence \u2014 not a stored fact) and line 14 (its explanation). The form has no fillable signature field; when Form 8843 is attached to a tax return it needs no separate signature (see the filing guide).",
+ "entries": [
+  {
+   "key": "taxpayer.first_name",
+   "kind": "identity_text",
+   "line": "taxpayer_first_name",
+   "note": "'Your first name and initial' header field, Rect [36, 672, 244, 686]; filled from the stored identity when present.",
+   "qname": "topmostSubform[0].Page1[0].f1_04[0]"
+  },
+  {
+   "key": "taxpayer.last_name",
+   "kind": "identity_text",
+   "line": "taxpayer_last_name",
+   "note": "'Last name' header field, Rect [246, 672, 402, 686].",
+   "qname": "topmostSubform[0].Page1[0].f1_05[0]"
+  },
+  {
+   "key": "taxpayer.ssn",
+   "kind": "identity_ssn",
+   "line": "taxpayer_ssn",
+   "note": "'Your U.S. taxpayer identification number (TIN), if any' header field, Rect [404, 672, 576, 686]; filled digits-only from the stored identity SSN/ITIN; the fill report value is masked.",
+   "qname": "topmostSubform[0].Page1[0].f1_06[0]"
+  },
+  {
+   "kind": "text",
+   "line": "visa_1a",
+   "note": "Line 1a answer field ('Type of U.S. visa ... and date you entered the United States'), Rect [420, 588, 576, 600] on the printed line-1a row. Filled with the nra block's visa type only: the filer's exact date of entry is not stored (only the first calendar year in status), so the date part is completed by hand \u2014 see the packet manifest notes.",
+   "qname": "topmostSubform[0].Page1[0].f1_09[0]",
+   "key": "nra.visa_type"
+  },
+  {
+   "kind": "text",
+   "line": "status_1b",
+   "note": "Line 1b answer field ('Current nonimmigrant status...'), Rect [65, 564, 576, 576]. Filled with the nra block's visa type (the status the determination covers); a mid-year status change is not modeled in v1.",
+   "qname": "topmostSubform[0].Page1[0].f1_10[0]",
+   "key": "nra.visa_type"
+  },
+  {
+   "kind": "text",
+   "line": "citizenship",
+   "note": "Line 2 answer field ('Of what country or countries were you a citizen during the tax year?'), Rect [342, 552, 576, 564]. Filled with the nra block's citizenship exactly as stored (ISO alpha-2 code).",
+   "qname": "topmostSubform[0].Page1[0].f1_11[0]",
+   "key": "nra.citizenship"
+  },
+  {
+   "kind": "text",
+   "line": "days_2025",
+   "note": "Line 4a, days present in 2025 (the tax year): field Rect [88, 504, 130, 516] under the printed '2025' column header (the 4a columns print in the order 2025 / 2024 / 2023, left to right). Fed by Form8843Data.days_present_current_year when stored.",
+   "qname": "topmostSubform[0].Page1[0].f1_14[0]",
+   "key": "form_8843.days_present_current_year"
+  },
+  {
+   "kind": "text",
+   "line": "days_2024",
+   "note": "Line 4a, days present in 2024: field Rect [174, 504, 216, 516] under the printed '2024' column header. Fed by Form8843Data.days_present_prior_year_1 when stored.",
+   "qname": "topmostSubform[0].Page1[0].f1_15[0]",
+   "key": "form_8843.days_present_prior_year_1"
+  },
+  {
+   "kind": "text",
+   "line": "days_2023",
+   "note": "Line 4a, days present in 2023: field Rect [261, 504, 302, 516] under the printed '2023' column header. Fed by Form8843Data.days_present_prior_year_2 when stored.",
+   "qname": "topmostSubform[0].Page1[0].f1_16[0]",
+   "key": "form_8843.days_present_prior_year_2"
+  },
+  {
+   "kind": "text",
+   "line": "days_excluded_2025",
+   "note": "Line 4b ('number of days in 2025 you claim you can exclude for purposes of the substantial presence test'), Rect [498, 492, 576, 504]. For an exempt individual every day of presence in the status is an exempt day, so this equals the line-4a days present in 2025 \u2014 filled from Form8843Data.days_present_current_year when stored, as a direct consequence of the exempt-individual determination (not an independent fact).",
+   "qname": "topmostSubform[0].Page1[0].f1_17[0]",
+   "key": "form_8843.days_present_current_year"
+  },
+  {
+   "kind": "text",
+   "line": "school_9",
+   "note": "Part III, line 9 ('name, address, and telephone number of the academic institution'), the form's single wide field, Rect [65, 264, 576, 288]. The stored school name / address / phone are joined into this one field in that order.",
+   "qname": "topmostSubform[0].Page1[0].f1_26[0]",
+   "key": "form_8843.school"
+  },
+  {
+   "kind": "text",
+   "line": "director_10",
+   "note": "Part III, line 10 ('name, address, and telephone number of the director of the academic or other specialized program'), single wide field, Rect [65, 216, 576, 240]. The stored director name / address / phone are joined into this one field in that order.",
+   "qname": "topmostSubform[0].Page1[0].f1_27[0]",
+   "key": "form_8843.director"
+  },
+  {
+   "kind": "text",
+   "line": "visa_2019",
+   "note": "Part III, line 11, visa type held during 2019: field matched to the printed '2019' label on the line-11 rows (2019/2020 on the first row, 2021-2024 on the second). Filled with the nra block's visa type for years from first_calendar_year_in_status through 2024 (the years the block states the filer held this status); earlier years stay blank \u2014 a prior different status is not stored.",
+   "qname": "topmostSubform[0].Page1[0].f1_28[0]",
+   "key": "nra.visa_history.2019"
+  },
+  {
+   "kind": "text",
+   "line": "visa_2020",
+   "note": "Part III, line 11, visa type held during 2020: field matched to the printed '2020' label on the line-11 rows (2019/2020 on the first row, 2021-2024 on the second). Filled with the nra block's visa type for years from first_calendar_year_in_status through 2024 (the years the block states the filer held this status); earlier years stay blank \u2014 a prior different status is not stored.",
+   "qname": "topmostSubform[0].Page1[0].f1_29[0]",
+   "key": "nra.visa_history.2020"
+  },
+  {
+   "kind": "text",
+   "line": "visa_2021",
+   "note": "Part III, line 11, visa type held during 2021: field matched to the printed '2021' label on the line-11 rows (2019/2020 on the first row, 2021-2024 on the second). Filled with the nra block's visa type for years from first_calendar_year_in_status through 2024 (the years the block states the filer held this status); earlier years stay blank \u2014 a prior different status is not stored.",
+   "qname": "topmostSubform[0].Page1[0].f1_30[0]",
+   "key": "nra.visa_history.2021"
+  },
+  {
+   "kind": "text",
+   "line": "visa_2022",
+   "note": "Part III, line 11, visa type held during 2022: field matched to the printed '2022' label on the line-11 rows (2019/2020 on the first row, 2021-2024 on the second). Filled with the nra block's visa type for years from first_calendar_year_in_status through 2024 (the years the block states the filer held this status); earlier years stay blank \u2014 a prior different status is not stored.",
+   "qname": "topmostSubform[0].Page1[0].f1_31[0]",
+   "key": "nra.visa_history.2022"
+  },
+  {
+   "kind": "text",
+   "line": "visa_2023",
+   "note": "Part III, line 11, visa type held during 2023: field matched to the printed '2023' label on the line-11 rows (2019/2020 on the first row, 2021-2024 on the second). Filled with the nra block's visa type for years from first_calendar_year_in_status through 2024 (the years the block states the filer held this status); earlier years stay blank \u2014 a prior different status is not stored.",
+   "qname": "topmostSubform[0].Page1[0].f1_32[0]",
+   "key": "nra.visa_history.2023"
+  },
+  {
+   "kind": "text",
+   "line": "visa_2024",
+   "note": "Part III, line 11, visa type held during 2024: field matched to the printed '2024' label on the line-11 rows (2019/2020 on the first row, 2021-2024 on the second). Filled with the nra block's visa type for years from first_calendar_year_in_status through 2024 (the years the block states the filer held this status); earlier years stay blank \u2014 a prior different status is not stored.",
+   "qname": "topmostSubform[0].Page1[0].f1_33[0]",
+   "key": "nra.visa_history.2024"
+  },
+  {
+   "kind": "checkbox",
+   "line": "q12_no",
+   "note": "Part III, line 12 ('Were you exempt as a teacher, trainee, or student for any part of more than 5 calendar years?'): the 'No' box, widget Rect [547, 170, 555, 178], /AP /N on-state /2 (pypdf). The answer is No BY CONSTRUCTION of the validated nra block: the determination refuses more than 5 calendar years in status, so this filer was not exempt for more than 5. The 'Yes' sibling (c1_2[0], on-state /1) is never filled.",
+   "qname": "topmostSubform[0].Page1[0].c1_2[1]",
+   "value": "2"
+  }
+ ]
+}

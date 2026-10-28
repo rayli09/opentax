@@ -1,0 +1,205 @@
+{
+ "form": "f1040nr",
+ "year": 2025,
+ "derivation": "Derived GEOMETRICALLY from the real TY2025 f1040nr.pdf (IRS fillable form, https://www.irs.gov/pub/irs-pdf/f1040nr.pdf, 177,160 bytes), not from field-name numbering: every entry's widget /Rect (read with pypdf) was matched against the printed line labels extracted with `pdftotext -bbox` on the blank form; a field is assigned to the line whose printed label sits on the same row. The TY2025 1040-NR prints AGI as 11a (page 1) repeated as 11b (page 2). Deliberately NOT mapped (stay blank, each covered by a packet manifest note): the fiscal-year and 301.9100-2/combat-zone/deceased header fields (f1_01-f1_13; a calendar-year student filer leaves them blank), the QSS child-name field (f1_25), the Digital Assets Yes/No boxes (c1_6 \u2014 not a stored fact), the page-1 Dependents table (the NR engine states no dependent credits in v1 and flags stored dependents instead), lines 1b-1j and 2-7 (income types the NR engine does not state; 1i/1j are printed 'Reserved for future use'), line 10 (no adjustments stated), lines 13a-13c/17/19-21/23a-23d/25b/25c/25e/25f/26/28-31/35a/36/38 (zero or out of scope in v1), the foreign-address block (f1_22/f1_23/f1_24 \u2014 the stored identity carries one U.S. mailing address and no foreign address), the direct-deposit and foreign-refund-address fields (bank details are not stored), the third-party designee and paid-preparer blocks, and the signature/date fields (the signer signs). The form's page 2 carries NO visa/citizenship questions in TY2025 \u2014 those live on Schedule OI (Form 1040-NR), which has its own map.",
+ "entries": [
+  {
+   "kind": "amount",
+   "line": "1a",
+   "note": "Right amount column on the row labeled '1a Total amount from Form(s) W-2, box 1' (page 1); Rect [504, 384, 576, 396]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form.",
+   "qname": "topmostSubform[0].Page1[0].f1_42[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "1k",
+   "note": "MID column on the row labeled 'k Total income exempt by a treaty from Schedule OI (Form 1040-NR), item L, line 1(e) ... 1k' (page 1); Rect [410, 252, 482, 264]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. The 1k amount prints in the mid column; the right column on this row has no field.",
+   "qname": "topmostSubform[0].Page1[0].Line1k_ReadOrder[0].f1_53[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "1z",
+   "note": "Right amount column on the row labeled 'z Add lines 1a through 1h ... 1z' (page 1); Rect [504, 240, 576, 252]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form.",
+   "qname": "topmostSubform[0].Page1[0].f1_54[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "8",
+   "note": "Right amount column on the row labeled '8 Additional income from Schedule 1 (Form 1040), line 10 ... 8' (page 1); Rect [504, 108, 576, 120]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form.",
+   "qname": "topmostSubform[0].Page1[0].f1_68[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "9",
+   "note": "Right amount column on the row labeled '9 Add lines 1z, 2b, 3b, 4b, 5b, 7a, and 8. This is your total effectively connected income ... 9' (page 1); Rect [504, 96, 576, 108]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form.",
+   "qname": "topmostSubform[0].Page1[0].f1_69[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "11a",
+   "note": "Right amount column on the row labeled '11a Subtract line 10 from line 9. This is your adjusted gross income ... 11a' (page 1); Rect [504, 60, 576, 72]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. Line 10 (f1_70) is NOT mapped: the NR engine states no line-10 adjustments in v1.",
+   "qname": "topmostSubform[0].Page1[0].f1_71[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "11b",
+   "note": "Row label: '11b Amount from line 11a (adjusted gross income)' (page 2, first row); Rect [504, 732, 576, 744]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form.",
+   "qname": "topmostSubform[0].Page2[0].f2_01[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "12",
+   "note": "Row label: '12 Itemized deductions ... or, for certain residents of India, standard deduction (see instructions) ... 12' (page 2); Rect [504, 714, 576, 726]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form.",
+   "qname": "topmostSubform[0].Page2[0].f2_02[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "14",
+   "note": "Row label: '14 Add lines 12 through 13c' (page 2); Rect [504, 666, 576, 678]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. Lines 13a/13b/13c (f2_03/f2_04/f2_05) are NOT mapped: the engine states the line-14 total only (its components are zero in v1 scope).",
+   "qname": "topmostSubform[0].Page2[0].f2_06[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "15",
+   "note": "Row label: '15 Subtract line 14 from line 11b ... This is your taxable income' (page 2); Rect [504, 654, 576, 666]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form.",
+   "qname": "topmostSubform[0].Page2[0].f2_07[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "16",
+   "note": "Right amount column on the row labeled '16 Tax (see instructions)' (page 2); Rect [504, 642, 576, 654]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. The mid-column f2_08 on this row is the Form 8814/4972 checkbox-amount box, not the line total.",
+   "qname": "topmostSubform[0].Page2[0].f2_09[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "18",
+   "note": "Row label: '18 Add lines 16 and 17' (page 2); Rect [504, 618, 576, 630]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. Line 17 (f2_10) is NOT mapped: no Schedule 2 amount in v1 scope.",
+   "qname": "topmostSubform[0].Page2[0].f2_11[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "22",
+   "note": "Row label: '22 Subtract line 21 from line 18. If zero or less, enter -0-' (page 2); Rect [504, 570, 576, 582]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. Lines 19/20/21 (f2_12/f2_13/f2_14) are NOT mapped: the NR engine states no credits in v1.",
+   "qname": "topmostSubform[0].Page2[0].f2_15[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "24",
+   "note": "Row label: '24 Add lines 22 and 23d. This is your total tax' (page 2); Rect [504, 498, 576, 510]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. Lines 23a-23d (f2_16/f2_17/f2_18/f2_19) are NOT mapped: Schedule NEC and self-employment tax are out of scope in v1.",
+   "qname": "topmostSubform[0].Page2[0].f2_20[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "25a",
+   "note": "MID column on the row labeled 'a Form(s) W-2' under line 25 (page 2); Rect [410, 474, 482, 486]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form.",
+   "qname": "topmostSubform[0].Page2[0].Line25_ReadOrder[0].f2_21[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "25d",
+   "note": "Row label: 'd Add lines 25a through 25c ... 25d' (page 2, right amount column); Rect [504, 438, 576, 450]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. Lines 25b/25c (f2_22/f2_23) are NOT mapped: zero in v1 scope.",
+   "qname": "topmostSubform[0].Page2[0].f2_24[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "25g",
+   "note": "Row label: 'g Form(s) 1042-S' (page 2, right amount column); Rect [504, 402, 576, 414]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. Lines 25e/25f (f2_25/f2_26) are NOT mapped: zero in v1 scope.",
+   "qname": "topmostSubform[0].Page2[0].f2_27[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "32",
+   "note": "Row label: '32 Add lines 28, 29, 30, and 31. These are your total other payments and refundable credits' (page 2); Rect [504, 312, 576, 324]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. The engine states line 32 as zero in v1 (no refundable credits); lines 28-31 stay blank.",
+   "qname": "topmostSubform[0].Page2[0].f2_34[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "33",
+   "note": "Row label: '33 Add lines 25d, 25e, 25f, 25g, 26, and 32. These are your total payments' (page 2); Rect [504, 300, 576, 312]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. Line 26 (f2_28) is NOT mapped: no estimated payments in v1 scope.",
+   "qname": "topmostSubform[0].Page2[0].f2_35[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "34",
+   "note": "Row label: '34 If line 33 is more than line 24 ... This is the amount you overpaid' (page 2); Rect [504, 288, 576, 300]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. Mutually exclusive with line 37: filled only when > 0. Line 35a (f2_37) is NOT mapped: the overpaid amount is not split between refund and next-year estimate in v1 (the filer directs it by hand).",
+   "qname": "topmostSubform[0].Page2[0].f2_36[0]"
+  },
+  {
+   "kind": "amount",
+   "line": "37",
+   "note": "Row label '37' in the 'Amount You Owe' section (page 2); Rect [504, 198, 576, 210]; widget Rect y-center matches the printed line-label row from `pdftotext -bbox` on the blank TY2025 form. Mutually exclusive with line 34: filled only when > 0.",
+   "qname": "topmostSubform[0].Page2[0].f2_42[0]"
+  },
+  {
+   "kind": "checkbox",
+   "line": "filing_status",
+   "note": "Filing-status row (page 1), first box, beside the printed label 'Single'; widget Rect [103, 584, 111, 592]; its /AP /N on-state is /1 (read with pypdf). The NR student route files SINGLE only; the MFS/QSS/Estate/Trust sibling fields (c1_5[1..4], on-states /2../5) are recorded in the derivation but never filled by this map.",
+   "qname": "topmostSubform[0].Page1[0].c1_5[0]",
+   "source_line": "filing_status_single",
+   "status": "single",
+   "value": "1"
+  },
+  {
+   "key": "taxpayer.first_name",
+   "kind": "identity_text",
+   "line": "taxpayer_first_name",
+   "note": "Taxpayer 'first name and middle initial' header field (page 1), Rect [36, 666, 244, 678], under the printed caption row (pdftotext -bbox); filled from the stored identity when present.",
+   "qname": "topmostSubform[0].Page1[0].f1_14[0]"
+  },
+  {
+   "key": "taxpayer.last_name",
+   "kind": "identity_text",
+   "line": "taxpayer_last_name",
+   "note": "Taxpayer last name header field (page 1), Rect [246, 666, 467, 678].",
+   "qname": "topmostSubform[0].Page1[0].f1_15[0]"
+  },
+  {
+   "key": "taxpayer.ssn",
+   "kind": "identity_ssn",
+   "line": "taxpayer_ssn",
+   "note": "Taxpayer identifying number (SSN or ITIN) comb field (page 1), Rect [469, 666, 576, 678]; filled digits-only from the stored identity. The fill report value is masked (***-**-####); the full number appears only in the PDF.",
+   "qname": "topmostSubform[0].Page1[0].f1_16[0]"
+  },
+  {
+   "key": "address.street",
+   "kind": "identity_text",
+   "line": "address_street",
+   "note": "Home address (number and street) field (page 1), Rect [36, 642, 525, 654]. The stored identity address is the filer's U.S. mailing address and goes in this block.",
+   "qname": "topmostSubform[0].Page1[0].f1_17[0]"
+  },
+  {
+   "key": "address.apt",
+   "kind": "identity_text",
+   "line": "address_apt",
+   "note": "Apt. no. field (page 1), Rect [527, 642, 576, 654], right of the street field on the same row.",
+   "qname": "topmostSubform[0].Page1[0].f1_18[0]"
+  },
+  {
+   "key": "address.city",
+   "kind": "identity_text",
+   "line": "address_city",
+   "note": "City, town, or post office field (page 1), Rect [36, 618, 431, 630].",
+   "qname": "topmostSubform[0].Page1[0].f1_19[0]"
+  },
+  {
+   "key": "address.state",
+   "kind": "identity_text",
+   "line": "address_state",
+   "note": "State field (page 1), Rect [433, 618, 496, 630].",
+   "qname": "topmostSubform[0].Page1[0].f1_20[0]"
+  },
+  {
+   "key": "address.zip",
+   "kind": "identity_text",
+   "line": "address_zip",
+   "note": "ZIP code field (page 1), Rect [498, 618, 576, 630].",
+   "qname": "topmostSubform[0].Page1[0].f1_21[0]"
+  },
+  {
+   "key": "taxpayer.occupation",
+   "kind": "identity_text",
+   "line": "taxpayer_occupation",
+   "note": "Taxpayer occupation (page 2, signature block), Rect [325, 96, 460, 116]; the printed 'Your occupation' caption sits on the row above (pdftotext -bbox y-center 120) at x 325-460, the same geometry as the resident Form 1040 occupation field. The field to its right (f2_48) is the Identity Protection PIN, not an occupation.",
+   "qname": "topmostSubform[0].Page2[0].f2_47[0]"
+  }
+ ]
+}

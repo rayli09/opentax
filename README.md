@@ -66,6 +66,9 @@ No floats anywhere in the filed path.
   senior bonus (Schedule 1-A). Official Tax Table extracted as data.
 - **California Form 540** — full-year residents: exemption credits,
   the official CA Tax Table, CalEITC + Young Child Tax Credit.
+- **Nonresident students** — Form 1040-NR + Schedule OI + Form 8843
+  for F-1/J-1 students (China/India treaties modeled), filled by the
+  same packet export.
 - **Documents in** — `doc extract` reads born-digital W-2 and 1099
   PDFs with per-field evidence; taxpayer identity is stored locally.
 - **Paperwork out** — one packet export fills the real forms (1040 +

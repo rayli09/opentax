@@ -46,7 +46,7 @@ use crate::worksheets::{
 };
 use crate::{
     format_amount, mask_ssn, normalize_ssn, BrokerTxn, ComputedReturn, DependentRelationship,
-    F1040FieldMap, FillValue, Form1040Input, TxnTerm,
+    F1040FieldMap, FillValue, Form1040Input, NrComputed, TxnTerm,
 };
 
 /// One schedule's worth of packet output.
@@ -107,6 +107,9 @@ fn packet_field_map(form: &str) -> F1040FieldMap {
         "f10408812" => include_str!("../forms/f10408812-2025-field-map.json"),
         "f1040s1a" => include_str!("../forms/f1040s1a-2025-field-map.json"),
         "f540" => include_str!("../forms/f540-2025-field-map.json"),
+        "f1040nr" => include_str!("../forms/f1040nr-2025-field-map.json"),
+        "f1040soi" => include_str!("../forms/f1040soi-2025-field-map.json"),
+        "f8843" => include_str!("../forms/f8843-2025-field-map.json"),
         other => panic!("no bundled field map for packet form {other}"),
     };
     serde_json::from_str(text)
@@ -1351,6 +1354,471 @@ pub fn build_ca_packet(
 }
 
 // ---------------------------------------------------------------------------
+// Nonresident alien — Form 1040-NR + Schedule OI + Form 8843
+// ---------------------------------------------------------------------------
+
+/// The Form 1040-NR amount lines the f1040nr field map consumes, in
+/// form order. Lines 34/37 are handled separately (the mutually
+/// exclusive overpaid/owed pair, printed only when positive).
+const NR_AMOUNT_LINES: &[&str] = &[
+    "1a", "1k", "1z", "8", "9", "11a", "11b", "12", "14", "15", "16", "18", "22", "24", "25a",
+    "25d", "25g", "32", "33",
+];
+
+/// The mapped Form 1040-NR amount lines that are missing or
+/// `Incomplete` in `nr` — the single-form PDF export refuses on
+/// exactly this set (mirroring the resident export's mapped-lines
+/// rule; the packet export is stricter and refuses on any
+/// incompleteness).
+pub fn nr_mapped_incomplete(nr: &NrComputed) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for key in NR_AMOUNT_LINES.iter().chain(["34", "37"].iter()) {
+        match nr.lines.get(*key) {
+            Some(FactResult::Complete(_)) => {}
+            _ => out.push(key.to_string()),
+        }
+    }
+    out
+}
+
+/// Build the Form 1040-NR packet form from the NR engine's stated
+/// lines and the stored identity. Only lines the engine states are
+/// printed; everything else the form carries stays blank under a
+/// manifest note (see the f1040nr map's derivation for the full list).
+fn form_1040nr(input: &Form1040Input, nr: &NrComputed) -> PacketForm {
+    let mut dict: HashMap<String, String> = HashMap::new();
+    let mut notes: Vec<String> = vec![
+        "lines 1b\u{2013}1j, 2\u{2013}7, 10, 13a\u{2013}13c, 17, 19\u{2013}21, 23a\u{2013}23d, 25b/25c/25e/25f, 26, 28\u{2013}31, 35a, 36, and 38 left blank: the Form 1040-NR engine states no amounts for them in v1 (Schedule NEC, credits, and estimated payments are out of scope; see docs/KNOWN_LIMITS.md)"
+            .to_string(),
+        "foreign address block (page 1) left blank: the stored identity carries one U.S. mailing address (printed in the home-address block) and no foreign address — complete the foreign country / province / postal code fields by hand if the filer has a foreign address to report"
+            .to_string(),
+        "Digital Assets question (page 1) left unanswered: whether the filer received or disposed of a digital asset is not a stored fact — answer Yes or No by hand"
+            .to_string(),
+        "signature block, direct-deposit fields, and the refund-to-foreign-address field left blank: bank routing and account numbers are not stored, and the signer signs"
+            .to_string(),
+    ];
+
+    // Identity header: split name fields (the NR form prints first
+    // and last name separately), identifying number, U.S. address,
+    // occupation.
+    match input.identity.as_ref() {
+        None => notes.push(
+            "Form 1040-NR name/address/occupation fields left blank: no taxpayer identity is stored on this return"
+                .to_string(),
+        ),
+        Some(id) => {
+            let person = &id.person;
+            if let Some(v) = person.first_name.as_deref() {
+                text(&mut dict, "taxpayer_first_name", v);
+            }
+            if let Some(v) = person.last_name.as_deref() {
+                text(&mut dict, "taxpayer_last_name", v);
+            }
+            if let Some(digits) = person.ssn.as_deref().and_then(normalize_ssn) {
+                text(&mut dict, "taxpayer_ssn", &digits);
+            } else {
+                notes.push(
+                    "identifying number left blank: no taxpayer SSN/ITIN is stored in the return's identity"
+                        .to_string(),
+                );
+            }
+            if let Some(v) = person.occupation.as_deref() {
+                text(&mut dict, "taxpayer_occupation", v);
+            }
+            if let Some(address) = id.address.as_ref() {
+                if let Some(v) = address.street.as_deref() {
+                    text(&mut dict, "address_street", v);
+                }
+                if let Some(v) = address.apt.as_deref() {
+                    text(&mut dict, "address_apt", v);
+                }
+                if let Some(v) = address.city.as_deref() {
+                    text(&mut dict, "address_city", v);
+                }
+                if let Some(v) = address.state.as_deref() {
+                    text(&mut dict, "address_state", v);
+                }
+                if let Some(v) = address.zip.as_deref() {
+                    text(&mut dict, "address_zip", v);
+                }
+            }
+        }
+    }
+
+    // Filing status: the NR student route files SINGLE only (the
+    // engine refuses any other status).
+    check(&mut dict, "filing_status_single");
+
+    for key in NR_AMOUNT_LINES {
+        if let Some(v) = line(&nr.lines, key) {
+            amt(&mut dict, key, v);
+        }
+    }
+    // Lines 34/37 are the form's mutually exclusive overpaid/owed
+    // pair: each prints only when greater than zero (the resident
+    // and CA exports treat their pairs the same way).
+    let mut balance_printed = false;
+    for key in ["34", "37"] {
+        if let Some(v) = line(&nr.lines, key) {
+            if v.cents() > 0 {
+                amt(&mut dict, key, v);
+                balance_printed = true;
+            }
+        }
+    }
+    if !balance_printed {
+        notes.push(
+            "lines 34 and 37 are both zero (total payments exactly equal total tax); neither is printed"
+                .to_string(),
+        );
+    }
+    if !input.dependents.is_empty() {
+        notes.push(format!(
+            "{} dependent(s) are stored but the Dependents table is NOT printed on the Form 1040-NR route in v1: the NR engine claims no dependent credits (see the `nra_credits_not_modeled` validation finding)",
+            input.dependents.len()
+        ));
+    }
+
+    let values = resolve_values(&packet_field_map("f1040nr"), &dict);
+    let view_lines: serde_json::Map<String, Value> = nr
+        .lines
+        .iter()
+        .filter_map(|(k, f)| f.value().map(|m| (k.clone(), json!(m.cents()))))
+        .collect();
+    PacketForm {
+        form: "f1040nr",
+        label: "Form 1040-NR",
+        file_name: "f1040nr.pdf".to_string(),
+        applicable: true,
+        not_applicable_reason: None,
+        values,
+        notes,
+        view: json!({
+            "applicable": true,
+            "lines": view_lines,
+            "tax_method": nr.tax_method,
+        }),
+    }
+}
+
+/// Build the Schedule OI (Form 1040-NR) packet form. Applicable when
+/// the return carries something Schedule OI exists to report in v1 —
+/// a treaty claim (item L rows from the engine) or stored days-of-
+/// presence facts (item H). Otherwise `not_applicable`: the remaining
+/// items are yes/no and travel-date questions whose answers are not
+/// stored facts, and printing an otherwise-empty schedule would
+/// misrepresent them as answered.
+fn form_1040soi(input: &Form1040Input, nr: &NrComputed) -> PacketForm {
+    let block = input
+        .nra
+        .as_ref()
+        .expect("build_nr_packet: an nra block is required");
+    let facts = block.form_8843.as_ref();
+    let has_days = facts
+        .map(|d| {
+            d.days_present_current_year.is_some()
+                || d.days_present_prior_year_1.is_some()
+                || d.days_present_prior_year_2.is_some()
+        })
+        .unwrap_or(false);
+    if nr.schedule_oi.is_empty() && !has_days {
+        return PacketForm::not_applicable(
+            "f1040soi",
+            "Schedule OI (Form 1040-NR)",
+            "f1040soi.pdf".to_string(),
+            "no treaty claim and no days-of-presence facts are stored on this return: Schedule OI's remaining items are questions whose answers are not stored facts (see docs/KNOWN_LIMITS.md)"
+                .to_string(),
+            json!({"applicable": false}),
+        );
+    }
+
+    let mut dict: HashMap<String, String> = HashMap::new();
+    let mut notes: Vec<String> = vec![
+        "items B (country of tax residence), C, D, F, I, J, K, L2, L3, and M left blank: their answers are not stored facts — complete them by hand (item B is not the same fact as the citizenship in item A)"
+            .to_string(),
+        "item G (dates entered and left the United States) left blank: travel dates are not stored"
+            .to_string(),
+    ];
+    header(&mut dict, &mut notes, input, "header_name", "header_ssn");
+    let citizenship = block
+        .normalized_citizenship()
+        .unwrap_or_else(|| block.citizenship.clone());
+    text(&mut dict, "citizenship", &citizenship);
+    text(&mut dict, "visa_type", &block.visa_type);
+
+    // Item H: days of presence (Form 8843 line 4a facts, by year).
+    if let Some(d) = facts {
+        if let Some(v) = d.days_present_prior_year_2 {
+            text(&mut dict, "days_2023", &v.to_string());
+        }
+        if let Some(v) = d.days_present_prior_year_1 {
+            text(&mut dict, "days_2024", &v.to_string());
+        }
+        if let Some(v) = d.days_present_current_year {
+            text(&mut dict, "days_2025", &v.to_string());
+        }
+        let missing: Vec<&str> = [
+            ("2023", d.days_present_prior_year_2),
+            ("2024", d.days_present_prior_year_1),
+            ("2025", d.days_present_current_year),
+        ]
+        .into_iter()
+        .filter(|(_, v)| v.is_none())
+        .map(|(y, _)| y)
+        .collect();
+        if !missing.is_empty() {
+            notes.push(format!(
+                "item H days present in {} left blank: not stored in the return's Form 8843 facts — complete by hand (days are never estimated)",
+                missing.join(", ")
+            ));
+        }
+    }
+
+    // Item L: one row per engine Schedule OI entry (the form has
+    // three rows); column (c) stays blank (prior-year claim months
+    // are not stored).
+    if nr.schedule_oi.len() > 3 {
+        notes.push(format!(
+            "{} treaty claims are computed but the Schedule OI item L table has only three rows; the first three are printed and the line 1(e) total still carries all {}",
+            nr.schedule_oi.len(),
+            nr.schedule_oi.len()
+        ));
+    }
+    for (i, entry) in nr.schedule_oi.iter().take(3).enumerate() {
+        let n = i + 1;
+        text(&mut dict, &format!("oi_l{n}_country"), &entry.country);
+        text(
+            &mut dict,
+            &format!("oi_l{n}_article"),
+            &entry.treaty_article,
+        );
+        amt(&mut dict, &format!("oi_l{n}_amount"), entry.exempt_amount);
+    }
+    if !nr.schedule_oi.is_empty() {
+        if let Some(v) = line(&nr.lines, "1k") {
+            amt(&mut dict, "1k", v);
+        }
+        notes.push(
+            "item L column (c) (number of months claimed in prior tax years) left blank for every row: prior-year claim months are not stored"
+                .to_string(),
+        );
+    }
+
+    let values = resolve_values(&packet_field_map("f1040soi"), &dict);
+    PacketForm {
+        form: "f1040soi",
+        label: "Schedule OI (Form 1040-NR)",
+        file_name: "f1040soi.pdf".to_string(),
+        applicable: true,
+        not_applicable_reason: None,
+        values,
+        notes,
+        view: json!({
+            "applicable": true,
+            "schedule_oi": nr.schedule_oi,
+            "days_present": {
+                "2023": facts.and_then(|d| d.days_present_prior_year_2),
+                "2024": facts.and_then(|d| d.days_present_prior_year_1),
+                "2025": facts.and_then(|d| d.days_present_current_year),
+            },
+        }),
+    }
+}
+
+/// Join the stored parts of one Form 8843 name/address/phone line
+/// (the printed form carries all three in a single field). Absent
+/// parts are reported, never invented.
+fn join_8843_line(
+    dict: &mut HashMap<String, String>,
+    notes: &mut Vec<String>,
+    key: &str,
+    line_label: &str,
+    parts: [(&str, &Option<String>); 3],
+) {
+    let present: Vec<&str> = parts
+        .iter()
+        .filter_map(|(_, v)| v.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if present.is_empty() {
+        notes.push(format!(
+            "Form 8843 {line_label} left blank: no facts are stored for it"
+        ));
+        return;
+    }
+    let missing: Vec<&str> = parts
+        .iter()
+        .filter(|(_, v)| v.as_deref().map(str::trim).unwrap_or("").is_empty())
+        .map(|(name, _)| *name)
+        .collect();
+    if !missing.is_empty() {
+        notes.push(format!(
+            "Form 8843 {line_label} printed without {}: not stored — complete by hand",
+            missing.join(" and ")
+        ));
+    }
+    text(dict, key, &present.join(", "));
+}
+
+/// Build the Form 8843 packet form from the nra block and its stored
+/// Form 8843 facts. The form is always applicable on the NR route
+/// (an exempt individual files it with the return); absent facts
+/// stay blank under manifest notes.
+fn form_8843_packet(input: &Form1040Input) -> PacketForm {
+    let block = input
+        .nra
+        .as_ref()
+        .expect("build_nr_packet: an nra block is required");
+    let mut dict: HashMap<String, String> = HashMap::new();
+    let mut notes: Vec<String> = vec![
+        "both address fields left blank BY THE FORM'S OWN INSTRUCTION: Form 8843 says to fill in addresses only when filing the form by itself; in this packet it is attached to the Form 1040-NR, which carries the filer's address"
+            .to_string(),
+        "line 1a: only the visa type is printed — the filer's exact date of entry into the United States is not stored (only the first calendar year in status), complete the date by hand"
+            .to_string(),
+        "lines 3a/3b (passport-issuing country and passport number) left blank: identity stores no passport facts"
+            .to_string(),
+        "Part II (teachers and trainees) left blank: this route is students only (Part III)"
+            .to_string(),
+        "lines 13/14 (lawful-permanent-resident application) left blank: whether the filer applied for a green card is not a stored fact — answer by hand"
+            .to_string(),
+        "line 12 is answered No from the validated nra block: the determination refuses filers with more than 5 calendar years in status, so this filer was not exempt for more than 5 calendar years"
+            .to_string(),
+    ];
+
+    // Header: split names + TIN (the 8843 header prints first and
+    // last name separately, like the 1040-NR).
+    match input.identity.as_ref() {
+        None => notes.push(
+            "Form 8843 name/TIN fields left blank: no taxpayer identity is stored on this return"
+                .to_string(),
+        ),
+        Some(id) => {
+            if let Some(v) = id.person.first_name.as_deref() {
+                text(&mut dict, "taxpayer_first_name", v);
+            }
+            if let Some(v) = id.person.last_name.as_deref() {
+                text(&mut dict, "taxpayer_last_name", v);
+            }
+            if let Some(digits) = id.person.ssn.as_deref().and_then(normalize_ssn) {
+                text(&mut dict, "taxpayer_ssn", &digits);
+            }
+        }
+    }
+
+    let citizenship = block
+        .normalized_citizenship()
+        .unwrap_or_else(|| block.citizenship.clone());
+    text(&mut dict, "visa_1a", &block.visa_type);
+    text(&mut dict, "status_1b", &block.visa_type);
+    text(&mut dict, "citizenship", &citizenship);
+
+    // Part III, line 11: visa type for each year 2019-2024 the block
+    // states the filer held this status (from the first calendar
+    // year in status on). Years before that stay blank.
+    for year in 2019..=2024u32 {
+        if year >= block.first_calendar_year_in_status {
+            text(&mut dict, &format!("visa_{year}"), &block.visa_type);
+        }
+    }
+    if block.first_calendar_year_in_status > 2019 {
+        notes.push(format!(
+            "line 11 visa types before {} left blank: the block's first calendar year in this status is {} — a prior different status (or absence) is not stored",
+            block.first_calendar_year_in_status, block.first_calendar_year_in_status
+        ));
+    }
+
+    // Line 12: No, by construction of the validated block.
+    check(&mut dict, "q12_no");
+
+    match block.form_8843.as_ref() {
+        None => notes.push(
+            "no Form 8843 facts are stored on this return (tax return set-nra with a form_8843 object): lines 4a/4b and Part III lines 9\u{2013}10 are left blank — complete them by hand"
+                .to_string(),
+        ),
+        Some(d) => {
+            if let Some(v) = d.days_present_current_year {
+                text(&mut dict, "days_2025", &v.to_string());
+                // Line 4b: for an exempt individual, every day of
+                // presence in the status is excludable for the
+                // substantial presence test — the same number.
+                text(&mut dict, "days_excluded_2025", &v.to_string());
+            }
+            if let Some(v) = d.days_present_prior_year_1 {
+                text(&mut dict, "days_2024", &v.to_string());
+            }
+            if let Some(v) = d.days_present_prior_year_2 {
+                text(&mut dict, "days_2023", &v.to_string());
+            }
+            let missing: Vec<&str> = [
+                ("2025", d.days_present_current_year),
+                ("2024", d.days_present_prior_year_1),
+                ("2023", d.days_present_prior_year_2),
+            ]
+            .into_iter()
+            .filter(|(_, v)| v.is_none())
+            .map(|(y, _)| y)
+            .collect();
+            if !missing.is_empty() {
+                notes.push(format!(
+                    "line 4a days present in {} left blank (and line 4b with 2025): not stored — complete by hand (days are never estimated)",
+                    missing.join(", ")
+                ));
+            }
+            join_8843_line(
+                &mut dict,
+                &mut notes,
+                "school_9",
+                "line 9 (academic institution)",
+                [
+                    ("name", &d.school_name),
+                    ("address", &d.school_address),
+                    ("telephone number", &d.school_phone),
+                ],
+            );
+            join_8843_line(
+                &mut dict,
+                &mut notes,
+                "director_10",
+                "line 10 (program director)",
+                [
+                    ("name", &d.director_name),
+                    ("address", &d.director_address),
+                    ("telephone number", &d.director_phone),
+                ],
+            );
+        }
+    }
+
+    let values = resolve_values(&packet_field_map("f8843"), &dict);
+    PacketForm {
+        form: "f8843",
+        label: "Form 8843",
+        file_name: "f8843.pdf".to_string(),
+        applicable: true,
+        not_applicable_reason: None,
+        values,
+        notes,
+        view: json!({
+            "applicable": true,
+            "facts_stored": block.form_8843.is_some(),
+        }),
+    }
+}
+
+/// Build the nonresident-alien packet forms, in filing order: Form
+/// 1040-NR, Schedule OI (Form 1040-NR), Form 8843. The resident
+/// forms and the California forms are never part of an NR packet
+/// (the CA selection conflicts with the nra block at compute time).
+pub fn build_nr_packet(input: &Form1040Input, nr: &NrComputed) -> Vec<PacketForm> {
+    vec![
+        form_1040nr(input, nr),
+        form_1040soi(input, nr),
+        form_8843_packet(input),
+    ]
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1664,5 +2132,170 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("no California adjustments"));
+    }
+
+    // -----------------------------------------------------------------
+    // Nonresident-alien packet forms
+    // -----------------------------------------------------------------
+
+    fn nr002_input() -> Form1040Input {
+        // NR-002 shape: CN F-1 (first calendar year), W-2 $3,000 with
+        // $500 withheld + treaty-exempt 1042-S code 20 of $5,000.
+        let mut input = base_input();
+        input.w2s = vec![W2Input {
+            employer_ein: "12-3456789".into(),
+            wages: m(3_000),
+            federal_withholding: m(500),
+            social_security_wages: None,
+            social_security_tax: None,
+            medicare_wages: None,
+            medicare_tax: None,
+            state_wages: None,
+            state_withholding: None,
+        }];
+        input.f1042ss = vec![crate::F1042sInput {
+            recipient_name: None,
+            payer_name: "State University".into(),
+            income_code: 20,
+            gross_income: m(5_000),
+            federal_withholding: Money::ZERO,
+            exemption_code: Some("04".into()),
+            treaty_country: Some("CN".into()),
+            treaty_article: Some("Article 20".into()),
+        }];
+        input.identity = Some(crate::TaxpayerIdentity {
+            person: crate::PersonIdentity {
+                first_name: Some("Case".into()),
+                last_name: Some("Tester".into()),
+                ssn: Some("123456789".into()),
+                date_of_birth: None,
+                occupation: Some("Student".into()),
+                blind: false,
+            },
+            address: Some(crate::MailingAddress {
+                street: Some("1 College Ave".into()),
+                apt: None,
+                city: Some("Berkeley".into()),
+                state: Some("CA".into()),
+                zip: Some("94720".into()),
+            }),
+            spouse: None,
+            can_be_claimed_as_dependent: false,
+        });
+        input.nra = Some(crate::NraBlock {
+            visa_type: "F-1".into(),
+            citizenship: "CN".into(),
+            first_calendar_year_in_status: 2025,
+            calendar_years_in_status_including_current: 1,
+            form_8843: Some(crate::Form8843Data {
+                school_name: Some("State University".into()),
+                school_address: Some("100 University Dr, Berkeley, CA 94720".into()),
+                school_phone: Some("510-555-0100".into()),
+                director_name: Some("Dr. Director".into()),
+                director_address: Some("200 Program Hall, Berkeley, CA 94720".into()),
+                director_phone: Some("510-555-0101".into()),
+                days_present_current_year: Some(200),
+                days_present_prior_year_1: None,
+                days_present_prior_year_2: None,
+            }),
+        });
+        input
+    }
+
+    fn nr_forms(input: &Form1040Input) -> Vec<PacketForm> {
+        let treaties = tax_core::TreatyParams::load_2025().unwrap();
+        let nr = crate::compute_1040nr(input, &params(), &treaties);
+        assert!(nr.complete, "findings: {:?}", nr.findings);
+        build_nr_packet(input, &nr)
+    }
+
+    #[test]
+    fn nr_packet_fills_1040nr_oi_and_8843() {
+        let input = nr002_input();
+        let forms = nr_forms(&input);
+        let main = form(&forms, "f1040nr");
+        assert!(main.applicable);
+        assert_eq!(val(main, "1a"), Some("3000.00"));
+        assert_eq!(val(main, "1k"), Some("5000.00"));
+        assert_eq!(val(main, "16"), Some("303.00"));
+        assert_eq!(val(main, "25a"), Some("500.00"));
+        assert_eq!(val(main, "25g"), Some("0.00"));
+        assert_eq!(val(main, "34"), Some("197.00"));
+        assert_eq!(val(main, "37"), None);
+        assert_eq!(val(main, "taxpayer_first_name"), Some("Case"));
+        assert_eq!(val(main, "taxpayer_occupation"), Some("Student"));
+        let status = main
+            .values
+            .iter()
+            .find(|v| v.line == "filing_status")
+            .unwrap();
+        assert_eq!(status.value, "1");
+        let ssn = main
+            .values
+            .iter()
+            .find(|v| v.line == "taxpayer_ssn")
+            .unwrap();
+        assert_eq!(ssn.value, "123456789");
+        assert_eq!(ssn.display_value.as_deref(), Some("***-**-6789"));
+
+        let oi = form(&forms, "f1040soi");
+        assert!(oi.applicable);
+        assert_eq!(val(oi, "citizenship"), Some("CN"));
+        assert_eq!(val(oi, "visa_type"), Some("F-1"));
+        assert_eq!(val(oi, "days_2025"), Some("200"));
+        assert_eq!(val(oi, "days_2024"), None);
+        assert_eq!(val(oi, "oi_l1_country"), Some("CN"));
+        assert_eq!(val(oi, "oi_l1_article"), Some("20(c)"));
+        assert_eq!(val(oi, "oi_l1_amount"), Some("5000.00"));
+        assert_eq!(val(oi, "1k"), Some("5000.00"));
+
+        let s = form(&forms, "f8843");
+        assert!(s.applicable);
+        assert_eq!(val(s, "visa_1a"), Some("F-1"));
+        assert_eq!(val(s, "citizenship"), Some("CN"));
+        assert_eq!(val(s, "days_2025"), Some("200"));
+        assert_eq!(val(s, "days_excluded_2025"), Some("200"));
+        assert_eq!(
+            val(s, "school_9"),
+            Some("State University, 100 University Dr, Berkeley, CA 94720, 510-555-0100")
+        );
+        assert_eq!(
+            val(s, "director_10"),
+            Some("Dr. Director, 200 Program Hall, Berkeley, CA 94720, 510-555-0101")
+        );
+        // First year in status is 2025: no line-11 years (2019-2024)
+        // are filled.
+        assert_eq!(val(s, "visa_2024"), None);
+        let q12 = s.values.iter().find(|v| v.line == "q12_no").unwrap();
+        assert_eq!(q12.value, "2");
+        // Addresses stay blank by the form's own instruction (no
+        // address_* values at all).
+        assert!(s.values.iter().all(|v| !v.line.starts_with("address")));
+    }
+
+    #[test]
+    fn nr_schedule_oi_not_applicable_without_treaty_or_days() {
+        // DE citizen, no treaty modeled, no 8843 facts: Schedule OI
+        // has nothing v1 can state.
+        let mut input = nr002_input();
+        input.f1042ss = vec![];
+        input.w2s[0].wages = m(8_000);
+        input.w2s[0].federal_withholding = m(300);
+        if let Some(block) = input.nra.as_mut() {
+            block.citizenship = "DE".into();
+            block.form_8843 = None;
+        }
+        let forms = nr_forms(&input);
+        let oi = form(&forms, "f1040soi");
+        assert!(!oi.applicable);
+        assert!(oi
+            .not_applicable_reason
+            .as_deref()
+            .unwrap()
+            .contains("no treaty claim"));
+        // The 8843 is still emitted, with hand-complete notes.
+        let s = form(&forms, "f8843");
+        assert!(s.applicable);
+        assert!(s.notes.iter().any(|n| n.contains("no Form 8843 facts")));
     }
 }

@@ -526,16 +526,32 @@ The student route: an optional `nra` block on the return (set with
   not mark the Form 1042-S as treaty-exempt) **are not modeled**:
   in v1 an unmarked code-15 amount is taxable. The marked-1042-S
   pattern (the common university case) is fully handled.
-- **Form 8843 facts are stored, not yet filled.** The `form_8843`
-  object (school and program-director name/address/phone, days
-  present for the current and two prior years) is stored verbatim
-  and validated for presence; the Form 1040-NR / Form 8843 **PDF
-  fill and packet integration are a separate forms lane** —
-  `return export --type pdf|packet|mef` on an NR return is an
-  explicit `not_implemented` error in this lane (JSON export
-  works). An exempt individual must file a fully completed Form
-  8843 for every exempt year, including years with no income and
-  no 1040-NR.
+- **Form 8843 facts are stored, and the forms are filled.** The
+  `form_8843` object (school and program-director name/address/
+  phone, days present for the current and two prior years) is
+  stored verbatim and validated for presence. `return export
+  --type packet` on an NR return fills the official TY2025 **Form
+  1040-NR**, **Schedule OI (Form 1040-NR)**, and **Form 8843**
+  from geometrically verified field maps
+  (`crates/tax-forms/forms/f1040nr-2025-field-map.json`,
+  `f1040soi-2025-field-map.json`, `f8843-2025-field-map.json`;
+  acceptance: `scripts/nra_packet_acceptance.py`), and `--type
+  pdf` fills the 1040-NR alone. Fields whose answers are not
+  stored facts stay blank under manifest notes — the 1040-NR
+  foreign address block and Digital Assets answer, Schedule OI
+  items B–M beyond citizenship/visa/days/treaty rows, the 8843
+  passport lines and exact date of entry, and the 8843 address
+  fields (blank by the form's own instruction when the 8843 is
+  attached to a return). The identity model stores one U.S.
+  mailing address and no passport number, so those are
+  hand-completed. **`export --type mef` stays an explicit
+  `not_implemented` error** for NR returns: the MeF exporter emits
+  the resident Form 1040 package, and the Form 1040-NR MeF schema
+  package is separate and not implemented. An exempt individual
+  must file a fully completed Form 8843 for every exempt year,
+  including years with no income and no 1040-NR — in a no-income
+  year the 8843 is mailed by itself, and then its address fields
+  (blank in the packet) must be completed by hand.
 - **State taxation of nonresident aliens is NOT handled.**
   California does **not** honor federal tax treaties (the
   treaty-exempt $5,000 is California-taxable) and nonresidents file
