@@ -90,3 +90,38 @@ merged `main` (5087c3c) by the coordinator, not from lane reports alone.
   adjustments beyond engine facts, itemized deductions, renter's credit,
   credits lines 40–47, FYTC, YCTC zero-earned-income expansion (flagged
   Incomplete + warning), CA e-file XML.
+
+---
+
+## Addendum — NRA student edition (Form 1040-NR), 2026-10-28
+
+Per the user's direction the same day. Verified on merged `main` (ebb9f54)
+by the coordinator.
+
+- **Compute (NRA-1, merge 0200399):** `tax return set-nra` stores a residency
+  block (visa F-1/J-1 students, calendar years in status ≤ 5 ⇒ nonresident
+  route; > 5 refused with the Pub 519 facts-and-circumstances exception named,
+  dual-status out). New `f1042s` input node (income codes 20 wages / 15
+  scholarship). Treaty figures verified from IRS primary sources: China
+  Art. 20(c) $5,000 wage exclusion — claimed exactly once across both
+  reporting patterns (employer-split 1042-S vs. all-on-W-2; exclusion rides
+  1040-NR line 1k from Schedule OI item L); China Art. 20(b) university
+  scholarship fully exempt, no cap; India Art. 21(2) standard deduction
+  $15,750 (1040-NR instructions, line 12). FICA-miswithholding finding with
+  the 843/8316 remedy; bank interest excluded per §871(i); unmodeled
+  countries compute without treaty benefits + warning; CA block + nra block
+  conflict-errors (states do not honor treaties; 540NR out). Golden cases
+  NR-001..004 (selftest 17/17).
+- **Forms (NRA-2, merge ebb9f54):** geometrically verified maps for the
+  1040-NR (31 entries), Schedule OI (17; real IRS file is f1040nro.pdf),
+  and Form 8843 (19). Packet for an NR return = route note + filled
+  1040-NR + Schedule OI (when a treaty claim or presence facts exist) +
+  8843 with loud hand-complete notes for facts not stored (passport
+  number, exact entry date, foreign address). `scripts/nra_packet_acceptance.py`
+  passes on merged main: NR-002 readback 1a $3,000 / 1k $5,000 / tax $303 /
+  refund $197; OI item L = CN / 20(c) / $5,000; SSNs only inside the PDFs.
+  Filing guide carries the verified Austin/Charlotte addresses and the
+  Apr 15 vs Jun 15 due-date split.
+- **Still out for NRA (KNOWN_LIMITS):** dual-status years, Schedule NEC
+  (FDAP flat-tax income), Schedule A, §117 re-computation, Form 8833
+  positions, 1040-NR MeF XML, all state returns for NRAs (540NR).
