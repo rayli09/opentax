@@ -1587,7 +1587,11 @@ fn form_1040soi(input: &Form1040Input, nr: &NrComputed) -> PacketForm {
     for (i, entry) in nr.schedule_oi.iter().take(3).enumerate() {
         let n = i + 1;
         text(&mut dict, &format!("oi_l{n}_country"), &entry.country);
-        text(&mut dict, &format!("oi_l{n}_article"), &entry.treaty_article);
+        text(
+            &mut dict,
+            &format!("oi_l{n}_article"),
+            &entry.treaty_article,
+        );
         amt(&mut dict, &format!("oi_l{n}_amount"), entry.exempt_amount);
     }
     if !nr.schedule_oi.is_empty() {

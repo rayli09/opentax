@@ -81,10 +81,11 @@ description: Preparation skill for opentax. Use when facts/documents are entered
 6. Present a closing summary: refund/owed line values (34/37) quoted from
    engine output, completeness status, open findings, and the exported
    file path. With a state block, add the California refund/owed
-   (state lines 97/100) quoted from the state section. Note the PDF
-   and packet exports are **federal artifacts only** — no Form 540
-   PDF exists yet; the California figures are presented from `get`,
-   not exported. Then offer tax-reviewer (independent check) and
+   (state lines 97/100) quoted from the state section. The packet
+   export fills the federal forms plus the Form 540 when a state
+   block is set; on a Form 1040-NR return it instead fills the
+   1040-NR, Schedule OI, and Form 8843 (MeF XML stays resident-only).
+   Then offer tax-reviewer (independent check) and
    tax-filing-guide (how filing works) as separate next steps.
 
 ## Iron rules

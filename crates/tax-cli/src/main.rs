@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use tax_core::{CaParams, FactResult, FilingStatus, Money, TaxParams, TreatyParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::mef::build_mef;
-use tax_forms::packet::{build_ca_packet, build_nr_packet, build_packet, nr_mapped_incomplete, schedules_view};
+use tax_forms::packet::{
+    build_ca_packet, build_nr_packet, build_packet, nr_mapped_incomplete, schedules_view,
+};
 use tax_forms::{
     additional_standard_deduction, build_fill_values_with_dependents, compute_1040, compute_1040nr,
     compute_ca540, deductible_part_of_se_tax, eic_childless_age_outcome, eic_qualifying_children,
@@ -2917,8 +2919,8 @@ fn nr_form_input(ret: &StoredReturn) -> CResult<Form1040Input> {
 fn nr_pdf_export(
     ret: &StoredReturn,
     params: &TaxParams,
-    template: &PathBuf,
-    out_path: &PathBuf,
+    template: &Path,
+    out_path: &Path,
 ) -> CResult<Out> {
     let view = compute_view(ret, params)?;
     let treaties = TreatyParams::load_2025().map_err(json_err)?;
@@ -2990,8 +2992,8 @@ fn nr_pdf_export(
 fn packet_export_nr(
     ret: &StoredReturn,
     params: &TaxParams,
-    forms_dir: &PathBuf,
-    out_dir: &PathBuf,
+    forms_dir: &Path,
+    out_dir: &Path,
 ) -> CResult<Out> {
     let treaties = TreatyParams::load_2025().map_err(json_err)?;
     let input = nr_form_input(ret)?;

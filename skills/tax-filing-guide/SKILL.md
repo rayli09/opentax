@@ -139,6 +139,75 @@ always. This tool does not e-file California: it produces the paper
 Form 540 only, and there is no CA equivalent of the federal MeF XML
 export in v1 (California's e-file XML is out of scope).
 
+## Nonresident aliens: the Form 1040-NR packet is its own filing
+
+When the return carries an `nra` block (`tax return set-nra`), the
+packet export produces a different packet: **Form 1040-NR**,
+**Schedule OI (Form 1040-NR)** when it has something to report, and
+**Form 8843** — no resident Form 1040, no federal schedules, no
+California forms (the manifest's `route` entry says exactly this;
+California does not honor federal tax treaties, and Form 540NR is
+not implemented — a California-resident NRA still owes the state a
+return this tool cannot produce; say so plainly). `--type pdf` fills
+the 1040-NR alone; `--type mef` is **not implemented** for NR
+returns (the 1040-NR MeF schema package is separate) and the CLI
+says so — never present the resident MeF export as usable for an NR
+filer.
+
+Manifest expectations for the NR entries:
+
+- `f1040nr` must be `filled`; `f8843` must be `filled` (an exempt
+  individual files it every year, even with no income); `f1040soi`
+  is `filled` when the return claims a treaty exemption or carries
+  days-of-presence facts, and `not_applicable` — correctly — when it
+  has neither.
+- A `missing_template` entry (the blank `f1040nr.pdf` /
+  `f1040soi.pdf` / `f8843.pdf` was not in the forms dir) means the
+  packet is not ready — say so and stop.
+- Read the manifest notes before presenting the packet: they list
+  everything left blank for hand-completion — the 1040-NR foreign
+  address block and Digital Assets answer; Schedule OI items B–M
+  whose answers are not stored facts; Form 8843's passport lines,
+  the exact date of entry on line 1a, and lines 13/14. The 8843's
+  two address fields are blank **by the form's own instruction**
+  (they are filled only when the 8843 is mailed by itself, without
+  a return). An incomplete NR return never exports: the CLI refuses
+  and names the incomplete Form 1040-NR lines.
+
+Assembly and mailing (Instructions for Form 1040-NR (2025), "When
+and Where Should You File?" and "Where To File"; Form 8843
+instructions, "When and Where To File"):
+
+1. Sign and date the 1040-NR (the packet leaves the signature block
+   blank — the user signs, always). Form 8843 **attaches to** the
+   1040-NR; attached, it needs no separate signature.
+2. Attach Copy B of each Form W-2 and the copies of each Form
+   1042-S to the 1040-NR, as the instructions direct (the 1042-S
+   copies go to the left margin of page 1 when claiming a refund of
+   tax withheld at source).
+3. Order in the envelope: Form 1040-NR first, then Schedule OI,
+   then Form 8843.
+4. **Due dates** (calendar-year filers): if the filer received wages
+   subject to U.S. income tax withholding — every W-2 case in this
+   tool's scope — the return is due **April 15** (April 15, 2026 for
+   tax year 2025). With no such wages, it is due **June 15** (June
+   15, 2026). Form 8843 follows the same deadline.
+5. **Where to mail** — one pair of addresses for all 1040-NR filers:
+   - *No payment enclosed:* Department of the Treasury, Internal
+     Revenue Service, Austin, TX 73301-0215, USA.
+   - *Payment enclosed:* Internal Revenue Service, P.O. Box 1303,
+     Charlotte, NC 28201-1303, USA (check payable to "United States
+     Treasury", with the filer's SSN, tax year, and "Form 1040-NR"
+     on it — never cash).
+6. **Form 8843 by itself** (exempt individual with no return to
+   file): mail it alone to Department of the Treasury, Internal
+   Revenue Service Center, Austin, TX 73301-0215 by the 1040-NR due
+   date — in that case the filer *does* fill in the 8843's address
+   fields, which the packet leaves blank for attached filing.
+
+Keep a full copy plus mailing evidence, and record the mailing as
+the user's confirmation under step 4 above, as always.
+
 ## Iron rules
 
 The router's six iron rules apply in full; rules 4 and 5 are the job here.
