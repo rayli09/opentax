@@ -433,6 +433,117 @@ midpoints (Tax Table) and by tiling/unimodality/maxima/spot reads
   `not_applicable`. California's e-file XML remains out of scope
   entirely.
 
+## Nonresident aliens — Form 1040-NR (tax-forms `f1040nr`, TY2025)
+
+The student route: an optional `nra` block on the return (set with
+`tax return set-nra`) reroutes the federal computation to Form
+1040-NR. Returns without the block are computed exactly as before.
+
+- **Who is in scope.** F-1 / J-1 **students** in their
+  exempt-individual years: at most 5 calendar years in that status,
+  counting the current year (Pub 519 (2025), chapter 1: any part of
+  a calendar year counts as a whole year, and an individual is not
+  an exempt individual as a student after being exempt for any part
+  of more than 5 calendar years). Filing status **single only**.
+  **Simplifications, stated plainly:** the real exempt-individual
+  rules are richer than v1's count — Pub 519 keeps a
+  facts-and-circumstances exception beyond 5 years (no intent to
+  reside permanently plus substantial visa compliance), J-visa
+  teachers/trainees use a different 2-of-6-years rule with look-back
+  wrinkles for prior exempt years, and the substantial presence
+  test is the actual residency determination. v1 models **none** of
+  that: `set-nra` **refuses** more than 5 years (the error names the
+  exception and dual-status as undetermined rather than declaring
+  the filer a resident), refuses other visas and other statuses,
+  and an info finding states the rule used. **Dual-status returns
+  are out of scope.**
+- **Treaties** (params in `params/2025-treaties.json`, figures from
+  the treaty texts on irs.gov). **China, Article 20:** (c) up to
+  **$5,000** per year of U.S. personal-services income is exempt;
+  (b) grants or awards from a government, scientific, educational,
+  or other tax-exempt organization are exempt — a university
+  scholarship (Form 1042-S income code 15) paid by the educational
+  institution is modeled exempt in full under 20(b), with **no**
+  dollar cap; (a) payments from abroad are outside U.S. taxing
+  jurisdiction and never enter the return. **India, Article 21:**
+  (2) a student is entitled to the same reliefs as residents, so
+  the Form 1040 **standard deduction** applies (TY2025 single
+  $15,750, from `params/2025.json`); Article 21(1) exempts only
+  payments arising *outside* the U.S., so there is **no**
+  U.S.-source wage or scholarship exemption. **Any other
+  citizenship** computes with **no treaty benefits at all** plus a
+  `treaty_not_modeled` warning — benefits are never invented.
+  Treaty-exempt amounts are reported on line 1k with Schedule OI
+  data (country, article, amount) in the output. The wage
+  exemption is applied **exactly once** across the two reporting
+  patterns (Instructions for Form 1040-NR (2025), "Amounts Exempt
+  Under a Treaty"): when the payer split the pay with Form 8233,
+  the exempt part arrives on a treaty-marked Form 1042-S (income
+  code 20, exemption code "04") and the W-2 already excludes it —
+  the on-return claim is the treaty cap minus the already-excluded
+  part, floored at zero and capped by the W-2 wages.
+- **Income scope.** Effectively connected **wages** (W-2 box 1 +
+  Form 1042-S code 20) and **scholarship/fellowship** (code 15:
+  treaty-exempt per above, otherwise taxable via Schedule 1 line
+  8r). Form 1042-S income codes **other than 15/20** are recorded
+  but make the NR section **incomplete** with a loud finding —
+  never silently taxed or dropped. **Bank deposit interest is
+  excluded** from a nonresident alien's income (IRC §871(i));
+  1099-INT entries on an NR return produce an info finding and are
+  not taxed. **Dividends, capital gains, and nonemployee
+  compensation belong on Schedule NEC** (taxed at flat rates, not
+  connected with a U.S. trade or business): **not modeled** — their
+  presence raises a loud warning and those amounts are excluded
+  from the NR computation. Schedule 1 adjustments (line 10) are
+  zero; **Schedule A itemized deductions are not computed** (line
+  12 is 0, or the India standard deduction).
+- **Credits: none.** No EIC, no child tax credit / ACTC, no senior
+  bonus on this route (Form 1040-NR line 32 is 0 in v1). Dependents
+  stored on an NR return raise `nra_credits_not_modeled` and change
+  nothing — note the real rules are narrower still (only U.S.
+  nationals and residents of Canada/Mexico, and Indian students on
+  limited terms, may claim dependents at all; residents of China
+  cannot).
+- **FICA check.** An exempt individual's services performed to
+  carry out the purpose of their admission are not covered
+  employment (Pub 519 (2025), chapter 8), so no Social Security or
+  Medicare tax should have been withheld. If any stored W-2 shows
+  Social Security or Medicare tax withheld, validate warns
+  (`fica_withheld_while_exempt`): the remedy is an employer refund
+  first, else Form 843 with Form 8316 — the CLI does not file
+  those. Correspondingly, the resident W-2 statutory-rate
+  cross-checks are suppressed on this route (zero FICA tax is the
+  expected state here).
+- **Section 117 is not re-figured.** The qualified-scholarship
+  exclusion (tuition and required fees for a degree candidate)
+  applies to nonresident aliens too, but payers apply it before
+  reporting on Form 1042-S; the engine taxes code-15 amounts as
+  reported (minus treaty exemption) and does not second-guess the
+  payer's split between qualified and nonqualified amounts.
+- **Treaty claims that require Form 8833** (a treaty-based return
+  position disclosed on that form — e.g. claiming a code-15
+  scholarship exemption directly on the return when the payer did
+  not mark the Form 1042-S as treaty-exempt) **are not modeled**:
+  in v1 an unmarked code-15 amount is taxable. The marked-1042-S
+  pattern (the common university case) is fully handled.
+- **Form 8843 facts are stored, not yet filled.** The `form_8843`
+  object (school and program-director name/address/phone, days
+  present for the current and two prior years) is stored verbatim
+  and validated for presence; the Form 1040-NR / Form 8843 **PDF
+  fill and packet integration are a separate forms lane** —
+  `return export --type pdf|packet|mef` on an NR return is an
+  explicit `not_implemented` error in this lane (JSON export
+  works). An exempt individual must file a fully completed Form
+  8843 for every exempt year, including years with no income and
+  no 1040-NR.
+- **State taxation of nonresident aliens is NOT handled.**
+  California does **not** honor federal tax treaties (the
+  treaty-exempt $5,000 is California-taxable) and nonresidents file
+  Form **540NR**, which is not implemented. A CA state block and an
+  nra block on the same return are an **explicit error**
+  (`nra_state_conflict`) on `set-nra`, `set-state`, compute,
+  validate, and export — never a silent resident computation.
+
 ## Documents (tax-doc)
 
 - Classification is title matching on extracted text only. Known

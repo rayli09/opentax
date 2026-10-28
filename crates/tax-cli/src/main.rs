@@ -17,11 +17,10 @@ use tax_forms::packet::{build_ca_packet, build_packet, schedules_view};
 use tax_forms::{
     additional_standard_deduction, build_fill_values_with_dependents, compute_1040, compute_1040nr,
     compute_ca540, deductible_part_of_se_tax, eic_childless_age_outcome, eic_qualifying_children,
-    mask_ssn, normalize_ssn, schedule_c_net_profit, schedule_se_tax,
-    senior_bonus_eligible_persons, validate_1099_div, validate_dependent, CaFinding,
-    ComputedReturn, DependentInput, F1042sInput, Form1040Input, I1099BInput, I1099DivInput,
-    I1099IntInput, I1099NecInput, NraBlock, NrFinding, PersonIdentity, ScheduleOiEntry, StateBlock,
-    TaxpayerIdentity, W2Input,
+    mask_ssn, normalize_ssn, schedule_c_net_profit, schedule_se_tax, senior_bonus_eligible_persons,
+    validate_1099_div, validate_dependent, CaFinding, ComputedReturn, DependentInput, F1042sInput,
+    Form1040Input, I1099BInput, I1099DivInput, I1099IntInput, I1099NecInput, NrFinding, NraBlock,
+    PersonIdentity, ScheduleOiEntry, StateBlock, TaxpayerIdentity, W2Input,
 };
 use tax_pdf::{FillReport, LopdfBackend, PdfBackend, PdferBackend};
 
@@ -1921,6 +1920,15 @@ fn validate_nr(ret: &StoredReturn, params: &TaxParams) -> CResult<Out> {
     }
     for (i, w2) in stored_w2s(ret)?.iter().enumerate() {
         for f in tax_doc::validate_w2(w2, params) {
+            // The statutory-rate cross-checks assume FICA-covered
+            // wages; an exempt individual's campus wages are NOT
+            // FICA-covered, so a zero Social Security / Medicare tax
+            // is expected, not a discrepancy. The
+            // fica_withheld_while_exempt finding covers the reverse
+            // error on this route.
+            if matches!(f.code.as_str(), "w2_ss_rate" | "w2_medicare_rate") {
+                continue;
+            }
             findings.push(json!({"code": f.code, "severity": f.severity,
                 "message": f.message, "field": f.field, "entry": format!("w2_{:02}", i + 1)}));
         }
@@ -1928,7 +1936,10 @@ fn validate_nr(ret: &StoredReturn, params: &TaxParams) -> CResult<Out> {
     // Form 8843 data: the form must accompany the return (and is
     // filed even with no income). v1 stores the facts; the forms
     // lane fills it. Missing facts are reported, never invented.
-    let block = ret.nra.as_ref().expect("validate_nr routes on the nra block");
+    let block = ret
+        .nra
+        .as_ref()
+        .expect("validate_nr routes on the nra block");
     match &block.form_8843 {
         None => {
             findings.push(json!({"code": "form_8843_data_missing", "severity": "info",
@@ -2307,6 +2318,16 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 .validated()
                 .map_err(|e| CliErr::new("unsupported_state", e))?;
             let mut ret = load_return(&cli.store, &r#return)?;
+            if ret.nra.is_some() {
+                return Err(CliErr::new(
+                    "nra_state_conflict",
+                    "this return already has an nra block (Form 1040-NR route): the \
+                     California selection is a full-year-resident Form 540, which is \
+                     incompatible with the NR route (California does not honor federal \
+                     tax treaties and taxes nonresidents on Form 540NR, which v1 does \
+                     not implement). The state selection was NOT stored",
+                ));
+            }
             let replaced = ret.state.is_some();
             ret.state = Some(block.clone());
             save_return(&cli.store, &ret)?;
@@ -2997,8 +3018,7 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
                         serde_json::from_value(value.clone()).map_err(json_err)?;
                 }
                 "1042-s" => {
-                    let _: F1042sInput =
-                        serde_json::from_value(value.clone()).map_err(json_err)?;
+                    let _: F1042sInput = serde_json::from_value(value.clone()).map_err(json_err)?;
                 }
                 "dependent" => {
                     let mut dep: DependentInput =
@@ -3209,12 +3229,7 @@ fn line16_derivation(method: Option<&str>) -> String {
 /// computed state section (Form 540 printed line numbers, plus the
 /// internal `caleitc_*` keys). The state counterpart of
 /// [`cmd_explain`]; the return must have the state selected.
-fn cmd_explain_nr(
-    cli: &Cli,
-    id: &str,
-    line: Option<String>,
-    fact: Option<String>,
-) -> CResult<Out> {
+fn cmd_explain_nr(cli: &Cli, id: &str, line: Option<String>, fact: Option<String>) -> CResult<Out> {
     let fact_map: &[(&str, &str)] = &[
         ("wages", "1a"),
         ("treaty_exempt_income", "1k"),

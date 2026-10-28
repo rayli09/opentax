@@ -536,7 +536,10 @@ pub fn compute_1040nr(
     // $100,000 of taxable income, the Tax Computation Worksheet above
     // (no preferential capital-gain income exists on this route).
     let (line16, tax_method) = if line15.cents() < 10_000_000 {
-        (tax_on_amount(line15, FilingStatus::Single, params), "tax_table")
+        (
+            tax_on_amount(line15, FilingStatus::Single, params),
+            "tax_table",
+        )
     } else {
         (
             tax_on_amount(line15, FilingStatus::Single, params),

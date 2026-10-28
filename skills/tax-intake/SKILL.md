@@ -11,7 +11,46 @@ of (a) facts to provide and (b) documents to gather. No computation here.
 ## Workflow
 
 1. Run the router setup (`tax doctor`, `tax selftest`).
-2. Establish the basics with the user: tax year (v1: 2025 only), filing
+2. **Residency — ask this FIRST, before anything else.** Visa status
+   decides the form: a nonresident alien computed on the resident
+   Form 1040 is simply wrong (residents get a standard deduction and
+   credits a nonresident does not). Ask: "Are you a U.S. citizen or a
+   resident alien for tax purposes — or are you in the U.S. on a
+   visa?" If the user is on an **F-1 or J-1 visa** (student), ask how
+   many calendar years they have been in that status *including this
+   year* (any part of a calendar year counts as a whole year) and
+   their country of citizenship.
+   - **5 years or fewer** → the **Form 1040-NR student route**. Create
+     the return with `--status single` (the only filing status this
+     route supports), then store the block:
+     `tax return set-nra --return <id> --file nra.json`, where
+     nra.json is `{"visa_type": "F-1", "citizenship": "CN",
+     "first_calendar_year_in_status": 2024,
+     "calendar_years_in_status_including_current": 2,
+     "form_8843": {...}}`. Citizenship **CN / IN** carry treaty
+     modeling; any other country computes with **no** treaty benefits
+     and a loud `treaty_not_modeled` warning — say that plainly, do
+     not paper over it. Collect the **Form 8843 facts** at the same
+     time (school name/address/phone; program director
+     name/address/phone; days present in the current year and the
+     two prior years): an exempt individual must file a fully
+     completed Form 8843 **every year, even with no income**. The
+     document checklist for this route is different — **W-2s and
+     Forms 1042-S** (income code 20 = wages during study/training,
+     code 15 = scholarship/fellowship) — and you **skip** the
+     dependents / credits / EIC questions below entirely (none are
+     computed on this route) and **skip the California question**
+     (California does not honor federal treaties and nonresidents
+     file Form 540NR, which is out of scope; a state block together
+     with an nra block is an explicit error).
+   - **More than 5 years** → `tax return set-nra` refuses, by design:
+     the filer is likely a resident alien under the substantial
+     presence test. Continue with the resident route below, and say
+     that dual-status years are out of scope.
+   - Any other visa, or a married NR filer → the NR route does not
+     cover them; say so and stop that part (resident aliens continue
+     below).
+3. Establish the basics with the user: tax year (v1: 2025 only), filing
    status (single / mfj / hoh / mfs), income sources present this year
    (employment W-2s, bank interest, dividends, brokerage, other), and
    **dependents**: for each person the user claims, ask their
@@ -30,10 +69,10 @@ of (a) facts to provide and (b) documents to gather. No computation here.
    **permanently and totally disabled** (`permanently_disabled`)?
    These decide whether a child who is 19 or older can still be an
    EIC qualifying child.
-3. Create the return:
+4. Create the return:
    `tax return create --year 2025 --status <status>`
    Record the returned `returnId` and keep using exactly that id.
-4. Collect the **taxpayer identity** and store it with
+5. Collect the **taxpayer identity** and store it with
    `tax return set-identity --return <id> --file identity.json`:
    first/last name, SSN (dashed or 9 digits), date of birth,
    occupation, mailing address (street, apt, city, state, ZIP), and
@@ -57,7 +96,7 @@ of (a) facts to provide and (b) documents to gather. No computation here.
    childless EIC (validate reports `eic_childless_age_unknown`).
    Identity is stored locally only
    and every CLI output shows SSNs masked; say so once, plainly.
-5. If the user can state interest and dividend totals now, pass them at
+6. If the user can state interest and dividend totals now, pass them at
    create time (`--interest-cents`, `--dividends-cents`, integer cents).
    If the return already exists without them, record the amounts with
    `tax return set-other-income --return <id> --interest-cents <n>
@@ -65,12 +104,12 @@ of (a) facts to provide and (b) documents to gather. No computation here.
    recorded, even as 0. Otherwise note them as outstanding — the return
    will honestly show dependent lines as incomplete until they exist as
    documents or recorded facts.
-6. Hand the user a document checklist derived from their income sources:
+7. Hand the user a document checklist derived from their income sources:
    one W-2 per job; 1099-INT per bank; 1099-DIV per fund/broker;
    1099-B for brokerage sales; 1099-NEC per side-income payer **plus
    their own expense records for each engagement** (the expenses total
    is an entered fact, not a form box); prior-year return if available.
-7. **State return (California only in v1).** Ask whether the user was
+8. **State return (California only in v1).** Ask whether the user was
    a **full-year California resident** for the tax year. If yes, store
    the selection with
    `tax return set-state --return <id> --state CA --file state.json`,
@@ -93,7 +132,7 @@ of (a) facts to provide and (b) documents to gather. No computation here.
      Credit (a qualifying child **younger than six** as of December
      31). California accepts ITINs for the CalEITC — a stored 9-digit
      identifier is enough; do not press for more.
-8. Confirm a short facts summary back to the user and stop. Next step is
+9. Confirm a short facts summary back to the user and stop. Next step is
    tax-ingest (documents) or tax-preparer (facts already entered).
 
 ## Iron rules
@@ -112,7 +151,12 @@ earned income credit (line 27, v1 scope in `docs/KNOWN_LIMITS.md`)
 at the engine level, plus a full-year-resident California Form 540
 when the state block is set (CA v1 scope in `docs/KNOWN_LIMITS.md`:
 no 540NR, no renter's credit, Schedule CA adjustments scoped to the
-engine's facts). If the user's situation needs anything in
+engine's facts), plus the **Form 1040-NR student route** when the
+nra block is set (F-1 / J-1 students in their exempt-individual
+years, single, W-2 and Form 1042-S wages/scholarship, China and
+India treaty modeling; NRA v1 scope in `docs/KNOWN_LIMITS.md`: no
+Schedule NEC, no credits, no state taxation of nonresidents, no
+dual-status). If the user's situation needs anything in
 `docs/KNOWN_LIMITS.md` (Schedule E, other credits, other states…),
 say so now — before
 collecting documents — and stop that part.
