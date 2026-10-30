@@ -84,6 +84,11 @@ enum Commands {
         #[command(subcommand)]
         action: DocAction,
     },
+    /// Blank form templates (the PDFs packet export fills).
+    Forms {
+        #[command(subcommand)]
+        action: FormsAction,
+    },
     /// PDF form primitives: inspect and fill AcroForm fields.
     Pdf {
         #[command(subcommand)]
@@ -148,14 +153,18 @@ enum ReturnAction {
         #[arg(long)]
         r#return: String,
     },
-    /// Store the taxpayer identity block from a JSON file (names, SSNs,
-    /// DOBs, address, occupations). SSNs are normalized to digits,
-    /// stored locally only, and echoed back masked.
+    /// Store the taxpayer identity block from a JSON payload (names,
+    /// SSNs, DOBs, address, occupations). The payload comes from
+    /// exactly one source: `--file <path>`, `--file -` (stdin), or
+    /// `--data '<json>'`. SSNs are normalized to digits, stored
+    /// locally only, and echoed back masked.
     SetIdentity {
         #[arg(long)]
         r#return: String,
         #[arg(long)]
-        file: PathBuf,
+        file: Option<PathBuf>,
+        #[arg(long)]
+        data: Option<String>,
     },
     /// Select the state return to compute alongside the federal
     /// return, from a JSON file: {"state": "CA", "residency":
@@ -167,12 +176,23 @@ enum ReturnAction {
     SetState {
         #[arg(long)]
         r#return: String,
-        /// State code; when given it must match the file's "state".
+        /// State code; when given it must match the payload's "state".
         #[arg(long)]
         state: Option<String>,
-        /// JSON file with the state block.
+        /// JSON file with the state block (`-` reads stdin).
         #[arg(long)]
-        file: PathBuf,
+        file: Option<PathBuf>,
+        /// The state block as inline JSON (exactly one of --file /
+        /// --data).
+        #[arg(long)]
+        data: Option<String>,
+    },
+    /// Remove a stored state selection (`return set-state`). The
+    /// return then computes exactly as one that never had the block.
+    /// Succeeds with a "was not set" note when no selection is stored.
+    UnsetState {
+        #[arg(long)]
+        r#return: String,
     },
     /// Mark the return as a nonresident-alien STUDENT return, from a
     /// JSON file: {"visa_type": "F-1", "citizenship": "CN",
@@ -187,9 +207,32 @@ enum ReturnAction {
     SetNra {
         #[arg(long)]
         r#return: String,
-        /// JSON file with the nra block.
+        /// JSON file with the nra block (`-` reads stdin).
         #[arg(long)]
-        file: PathBuf,
+        file: Option<PathBuf>,
+        /// The nra block as inline JSON (exactly one of --file /
+        /// --data).
+        #[arg(long)]
+        data: Option<String>,
+    },
+    /// Remove a stored nonresident-alien block (`return set-nra`).
+    /// The return then computes on the resident Form 1040 exactly as
+    /// one that never had the block. Succeeds with a "was not set"
+    /// note when no block is stored.
+    UnsetNra {
+        #[arg(long)]
+        r#return: String,
+    },
+    /// Show the return's flow checklist: which steps are done, which
+    /// are not, and the exact next commands (also embedded as
+    /// `next_steps` in the outputs of the mutating commands).
+    Status {
+        #[arg(long)]
+        r#return: String,
+        /// Forms directory for the templates step; falls back to
+        /// $OPENTAX_FORMS_DIR, then ./.opentax/forms.
+        #[arg(long)]
+        forms_dir: Option<PathBuf>,
     },
     /// Record the direct-entry interest/dividend totals on an existing
     /// return (the post-creation counterpart of create's
@@ -212,12 +255,15 @@ enum ReturnAction {
     List,
     /// Export a stored return. json, pdf, packet, and mef work.
     /// pdf requires --template (a blank TY2025 Form 1040
-    /// PDF) and --out. packet requires --forms-dir (a directory holding
-    /// the blank TY2025 form PDFs under their canonical names —
-    /// f1040.pdf, f1040sd.pdf, f8949.pdf, f1040s1.pdf, f1040s2.pdf,
-    /// f1040sc.pdf, f1040sse.pdf, f10408812.pdf, f1040s1a.pdf, plus
-    /// f540.pdf when a California state block is selected) and
-    /// --out-dir (the packet is written there, with a manifest.json).
+    /// PDF) and --out. packet takes --out-dir (the packet is written
+    /// there, with a manifest.json) and an optional --forms-dir (the
+    /// directory holding the blank TY2025 form PDFs under their
+    /// canonical names — f1040.pdf, f1040sd.pdf, f8949.pdf,
+    /// f1040s1.pdf, f1040s2.pdf, f1040sc.pdf, f1040sse.pdf,
+    /// f10408812.pdf, f1040s1a.pdf, plus f540.pdf when a California
+    /// state block is selected); without --forms-dir it falls back to
+    /// $OPENTAX_FORMS_DIR, then ./.opentax/forms — fetch the whole
+    /// set with `tax forms fetch`.
     /// mef requires --out (the XML file to write) and a stored taxpayer
     /// identity (the ReturnHeader cannot be populated without one);
     /// it writes MeF-schema-shaped XML (TY2025v5.2 form documents;
@@ -263,9 +309,27 @@ enum DocAction {
     },
     /// Extract fields from a born-digital PDF (W-2, 1099-INT, 1099-DIV,
     /// 1099-NEC) into a `form add`-ready node, deterministically.
+    /// With `--add-to <return-id>` the extracted node is added to
+    /// that return in the same invocation.
     Extract {
         #[arg(long)]
         file: PathBuf,
+        #[arg(long)]
+        add_to: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum FormsAction {
+    /// Download every blank form template the packet export can fill
+    /// (14 IRS/FTB PDFs) into the forms directory and verify each one
+    /// (%PDF magic + at least one AcroForm field). Idempotent: files
+    /// already present and verified are reported, not re-downloaded.
+    /// The directory resolves like packet export: --forms-dir, else
+    /// $OPENTAX_FORMS_DIR, else ./.opentax/forms.
+    Fetch {
+        #[arg(long)]
+        forms_dir: Option<PathBuf>,
     },
 }
 
@@ -304,6 +368,7 @@ enum SkillsAction {
 // Errors and output
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 struct CliErr {
     code: String,
     message: String,
@@ -430,6 +495,297 @@ fn load_return(store: &Path, id: &str) -> CResult<StoredReturn> {
     serde_json::from_str(&text).map_err(json_err)
 }
 
+// ---------------------------------------------------------------------------
+// JSON payload sources (--file / --file - / --data)
+// ---------------------------------------------------------------------------
+
+/// Which source a command's JSON payload comes from. Every command
+/// that takes a payload accepts exactly one: `--file <path>`,
+/// `--file -` (stdin), or `--data '<json>'`. `form add` additionally
+/// keeps its original implicit stdin when neither flag is given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PayloadSource {
+    File(PathBuf),
+    Data(String),
+    Stdin,
+}
+
+fn payload_source(
+    file: &Option<PathBuf>,
+    data: &Option<String>,
+    implicit_stdin: bool,
+) -> CResult<PayloadSource> {
+    match (file, data) {
+        (Some(_), Some(_)) => Err(CliErr::new(
+            "invalid_input",
+            "conflicting payload sources: pass exactly one of --file <path>, \
+             --file - (stdin), or --data '<json>'",
+        )),
+        (None, Some(d)) => Ok(PayloadSource::Data(d.clone())),
+        (Some(f), None) => {
+            if f.as_os_str() == "-" {
+                Ok(PayloadSource::Stdin)
+            } else {
+                Ok(PayloadSource::File(f.clone()))
+            }
+        }
+        (None, None) => {
+            if implicit_stdin {
+                Ok(PayloadSource::Stdin)
+            } else {
+                Err(CliErr::new(
+                    "invalid_input",
+                    "no payload source: pass exactly one of --file <path>, \
+                     --file - (stdin), or --data '<json>'",
+                ))
+            }
+        }
+    }
+}
+
+fn read_payload(source: &PayloadSource) -> CResult<String> {
+    match source {
+        PayloadSource::File(f) => std::fs::read_to_string(f).map_err(io_err),
+        PayloadSource::Data(d) => Ok(d.clone()),
+        PayloadSource::Stdin => {
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf).map_err(io_err)?;
+            Ok(buf)
+        }
+    }
+}
+
+/// The one call shape handlers use: resolve + read a JSON payload.
+fn payload_text(
+    file: &Option<PathBuf>,
+    data: &Option<String>,
+    implicit_stdin: bool,
+) -> CResult<String> {
+    read_payload(&payload_source(file, data, implicit_stdin)?)
+}
+
+// ---------------------------------------------------------------------------
+// Form templates (packet export): one directory rule + fetch
+// ---------------------------------------------------------------------------
+
+/// The canonical template file names the packet export fills, in
+/// fetch order. Two canonical names deliberately differ from their
+/// IRS file names (f10408812.pdf is the IRS's f1040s8.pdf;
+/// f1040soi.pdf is the IRS's f1040nro.pdf) — see [`template_url`].
+const TEMPLATE_FILES: &[&str] = &[
+    "f1040.pdf",
+    "f1040sd.pdf",
+    "f8949.pdf",
+    "f1040s1.pdf",
+    "f1040s2.pdf",
+    "f1040sc.pdf",
+    "f1040sse.pdf",
+    "f10408812.pdf",
+    "f1040s1a.pdf",
+    "f540.pdf",
+    "f540ca.pdf",
+    "f1040nr.pdf",
+    "f1040soi.pdf",
+    "f8843.pdf",
+];
+
+/// The official download URL for a canonical template name.
+fn template_url(canonical: &str) -> Option<String> {
+    const IRS_PDF: &str = "https://www.irs.gov/pub/irs-pdf";
+    if !TEMPLATE_FILES.contains(&canonical) {
+        return None;
+    }
+    Some(match canonical {
+        "f540.pdf" => "https://www.ftb.ca.gov/forms/2025/2025-540.pdf".to_string(),
+        "f540ca.pdf" => "https://www.ftb.ca.gov/forms/2025/2025-540-ca.pdf".to_string(),
+        "f10408812.pdf" => format!("{IRS_PDF}/f1040s8.pdf"),
+        "f1040soi.pdf" => format!("{IRS_PDF}/f1040nro.pdf"),
+        _ => format!("{IRS_PDF}/{canonical}"),
+    })
+}
+
+/// THE forms-directory rule, used by `tax forms fetch`, packet
+/// export, `return status`, and `doctor` alike: an explicit
+/// --forms-dir wins; else $OPENTAX_FORMS_DIR; else ./.opentax/forms.
+fn resolve_forms_dir(explicit: Option<&Path>) -> PathBuf {
+    if let Some(dir) = explicit {
+        return dir.to_path_buf();
+    }
+    if let Ok(dir) = std::env::var("OPENTAX_FORMS_DIR") {
+        if !dir.trim().is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    PathBuf::from(".opentax").join("forms")
+}
+
+/// Verify a template file: it must start with the %PDF magic AND the
+/// lopdf inspect machinery must find at least one AcroForm field.
+/// Returns the field count.
+fn verify_template_file(path: &Path) -> Result<usize, String> {
+    let head = std::fs::read(path).map_err(|e| e.to_string())?;
+    if !head.starts_with(b"%PDF") {
+        return Err(format!("{} does not start with %PDF magic", path.display()));
+    }
+    let fields = LopdfBackend
+        .inspect_fields(path)
+        .map_err(|e| e.to_string())?;
+    if fields.is_empty() {
+        return Err(format!("{} has no AcroForm fields", path.display()));
+    }
+    Ok(fields.len())
+}
+
+/// Download one URL to memory (blocking; ureq + rustls). The
+/// production downloader for `tax forms fetch`; tests inject their
+/// own closure instead of touching the network.
+///
+/// The agent verifies TLS against the PLATFORM trust store (the
+/// ureq platform-verifier feature) rather than only Mozilla's
+/// bundled roots, and honors the standard http_proxy/https_proxy
+/// environment variables — the same behavior as curl, so downloads
+/// work on ordinary machines and behind corporate TLS-intercepting
+/// proxies alike.
+fn http_get(url: &str) -> Result<Vec<u8>, String> {
+    let tls = ureq::tls::TlsConfig::builder()
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
+    let config = ureq::Agent::config_builder()
+        .tls_config(tls)
+        .proxy(ureq::Proxy::try_from_env())
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
+    let mut resp = agent
+        .get(url)
+        .header(
+            "User-Agent",
+            concat!(
+                "opentax/",
+                env!("CARGO_PKG_VERSION"),
+                " (+https://github.com/rayli09/opentax)"
+            ),
+        )
+        .call()
+        .map_err(|e| e.to_string())?;
+    resp.body_mut().read_to_vec().map_err(|e| e.to_string())
+}
+
+/// `tax forms fetch`: bring every template in [`TEMPLATE_FILES`]
+/// into `forms_dir`, verifying each. Present-and-verified files are
+/// skipped (idempotent); missing or unverifiable files are
+/// downloaded, written via a temp file, verified, and only then
+/// moved into place — a file that fails verification is reported
+/// failed and never left behind as a "template". Returns the
+/// per-file report lines and the summary counts.
+fn fetch_templates(
+    forms_dir: &Path,
+    download: &dyn Fn(&str) -> Result<Vec<u8>, String>,
+) -> CResult<(Vec<Value>, Value)> {
+    std::fs::create_dir_all(forms_dir).map_err(io_err)?;
+    let mut results: Vec<Value> = Vec::new();
+    let (mut fetched, mut present, mut failed) = (0u32, 0u32, 0u32);
+    for canonical in TEMPLATE_FILES {
+        let dest = forms_dir.join(canonical);
+        let url = template_url(canonical).expect("canonical name has a URL");
+        if dest.exists() {
+            match verify_template_file(&dest) {
+                Ok(fields) => {
+                    present += 1;
+                    results.push(json!({"file": canonical, "url": url,
+                        "status": "present", "verified": true,
+                        "fields": fields}));
+                    continue;
+                }
+                Err(_) => {
+                    // Present but unverifiable: fall through and
+                    // re-download rather than trusting the file.
+                }
+            }
+        }
+        match download(&url) {
+            Err(e) => {
+                failed += 1;
+                results.push(json!({"file": canonical, "url": url,
+                    "status": "failed", "error": e}));
+            }
+            Ok(bytes) => {
+                let tmp = forms_dir.join(format!(".fetch-{canonical}"));
+                let outcome = std::fs::write(&tmp, &bytes)
+                    .map_err(|e| e.to_string())
+                    .and_then(|()| verify_template_file(&tmp))
+                    .and_then(|fields| {
+                        std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
+                        Ok(fields)
+                    });
+                match outcome {
+                    Ok(fields) => {
+                        fetched += 1;
+                        results.push(json!({"file": canonical, "url": url,
+                            "status": "fetched", "verified": true,
+                            "bytes": bytes.len(), "fields": fields}));
+                    }
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&tmp);
+                        failed += 1;
+                        results.push(json!({"file": canonical, "url": url,
+                            "status": "failed", "error": e}));
+                    }
+                }
+            }
+        }
+    }
+    let summary =
+        json!({"fetched": fetched, "already_present_verified": present, "failed": failed});
+    Ok((results, summary))
+}
+
+fn cmd_forms(action: &FormsAction) -> CResult<Out> {
+    match action {
+        FormsAction::Fetch { forms_dir } => {
+            let dir = resolve_forms_dir(forms_dir.as_deref());
+            let (results, summary) = fetch_templates(&dir, &http_get)?;
+            let failed = summary["failed"].as_u64().unwrap_or(0);
+            let human = {
+                let mut lines: Vec<String> = results
+                    .iter()
+                    .map(|r| match r["status"].as_str().unwrap_or("") {
+                        "fetched" => format!(
+                            "{}: fetched ({} bytes, {} fields verified)",
+                            r["file"].as_str().unwrap_or(""),
+                            r["bytes"],
+                            r["fields"]
+                        ),
+                        "present" => format!(
+                            "{}: already present ({} fields verified)",
+                            r["file"].as_str().unwrap_or(""),
+                            r["fields"]
+                        ),
+                        _ => format!(
+                            "{}: FAILED — {}",
+                            r["file"].as_str().unwrap_or(""),
+                            r["error"].as_str().unwrap_or("")
+                        ),
+                    })
+                    .collect();
+                lines.push(format!(
+                    "forms dir {}: {} fetched, {} already present, {} failed",
+                    dir.display(),
+                    summary["fetched"],
+                    summary["already_present_verified"],
+                    summary["failed"]
+                ));
+                lines.join("\n")
+            };
+            Ok(Out {
+                value: json!({"forms_dir": dir.display().to_string(),
+                              "templates": results, "summary": summary}),
+                human,
+                exit_code: if failed > 0 { 1 } else { 0 },
+            })
+        }
+    }
+}
+
 /// Record (or replace) the direct-entry interest/dividend totals on a
 /// stored return — the post-creation path for what `return create`
 /// takes as --interest-cents/--dividends-cents. Returns the updated
@@ -456,6 +812,33 @@ fn set_other_income(
     });
     save_return(store, &ret)?;
     Ok((ret, replaced))
+}
+
+/// Remove the stored state selection from a return (`return
+/// unset-state`): the recovery for a wrong or conflicting state
+/// block. Returns the updated return and the removed block, if any.
+/// With the block gone the return serializes (and computes) exactly
+/// as one that never had it — the field is skipped when absent.
+fn unset_state(store: &Path, id: &str) -> CResult<(StoredReturn, Option<StateBlock>)> {
+    let mut ret = load_return(store, id)?;
+    let removed = ret.state.take();
+    if removed.is_some() {
+        save_return(store, &ret)?;
+    }
+    Ok((ret, removed))
+}
+
+/// Remove the stored nonresident-alien block from a return (`return
+/// unset-nra`): the recovery for a wrong or conflicting nra block
+/// (and the other half of the nra_state_conflict unstick). Same
+/// contract as [`unset_state`].
+fn unset_nra(store: &Path, id: &str) -> CResult<(StoredReturn, Option<NraBlock>)> {
+    let mut ret = load_return(store, id)?;
+    let removed = ret.nra.take();
+    if removed.is_some() {
+        save_return(store, &ret)?;
+    }
+    Ok((ret, removed))
 }
 
 /// Render one person's identity as JSON with the SSN MASKED
@@ -1195,6 +1578,479 @@ fn view_json(view: &ComputedView) -> Value {
 }
 
 // ---------------------------------------------------------------------------
+// Flow status: the return checklist, next steps, and missing inputs
+// ---------------------------------------------------------------------------
+
+/// Node types that carry income documents (a `dependent` entry is
+/// information, not a document).
+const INCOME_NODE_TYPES: &[&str] = &["w2", "1099-int", "1099-div", "1099-b", "1099-nec", "1042-s"];
+
+fn income_entries(ret: &StoredReturn) -> Vec<&StoredEntry> {
+    ret.entries
+        .iter()
+        .filter(|e| INCOME_NODE_TYPES.contains(&e.node_type.as_str()))
+        .collect()
+}
+
+/// The root causes of a return's incompleteness, as
+/// `{input, command}` pairs: WHICH input is missing and the exact
+/// command (or, for the California transcription boxes, the validate
+/// finding's guidance) that records it. This is the derivation the
+/// packet/pdf export errors report as `missing_inputs` and the flow
+/// checklist uses for its compute-step command — one source of truth.
+fn missing_inputs(ret: &StoredReturn, view: Option<&ComputedView>) -> Vec<Value> {
+    let id = &ret.id;
+    let mut out: Vec<Value> = Vec::new();
+    if income_entries(ret).is_empty() {
+        out.push(json!({"input": "documents",
+            "command": format!("tax doc extract --file <document.pdf> --add-to {id}")}));
+    }
+    if ret.nra.is_none() && ret.other_income.is_none() {
+        out.push(json!({"input": "other_income",
+            "command": format!("tax return set-other-income --return {id} --interest-cents <cents> --dividends-cents <cents>")}));
+    }
+    if ret.taxpayer.is_none() {
+        out.push(json!({"input": "identity",
+            "command": format!("tax return set-identity --return {id} --file identity.json")}));
+    }
+    if let Some(view) = view {
+        if let Some(sv) = &view.state {
+            for f in &sv.findings {
+                let field = match f.code {
+                    "ca_state_withholding_missing" => Some("state_withholding"),
+                    "ca_wages_box16_missing" => Some("state_wages"),
+                    _ => None,
+                };
+                if let Some(field) = field {
+                    let entry = f.entry.clone().unwrap_or_else(|| "entry".to_string());
+                    // The recovery for a transcription box is the
+                    // finding's own guidance (which box, and to
+                    // record "0" when the form reports none).
+                    let guidance = f.message.split_whitespace().collect::<Vec<_>>().join(" ");
+                    out.push(json!({"input": format!("{entry}.{field}"),
+                        "command": guidance}));
+                }
+            }
+        }
+        if let Some(nv) = &view.nra {
+            for f in &nv.findings {
+                if f.code == "f1042s_income_code_not_modeled" {
+                    let entry = f.entry.clone().unwrap_or_else(|| "1042-s".to_string());
+                    out.push(json!({"input": format!("{entry}.income_code"),
+                        "command": "not modeled in v1: only Form 1042-S income codes 15 (scholarship/fellowship grants) and 20 (compensation during studying/training) are computed on the Form 1040-NR route; the NR section stays incomplete until that entry is corrected or removed (docs/KNOWN_LIMITS.md)"}));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The template files a return's packet needs, by route: the exact
+/// packet builders' applicable forms when the packet plan can be
+/// built, else an approximation from the stored entries (the direct
+/// interest/dividend totals are not recorded yet, so the plan cannot
+/// be — the templates step then re-checks once they are).
+fn needed_templates(ret: &StoredReturn, params: &TaxParams) -> Vec<String> {
+    let mut needed: Vec<String> = Vec::new();
+    if ret.nra.is_some() {
+        if let Ok(treaties) = TreatyParams::load_2025() {
+            if let Ok(input) = nr_form_input(ret) {
+                let nr = compute_1040nr(&input, params, &treaties);
+                for f in build_nr_packet(&input, &nr) {
+                    if f.applicable {
+                        needed.push(format!("{}.pdf", f.form));
+                    }
+                }
+            }
+        }
+        return needed;
+    }
+    needed.push("f1040.pdf".to_string());
+    match form_input(ret) {
+        Ok(input) => {
+            let computed = compute_1040(&input, params);
+            let mut forms = build_packet(&input, &computed, params);
+            let ca = match &input.state {
+                Some(_) => CaParams::load_2025()
+                    .ok()
+                    .map(|cp| compute_ca540(&input, &computed, params, &cp)),
+                None => None,
+            };
+            forms.extend(build_ca_packet(&input, ca.as_ref(), params));
+            for f in forms {
+                if f.applicable {
+                    needed.push(format!("{}.pdf", f.form));
+                }
+            }
+        }
+        Err(_) => {
+            let has = |t: &str| ret.entries.iter().any(|e| e.node_type == t);
+            if has("1099-b") {
+                needed.push("f1040sd.pdf".to_string());
+                needed.push("f8949.pdf".to_string());
+            }
+            if has("1099-nec") {
+                for f in ["f1040s1.pdf", "f1040s2.pdf", "f1040sc.pdf", "f1040sse.pdf"] {
+                    needed.push(f.to_string());
+                }
+            }
+            if has("dependent") {
+                needed.push("f10408812.pdf".to_string());
+            }
+            if let Ok(status) = FilingStatus::parse(&ret.status) {
+                if senior_bonus_eligible_persons(ret.taxpayer.as_ref(), status, params) > 0 {
+                    needed.push("f1040s1a.pdf".to_string());
+                }
+            }
+            if ret.state.is_some() {
+                needed.push("f540.pdf".to_string());
+            }
+        }
+    }
+    needed.sort();
+    needed.dedup();
+    needed
+}
+
+fn flow_step(
+    id: &str,
+    done: bool,
+    detail: String,
+    command: Option<String>,
+    optional: bool,
+) -> Value {
+    let mut v = json!({"id": id, "done": done, "detail": detail, "command": command});
+    if optional {
+        v["optional"] = json!(true);
+    }
+    v
+}
+
+/// The single checklist behind `return status` and every
+/// `next_steps` array: steps in flow order, each with the exact
+/// command that completes it, the stage the return is in, and the
+/// next 1-3 steps (undone required steps first; when the return is
+/// export-ready, the export step itself, whose command is the export
+/// invocation, ahead of any undone optional steps).
+fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -> Value {
+    let id = &ret.id;
+    let view = compute_view(ret, params).ok();
+    let complete = view.as_ref().map(|v| v.complete).unwrap_or(false);
+    let missing = missing_inputs(ret, view.as_ref());
+    let first_fix = missing
+        .first()
+        .and_then(|m| m["command"].as_str())
+        .map(str::to_string);
+
+    let docs = income_entries(ret);
+    let mut counts: Vec<String> = Vec::new();
+    for t in INCOME_NODE_TYPES {
+        let n = docs.iter().filter(|e| e.node_type == *t).count();
+        if n > 0 {
+            counts.push(format!("{t} ×{n}"));
+        }
+    }
+    let documents_step = flow_step(
+        "documents",
+        !docs.is_empty(),
+        if docs.is_empty() {
+            "no income documents recorded yet".to_string()
+        } else {
+            format!(
+                "{} income document(s) recorded: {}",
+                docs.len(),
+                counts.join(", ")
+            )
+        },
+        if docs.is_empty() {
+            Some(format!(
+                "tax doc extract --file <document.pdf> --add-to {id}"
+            ))
+        } else {
+            None
+        },
+        false,
+    );
+
+    let has_investment_nodes = ret
+        .entries
+        .iter()
+        .any(|e| e.node_type == "1099-int" || e.node_type == "1099-div");
+    let other_income_step = if ret.nra.is_some() {
+        flow_step(
+            "other_income",
+            true,
+            "not applicable on the Form 1040-NR route (direct interest/dividends feed \
+             findings only, never the NR computation)"
+                .to_string(),
+            None,
+            false,
+        )
+    } else if let Some(other) = &ret.other_income {
+        flow_step(
+            "other_income",
+            true,
+            format!(
+                "direct interest {} / dividends {} recorded",
+                other.interest, other.dividends
+            ),
+            None,
+            false,
+        )
+    } else if has_investment_nodes {
+        flow_step(
+            "other_income",
+            true,
+            "interest/dividend totals are carried by the stored 1099-INT/1099-DIV \
+             entries; record direct totals with set-other-income only for amounts \
+             that arrived without a form"
+                .to_string(),
+            None,
+            false,
+        )
+    } else {
+        flow_step(
+            "other_income",
+            false,
+            "direct interest/dividend totals not recorded — every line that depends \
+             on them stays incomplete, never zero-filled"
+                .to_string(),
+            Some(format!(
+                "tax return set-other-income --return {id} --interest-cents <cents> --dividends-cents <cents>"
+            )),
+            false,
+        )
+    };
+
+    let identity_step = flow_step(
+        "identity",
+        ret.taxpayer.is_some(),
+        if ret.taxpayer.is_some() {
+            "taxpayer identity stored (outputs mask SSNs; the full SSN appears only \
+             inside a filled PDF)"
+                .to_string()
+        } else {
+            "no taxpayer identity stored — filled forms will lack the filer's name \
+             and identifying number, and age/blind-dependent amounts cannot be checked"
+                .to_string()
+        },
+        if ret.taxpayer.is_none() {
+            Some(format!(
+                "tax return set-identity --return {id} --file identity.json"
+            ))
+        } else {
+            None
+        },
+        false,
+    );
+
+    let route_step = if let Some(block) = &ret.nra {
+        flow_step(
+            "route",
+            true,
+            format!(
+                "Form 1040-NR route ({} student, citizenship {}) — remove the block \
+                 with `tax return unset-nra --return {id}` if this return is not a \
+                 nonresident-alien student return",
+                block.visa_type, block.citizenship
+            ),
+            None,
+            false,
+        )
+    } else {
+        flow_step(
+            "route",
+            true,
+            format!(
+                "resident Form 1040 route — if the filer is an F-1/J-1 student within \
+                 their first 5 calendar years in status, they likely belong on the \
+                 Form 1040-NR route instead: `tax return set-nra --return {id} --file nra.json`"
+            ),
+            None,
+            false,
+        )
+    };
+
+    let state_step = if ret.nra.is_some() {
+        flow_step(
+            "state",
+            true,
+            "not applicable on the Form 1040-NR route (state taxation of \
+             nonresidents is not implemented; California does not honor federal \
+             tax treaties)"
+                .to_string(),
+            None,
+            true,
+        )
+    } else if let Some(block) = &ret.state {
+        flow_step(
+            "state",
+            true,
+            format!(
+                "state return selected: {} ({}) — remove it with \
+                 `tax return unset-state --return {id}`",
+                block.state, block.residency
+            ),
+            None,
+            true,
+        )
+    } else {
+        flow_step(
+            "state",
+            false,
+            "no state return selected (optional; v1 computes the California \
+             Form 540 for full-year residents)"
+                .to_string(),
+            Some(format!(
+                "tax return set-state --return {id} --state CA --file state.json"
+            )),
+            true,
+        )
+    };
+
+    let compute_step = flow_step(
+        "compute",
+        complete,
+        if complete {
+            "the return computes complete — every line is determined".to_string()
+        } else if let Some(v) = &view {
+            let shown: Vec<&String> = v.incomplete.iter().take(8).collect();
+            format!(
+                "the return is incomplete: {} line(s) undetermined ({}{})",
+                v.incomplete.len(),
+                shown
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                if v.incomplete.len() > shown.len() {
+                    ", …"
+                } else {
+                    ""
+                }
+            )
+        } else {
+            "the return does not compute (see `tax return get` for the error)".to_string()
+        },
+        if complete {
+            None
+        } else {
+            Some(first_fix.unwrap_or_else(|| format!("tax return get --return {id}")))
+        },
+        false,
+    );
+
+    let needed = needed_templates(ret, params);
+    let missing_templates: Vec<&String> = needed
+        .iter()
+        .filter(|name| !forms_dir.join(name).exists())
+        .collect();
+    let templates_done = missing_templates.is_empty();
+    let templates_step = flow_step(
+        "templates",
+        templates_done,
+        if templates_done {
+            format!(
+                "all {} template(s) this return's packet needs are present in {}",
+                needed.len(),
+                forms_dir.display()
+            )
+        } else {
+            format!(
+                "template(s) missing from {}: {}",
+                forms_dir.display(),
+                missing_templates
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        },
+        if templates_done {
+            None
+        } else {
+            Some("tax forms fetch".to_string())
+        },
+        false,
+    );
+
+    let export_ready = complete && templates_done;
+    let export_step = flow_step(
+        "export_ready",
+        export_ready,
+        if export_ready {
+            "complete and templates present — the packet can be exported".to_string()
+        } else if !complete {
+            "not ready: the return is incomplete".to_string()
+        } else {
+            "not ready: form templates are missing".to_string()
+        },
+        Some(format!(
+            "tax return export --return {id} --type packet --out-dir <dir>"
+        )),
+        false,
+    );
+
+    let steps = vec![
+        documents_step,
+        other_income_step,
+        identity_step,
+        route_step,
+        state_step,
+        compute_step,
+        templates_step,
+        export_step,
+    ];
+    let stage = if docs.is_empty() {
+        "intake"
+    } else if !complete {
+        "documents"
+    } else if ret.taxpayer.is_none() {
+        "compute"
+    } else if !templates_done {
+        "review"
+    } else {
+        "ready"
+    };
+    let step_done = |s: &Value| s["done"].as_bool().unwrap_or(false);
+    let step_optional = |s: &Value| s["optional"].as_bool().unwrap_or(false);
+    let mut next_steps: Vec<Value> = steps
+        .iter()
+        .filter(|s| !step_done(s) && !step_optional(s))
+        .cloned()
+        .collect();
+    if export_ready {
+        // Every required step is done: the next step is the export
+        // itself (its command is the export invocation), ahead of
+        // any optional step.
+        next_steps.push(steps.last().expect("export_ready step").clone());
+    }
+    next_steps.extend(
+        steps
+            .iter()
+            .filter(|s| !step_done(s) && step_optional(s))
+            .cloned(),
+    );
+    next_steps.truncate(3);
+    json!({
+        "returnId": ret.id,
+        "form": if ret.nra.is_some() { "1040-NR" } else { "1040" },
+        "stage": stage,
+        "steps": steps,
+        "next_steps": next_steps,
+    })
+}
+
+/// Embed the compact `next_steps` array into a mutating command's
+/// output (fix D): the next undone steps with their exact commands,
+/// computed from the just-saved return state. Guidance must never
+/// fail the mutation itself, so a status error degrades to no steps.
+fn attach_next_steps(value: &mut Value, ret: &StoredReturn, params: &TaxParams) {
+    let status = build_flow_status(ret, params, &resolve_forms_dir(None));
+    value["next_steps"] = status["next_steps"].clone();
+}
+
+// ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
 
@@ -1307,6 +2163,27 @@ fn cmd_doctor(cli: &Cli) -> CResult<Out> {
         ),
         "",
     );
+    // Form templates: not required for computing, but packet export
+    // fills them — report how many of the canonical set verify in
+    // the resolved forms directory.
+    {
+        let dir = resolve_forms_dir(None);
+        let present = TEMPLATE_FILES
+            .iter()
+            .filter(|name| verify_template_file(&dir.join(name)).is_ok())
+            .count();
+        push(
+            "form_templates",
+            present == TEMPLATE_FILES.len(),
+            false,
+            format!(
+                "{present}/{} blank form templates verified in {}",
+                TEMPLATE_FILES.len(),
+                dir.display()
+            ),
+            "run: tax forms fetch",
+        );
+    }
     let ocr = tax_doc::NoOcr;
     push(
         "ocr_backend",
@@ -1677,7 +2554,7 @@ fn schema_json() -> Value {
                 "nra": {"type": "object", "items": "NraBlock", "optional": true, "note": "the same block `return set-nra` stores; when set, `return get` computes Form 1040-NR INSTEAD of the resident Form 1040: \"lines\" is the NR line map and the object gains \"form\": \"1040-NR\" and an \"nra\" object (determination, tax method, Schedule OI data, notes). Absent = resident behavior exactly as before. Incompatible with a StateBlock (explicit error)"}
             },
             "NraBlock": {
-                "note": "Set with `tax return set-nra --return <id> --file nra.json`. v1 is the STUDENT route: F-1 / J-1 visa holders in their exempt-individual years (at most 5 calendar years in status — any part of a calendar year counts, Pub 519 (2025)), filing status single. More than 5 years, another visa, or another filing status is refused with an explicit error (likely resident alien; dual-status not implemented). Citizenship CN / IN carry treaty modeling (params/2025-treaties.json); any other country computes with NO treaty benefits and a treaty_not_modeled warning.",
+                "note": "Set with `tax return set-nra --return <id> --file nra.json` (or --data '<json>', or --file - for stdin — exactly one payload source). Remove with `tax return unset-nra --return <id>`. v1 is the STUDENT route: F-1 / J-1 visa holders in their exempt-individual years (at most 5 calendar years in status — any part of a calendar year counts, Pub 519 (2025)), filing status single. More than 5 years, another visa, or another filing status is refused with an explicit error (likely resident alien; dual-status not implemented). Citizenship CN / IN carry treaty modeling (params/2025-treaties.json); any other country computes with NO treaty benefits and a treaty_not_modeled warning.",
                 "visa_type": {"type": "string", "values": ["F-1", "J-1"]},
                 "citizenship": {"type": "string", "note": "ISO 3166-1 alpha-2 country code (CN, IN modeled); case-insensitive, stored uppercase"},
                 "first_calendar_year_in_status": {"type": "integer"},
@@ -1707,12 +2584,12 @@ fn schema_json() -> Value {
                 "treaty_article": {"type": "string", "optional": true}
             },
             "StateBlock": {
-                "note": "Set with `tax return set-state --return <id> --state CA --file state.json`. v1 supports exactly one combination; anything else is an explicit error (other states, Form 540NR, and part-year residency are not implemented).",
+                "note": "Set with `tax return set-state --return <id> --state CA --file state.json` (or --data '<json>', or --file - for stdin — exactly one payload source). Remove with `tax return unset-state --return <id>`. v1 supports exactly one combination; anything else is an explicit error (other states, Form 540NR, and part-year residency are not implemented).",
                 "state": {"type": "string", "values": ["CA"]},
                 "residency": {"type": "string", "values": ["full_year"]}
             },
             "TaxpayerIdentity": {
-                "note": "Set with `tax return set-identity --return <id> --file identity.json`. SSNs accept \"123-45-6789\" or 9 digits and are stored normalized digits-only, locally only, and shown masked (***-**-6789) in every output; the full SSN appears only inside the filled PDF.",
+                "note": "Set with `tax return set-identity --return <id> --file identity.json` (or --data '<json>', or --file - for stdin — exactly one payload source). SSNs accept \"123-45-6789\" or 9 digits and are stored normalized digits-only, locally only, and shown masked (***-**-6789) in every output; the full SSN appears only inside the filled PDF.",
                 "first_name": {"type": "string", "optional": true},
                 "last_name": {"type": "string", "optional": true},
                 "ssn": {"type": "string", "optional": true},
@@ -2049,7 +2926,8 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 nra: None,
             };
             save_return(&cli.store, &ret)?;
-            let value = json!({"returnId": ret.id, "year": ret.year, "status": ret.status});
+            let mut value = json!({"returnId": ret.id, "year": ret.year, "status": ret.status});
+            attach_next_steps(&mut value, &ret, &params);
             let human = format!("created return {} (TY{}, {})", ret.id, ret.year, ret.status);
             Ok(Out::ok(value, human))
         }
@@ -2266,8 +3144,12 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 },
             ))
         }
-        ReturnAction::SetIdentity { r#return, file } => {
-            let text = std::fs::read_to_string(&file).map_err(io_err)?;
+        ReturnAction::SetIdentity {
+            r#return,
+            file,
+            data,
+        } => {
+            let text = payload_text(&file, &data, false)?;
             let raw: TaxpayerIdentity = serde_json::from_str(&text).map_err(json_err)?;
             let identity = raw
                 .normalized()
@@ -2292,26 +3174,25 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     .map(mask_ssn)
                     .unwrap_or_else(|| "not set".to_string()),
             );
-            Ok(Out::ok(
-                json!({"returnId": ret.id, "taxpayer": masked}),
-                human,
-            ))
+            let mut value = json!({"returnId": ret.id, "taxpayer": masked});
+            attach_next_steps(&mut value, &ret, &params);
+            Ok(Out::ok(value, human))
         }
         ReturnAction::SetState {
             r#return,
             state,
             file,
+            data,
         } => {
-            let text = std::fs::read_to_string(&file).map_err(io_err)?;
+            let text = payload_text(&file, &data, false)?;
             let block: StateBlock = serde_json::from_str(&text).map_err(json_err)?;
             if let Some(s) = &state {
                 if s != &block.state {
                     return Err(CliErr::new(
                         "invalid_input",
                         format!(
-                            "--state {s} does not match the state \"{}\" in {}",
-                            block.state,
-                            file.display()
+                            "--state {s} does not match the state \"{}\" in the payload",
+                            block.state
                         ),
                     ));
                 }
@@ -2340,6 +3221,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             if replaced {
                 value["replaced"] = json!(true);
             }
+            attach_next_steps(&mut value, &ret, &params);
             let human = format!(
                 "state selection stored on return {}: {} ({}){}",
                 ret.id,
@@ -2353,8 +3235,37 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             );
             Ok(Out::ok(value, human))
         }
-        ReturnAction::SetNra { r#return, file } => {
-            let text = std::fs::read_to_string(&file).map_err(io_err)?;
+        ReturnAction::UnsetState { r#return } => {
+            let (ret, removed) = unset_state(&cli.store, &r#return)?;
+            let mut value = json!({"returnId": ret.id});
+            let human = match &removed {
+                Some(block) => {
+                    value["removed"] = json!({"state": block.state, "residency": block.residency});
+                    format!(
+                        "removed the {} ({}) state selection from return {} — it now \
+                         computes exactly as a return that never had one",
+                        block.state, block.residency, ret.id
+                    )
+                }
+                None => {
+                    value["removed"] = Value::Null;
+                    value["note"] =
+                        json!("no state selection was stored on this return — nothing to remove");
+                    format!(
+                        "return {} has no state selection stored — nothing removed",
+                        ret.id
+                    )
+                }
+            };
+            attach_next_steps(&mut value, &ret, &params);
+            Ok(Out::ok(value, human))
+        }
+        ReturnAction::SetNra {
+            r#return,
+            file,
+            data,
+        } => {
+            let text = payload_text(&file, &data, false)?;
             let block: NraBlock = serde_json::from_str(&text).map_err(json_err)?;
             let mut ret = load_return(&cli.store, &r#return)?;
             if ret.state.is_some() {
@@ -2402,6 +3313,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             if replaced {
                 value["replaced"] = json!(true);
             }
+            attach_next_steps(&mut value, &ret, &params);
             let human = format!(
                 "nonresident-alien student block stored on return {}: {} visa, \
                  citizenship {}, calendar year {} of {} in status — the return now \
@@ -2422,6 +3334,59 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             );
             Ok(Out::ok(value, human))
         }
+        ReturnAction::UnsetNra { r#return } => {
+            let (ret, removed) = unset_nra(&cli.store, &r#return)?;
+            let mut value = json!({"returnId": ret.id});
+            let human = match &removed {
+                Some(block) => {
+                    value["removed"] = serde_json::to_value(block).map_err(json_err)?;
+                    format!(
+                        "removed the nonresident-alien block ({} visa, citizenship {}) \
+                         from return {} — it now computes on the resident Form 1040 \
+                         exactly as a return that never had one",
+                        block.visa_type, block.citizenship, ret.id
+                    )
+                }
+                None => {
+                    value["removed"] = Value::Null;
+                    value["note"] =
+                        json!("no nra block was stored on this return — nothing to remove");
+                    format!(
+                        "return {} has no nra block stored — nothing removed",
+                        ret.id
+                    )
+                }
+            };
+            attach_next_steps(&mut value, &ret, &params);
+            Ok(Out::ok(value, human))
+        }
+        ReturnAction::Status {
+            r#return,
+            forms_dir,
+        } => {
+            let ret = load_return(&cli.store, &r#return)?;
+            let dir = resolve_forms_dir(forms_dir.as_deref());
+            let value = build_flow_status(&ret, &params, &dir);
+            let next = value["next_steps"]
+                .as_array()
+                .map(|steps| {
+                    steps
+                        .iter()
+                        .filter_map(|s| {
+                            s["command"]
+                                .as_str()
+                                .map(|c| format!("  {}: {}", s["id"].as_str().unwrap_or(""), c))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            let human = format!(
+                "return {} ({}) — stage: {}\nnext steps:\n{}",
+                ret.id, value["form"], value["stage"], next
+            );
+            Ok(Out::ok(value, human))
+        }
         ReturnAction::SetOtherIncome {
             r#return,
             interest_cents,
@@ -2437,6 +3402,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             if replaced {
                 value["replaced"] = json!(true);
             }
+            attach_next_steps(&mut value, &ret, &params);
             let human = format!(
                 "recorded direct interest {} / dividends {} on return {}{}",
                 other.interest,
@@ -2545,7 +3511,8 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                                 ret.id,
                                 incomplete.join(", ")
                             ),
-                            json!({"incomplete_lines": incomplete}),
+                            json!({"incomplete_lines": incomplete,
+                                    "missing_inputs": missing_inputs(&ret, Some(&view))}),
                         )
                     })?;
                     let values: std::collections::HashMap<String, String> = plan
@@ -2648,12 +3615,12 @@ fn packet_export(
     forms_dir: Option<&PathBuf>,
     out_dir: Option<&PathBuf>,
 ) -> CResult<Out> {
-    let forms_dir = forms_dir.ok_or_else(|| {
-        CliErr::new(
-            "missing_forms_dir",
-            "packet export requires --forms-dir <dir holding the blank TY2025 form PDFs>",
-        )
-    })?;
+    // One forms-directory rule everywhere (see resolve_forms_dir):
+    // --forms-dir, else $OPENTAX_FORMS_DIR, else ./.opentax/forms.
+    // Templates absent from the resolved directory surface as loud
+    // missing_template manifest entries with a recovery command,
+    // never as a hard stop here.
+    let forms_dir = resolve_forms_dir(forms_dir.map(PathBuf::as_path));
     let out_dir = out_dir.ok_or_else(|| {
         CliErr::new(
             "missing_out_dir",
@@ -2676,6 +3643,9 @@ fn packet_export(
             )
         };
         let mut extra = json!({"incomplete_lines": view.incomplete});
+        // Root causes, not just line keys: which input is missing
+        // and the exact command that records it.
+        extra["missing_inputs"] = json!(missing_inputs(ret, Some(&view)));
         if let Some(state) = &view.state {
             if !state.complete {
                 message.push_str(&format!(
@@ -2695,7 +3665,7 @@ fn packet_export(
         return Err(CliErr::with_extra("return_incomplete", message, extra));
     }
     if ret.nra.is_some() {
-        return packet_export_nr(ret, params, forms_dir, out_dir);
+        return packet_export_nr(ret, params, &forms_dir, out_dir);
     }
     let input = form_input(ret)?;
     let status = input.status;
@@ -2732,16 +3702,18 @@ fn packet_export(
                     ret.id,
                     incomplete.join(", ")
                 ),
-                json!({"incomplete_lines": incomplete}),
+                json!({"incomplete_lines": incomplete,
+                        "missing_inputs": missing_inputs(ret, Some(&view))}),
             )
         })?;
         let template = forms_dir.join("f1040.pdf");
         if !template.exists() {
             record(
                 json!({"form": "f1040", "label": "Form 1040", "status": "missing_template",
-                        "file": Value::Null,
+                        "file": Value::Null, "recovery": "run: tax forms fetch",
                         "notes": [format!("template not found: {} — supply the blank TY2025 Form 1040 PDF under this name in --forms-dir", template.display())]}),
-                json!({"form": "f1040", "status": "missing_template"}),
+                json!({"form": "f1040", "status": "missing_template",
+                        "recovery": "run: tax forms fetch"}),
                 "f1040: MISSING TEMPLATE (f1040.pdf not in --forms-dir)".to_string(),
             );
         } else {
@@ -2821,8 +3793,10 @@ fn packet_export(
             );
             record(
                 json!({"form": form.form, "label": form.label, "status": "missing_template",
-                        "file": Value::Null, "notes": notes}),
-                json!({"form": form.form, "status": "missing_template"}),
+                        "file": Value::Null, "recovery": "run: tax forms fetch",
+                        "notes": notes}),
+                json!({"form": form.form, "status": "missing_template",
+                        "recovery": "run: tax forms fetch"}),
                 format!(
                     "{}: MISSING TEMPLATE ({}.pdf not in --forms-dir)",
                     form.form, form.form
@@ -2935,10 +3909,10 @@ fn nr_pdf_export(
                 ret.id,
                 incomplete.join(", ")
             ),
-            json!({"incomplete_lines": incomplete}),
+            json!({"incomplete_lines": incomplete,
+                    "missing_inputs": missing_inputs(ret, Some(&view))}),
         ));
     }
-    let _ = &view;
     let forms = build_nr_packet(&input, &nr);
     let main = forms
         .iter()
@@ -3043,8 +4017,10 @@ fn packet_export_nr(
             );
             record(
                 json!({"form": form.form, "label": form.label, "status": "missing_template",
-                        "file": Value::Null, "notes": notes}),
-                json!({"form": form.form, "status": "missing_template"}),
+                        "file": Value::Null, "recovery": "run: tax forms fetch",
+                        "notes": notes}),
+                json!({"form": form.form, "status": "missing_template",
+                        "recovery": "run: tax forms fetch"}),
                 format!(
                     "{}: MISSING TEMPLATE ({}.pdf not in --forms-dir)",
                     form.form, form.form
@@ -3160,7 +4136,8 @@ fn mef_export(ret: &StoredReturn, params: &TaxParams, out: Option<&PathBuf>) -> 
                 ret.id,
                 view.incomplete.join(", ")
             ),
-            json!({"incomplete_lines": view.incomplete}),
+            json!({"incomplete_lines": view.incomplete,
+                    "missing_inputs": missing_inputs(ret, Some(&view))}),
         ));
     }
     let input = form_input(ret)?;
@@ -3195,6 +4172,97 @@ fn mef_export(ret: &StoredReturn, params: &TaxParams, out: Option<&PathBuf>) -> 
     ))
 }
 
+/// The entry-id prefix for an accepted node type, or None for a
+/// type `form add` does not implement.
+fn node_prefix(node_type: &str) -> Option<&'static str> {
+    match node_type {
+        "w2" => Some("w2"),
+        "1099-int" => Some("1099int"),
+        "1099-div" => Some("1099div"),
+        "1099-b" => Some("1099b"),
+        "1099-nec" => Some("1099nec"),
+        "1042-s" => Some("f1042s"),
+        "dependent" => Some("dependent"),
+        _ => None,
+    }
+}
+
+/// Validate a node payload against its typed struct before it is
+/// stored, and return the payload to store. Shared by `form add` and
+/// `doc extract --add-to` so both paths enforce exactly the same
+/// rules. A dependent's SSN, when present, is validated and stored
+/// normalized (digits only); the stored JSON is then rewritten from
+/// the typed value so the normalization sticks.
+fn validate_node_payload(node_type: &str, value: Value) -> CResult<Value> {
+    let mut value = value;
+    match node_type {
+        "w2" => {
+            let _: W2Input = serde_json::from_value(value.clone()).map_err(json_err)?;
+        }
+        "1099-int" => {
+            let _: I1099IntInput = serde_json::from_value(value.clone()).map_err(json_err)?;
+        }
+        "1099-div" => {
+            let _: I1099DivInput = serde_json::from_value(value.clone()).map_err(json_err)?;
+        }
+        "1099-b" => {
+            let _: I1099BInput = serde_json::from_value(value.clone()).map_err(json_err)?;
+        }
+        "1099-nec" => {
+            let _: I1099NecInput = serde_json::from_value(value.clone()).map_err(json_err)?;
+        }
+        "1042-s" => {
+            let _: F1042sInput = serde_json::from_value(value.clone()).map_err(json_err)?;
+        }
+        "dependent" => {
+            let mut dep: DependentInput =
+                serde_json::from_value(value.clone()).map_err(json_err)?;
+            if dep.months_lived_with_taxpayer > 12 {
+                return Err(CliErr::new(
+                    "invalid_input",
+                    format!(
+                        "dependent {}: months_lived_with_taxpayer must be 0-12 (got {})",
+                        dep.name, dep.months_lived_with_taxpayer
+                    ),
+                ));
+            }
+            if let Some(ssn) = &dep.ssn {
+                dep.ssn = Some(normalize_ssn(ssn).ok_or_else(|| {
+                    CliErr::new(
+                        "invalid_input",
+                        format!(
+                            "dependent {}: ssn must be 9 digits (\"123-45-6789\" or \"123456789\")",
+                            dep.name
+                        ),
+                    )
+                })?);
+                value = serde_json::to_value(&dep).map_err(json_err)?;
+            }
+        }
+        _ => unreachable!("node_prefix gates the accepted types"),
+    }
+    Ok(value)
+}
+
+/// Append a validated node payload to a return as the next entry of
+/// its type; returns the new entry id.
+fn append_entry(ret: &mut StoredReturn, node_type: &str, data: Value) -> String {
+    let prefix = node_prefix(node_type).expect("validated node type");
+    let n = ret
+        .entries
+        .iter()
+        .filter(|e| e.node_type == node_type)
+        .count()
+        + 1;
+    let entry_id = format!("{prefix}_{n:02}");
+    ret.entries.push(StoredEntry {
+        entry_id: entry_id.clone(),
+        node_type: node_type.to_string(),
+        data,
+    });
+    entry_id
+}
+
 fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
     match action {
         FormAction::Add {
@@ -3205,109 +4273,36 @@ fn cmd_form(cli: &Cli, action: FormAction) -> CResult<Out> {
         } => {
             // Entry-id prefix per node type; unknown types stay an honest
             // not_implemented, exactly as before.
-            let prefix = match node_type.as_str() {
-                "w2" => "w2",
-                "1099-int" => "1099int",
-                "1099-div" => "1099div",
-                "1099-b" => "1099b",
-                "1099-nec" => "1099nec",
-                "1042-s" => "f1042s",
-                "dependent" => "dependent",
-                _ => {
-                    return Ok(Out::ok(
-                        json!({"status": "not_implemented", "node_type": node_type,
-                                "detail": "v1 stores and computes w2, 1099-int, 1099-div, 1099-b, 1099-nec, 1042-s, and dependent entries (see `tax node list`)"}),
-                        format!("adding {node_type}: not implemented in v1"),
-                    ));
-                }
-            };
-            let text = if let Some(f) = &file {
-                std::fs::read_to_string(f).map_err(io_err)?
-            } else if let Some(d) = &data {
-                d.clone()
-            } else {
-                let mut buf = String::new();
-                std::io::stdin().read_to_string(&mut buf).map_err(io_err)?;
-                buf
-            };
-            let value: Value = serde_json::from_str(&text).map_err(json_err)?;
-            // Validate against the typed struct before storing anything.
-            // A dependent's SSN, when present, is validated and stored
-            // normalized (digits only); the stored JSON is rewritten
-            // from the typed value so the normalization sticks.
-            let mut value = value;
-            match node_type.as_str() {
-                "w2" => {
-                    let _: W2Input = serde_json::from_value(value.clone()).map_err(json_err)?;
-                }
-                "1099-int" => {
-                    let _: I1099IntInput =
-                        serde_json::from_value(value.clone()).map_err(json_err)?;
-                }
-                "1099-div" => {
-                    let _: I1099DivInput =
-                        serde_json::from_value(value.clone()).map_err(json_err)?;
-                }
-                "1099-b" => {
-                    let _: I1099BInput = serde_json::from_value(value.clone()).map_err(json_err)?;
-                }
-                "1099-nec" => {
-                    let _: I1099NecInput =
-                        serde_json::from_value(value.clone()).map_err(json_err)?;
-                }
-                "1042-s" => {
-                    let _: F1042sInput = serde_json::from_value(value.clone()).map_err(json_err)?;
-                }
-                "dependent" => {
-                    let mut dep: DependentInput =
-                        serde_json::from_value(value.clone()).map_err(json_err)?;
-                    if dep.months_lived_with_taxpayer > 12 {
-                        return Err(CliErr::new(
-                            "invalid_input",
-                            format!(
-                                "dependent {}: months_lived_with_taxpayer must be 0-12 (got {})",
-                                dep.name, dep.months_lived_with_taxpayer
-                            ),
-                        ));
-                    }
-                    if let Some(ssn) = &dep.ssn {
-                        dep.ssn = Some(normalize_ssn(ssn).ok_or_else(|| {
-                            CliErr::new(
-                                "invalid_input",
-                                format!(
-                                    "dependent {}: ssn must be 9 digits (\"123-45-6789\" or \"123456789\")",
-                                    dep.name
-                                ),
-                            )
-                        })?);
-                        value = serde_json::to_value(&dep).map_err(json_err)?;
-                    }
-                }
-                _ => unreachable!(),
+            if node_prefix(&node_type).is_none() {
+                return Ok(Out::ok(
+                    json!({"status": "not_implemented", "node_type": node_type,
+                            "detail": "v1 stores and computes w2, 1099-int, 1099-div, 1099-b, 1099-nec, 1042-s, and dependent entries (see `tax node list`)"}),
+                    format!("adding {node_type}: not implemented in v1"),
+                ));
             }
+            // Exactly one payload source: --file, --file - (stdin),
+            // --data, or — form add's original behavior — bare stdin
+            // when neither flag is given. --file + --data together is
+            // a conflict, never a silent winner.
+            let text = payload_text(&file, &data, true)?;
+            let raw: Value = serde_json::from_str(&text).map_err(json_err)?;
+            let value = validate_node_payload(&node_type, raw)?;
             let mut ret = load_return(&cli.store, &r#return)?;
-            let n = ret
-                .entries
-                .iter()
-                .filter(|e| e.node_type == node_type)
-                .count()
-                + 1;
-            let entry_id = format!("{prefix}_{n:02}");
-            ret.entries.push(StoredEntry {
-                entry_id: entry_id.clone(),
-                node_type: node_type.clone(),
-                data: value,
-            });
+            let entry_id = append_entry(&mut ret, &node_type, value);
             save_return(&cli.store, &ret)?;
+            let params = TaxParams::load_2025().map_err(json_err)?;
+            let mut value =
+                json!({"returnId": ret.id, "entryId": entry_id, "node_type": node_type});
+            attach_next_steps(&mut value, &ret, &params);
             Ok(Out::ok(
-                json!({"returnId": ret.id, "entryId": entry_id, "node_type": node_type}),
+                value,
                 format!("added {entry_id} to return {}", ret.id),
             ))
         }
     }
 }
 
-fn cmd_doc(action: DocAction) -> CResult<Out> {
+fn cmd_doc(cli: &Cli, action: DocAction) -> CResult<Out> {
     match action {
         DocAction::Classify { file } => {
             let ext = file
@@ -3333,7 +4328,7 @@ fn cmd_doc(action: DocAction) -> CResult<Out> {
                 )),
             }
         }
-        DocAction::Extract { file } => {
+        DocAction::Extract { file, add_to } => {
             let params = TaxParams::load_2025().map_err(json_err)?;
             let report = tax_doc::extract_document(&file, &params)
                 .map_err(|e| CliErr::new("extract_error", e))?;
@@ -3341,7 +4336,7 @@ fn cmd_doc(action: DocAction) -> CResult<Out> {
             value["file"] = json!(file.display().to_string());
             let status = value["status"].as_str().unwrap_or("").to_string();
             let form = report.form.as_deref().unwrap_or("unrecognized document");
-            let human = match report.status {
+            let mut human = match report.status {
                 tax_doc::ExtractStatus::Extracted | tax_doc::ExtractStatus::Partial => format!(
                     "{}: {} — {} ({} fields extracted)",
                     file.display(),
@@ -3358,6 +4353,38 @@ fn cmd_doc(action: DocAction) -> CResult<Out> {
                     file.display()
                 ),
             };
+            // --add-to: the one-step path. When the extraction
+            // produced a node, add it to the target return through
+            // the exact form-add validation + append path. When it
+            // produced none (needs_ocr / unrecognized), no add is
+            // attempted and that is reported plainly.
+            if let Some(return_id) = &add_to {
+                match (&report.node_type, &report.node) {
+                    (Some(node_type), Some(node)) => {
+                        let payload = validate_node_payload(node_type, node.clone())?;
+                        let mut ret = load_return(&cli.store, return_id)?;
+                        let entry_id = append_entry(&mut ret, node_type, payload);
+                        save_return(&cli.store, &ret)?;
+                        value["added"] = json!({"returnId": ret.id,
+                                                "entryId": entry_id,
+                                                "node_type": node_type});
+                        attach_next_steps(&mut value, &ret, &params);
+                        human.push_str(&format!(
+                            "\nadded {node_type} entry {entry_id} to return {}",
+                            ret.id
+                        ));
+                    }
+                    _ => {
+                        value["added"] = json!({"returnId": return_id,
+                                                "entryId": Value::Null,
+                                                "node_type": Value::Null,
+                                                "reason": format!(
+                                                    "extraction produced no node (status: {status}); \
+                                                     nothing was added")});
+                        human.push_str("\n--add-to: nothing added (extraction produced no node)");
+                    }
+                }
+            }
             Ok(Out::ok(value, human))
         }
     }
@@ -3925,7 +4952,10 @@ fn run(cli: &Cli) -> CResult<Out> {
             | ReturnAction::Validate { .. }
             | ReturnAction::SetIdentity { .. }
             | ReturnAction::SetState { .. }
+            | ReturnAction::UnsetState { .. }
             | ReturnAction::SetNra { .. }
+            | ReturnAction::UnsetNra { .. }
+            | ReturnAction::Status { .. }
             | ReturnAction::SetOtherIncome { .. }
             | ReturnAction::List
             | ReturnAction::Export { .. } => {
@@ -3939,9 +4969,18 @@ fn run(cli: &Cli) -> CResult<Out> {
             FormAction::Add { .. } => cmd_form_ref(cli, action),
         },
         Commands::Doc { action } => match action {
-            DocAction::Classify { file } => cmd_doc(DocAction::Classify { file: file.clone() }),
-            DocAction::Extract { file } => cmd_doc(DocAction::Extract { file: file.clone() }),
+            DocAction::Classify { file } => {
+                cmd_doc(cli, DocAction::Classify { file: file.clone() })
+            }
+            DocAction::Extract { file, add_to } => cmd_doc(
+                cli,
+                DocAction::Extract {
+                    file: file.clone(),
+                    add_to: add_to.clone(),
+                },
+            ),
         },
+        Commands::Forms { action } => cmd_forms(action),
         Commands::Pdf { action } => match action {
             PdfAction::Inspect { file } => cmd_pdf(PdfAction::Inspect { file: file.clone() }),
             PdfAction::Fill {
@@ -3998,30 +5037,64 @@ fn cmd_return_ref(cli: &Cli, action: &ReturnAction) -> CResult<Out> {
                 r#return: r#return.clone(),
             },
         ),
-        ReturnAction::SetIdentity { r#return, file } => cmd_return(
+        ReturnAction::SetIdentity {
+            r#return,
+            file,
+            data,
+        } => cmd_return(
             cli,
             ReturnAction::SetIdentity {
                 r#return: r#return.clone(),
                 file: file.clone(),
+                data: data.clone(),
             },
         ),
         ReturnAction::SetState {
             r#return,
             state,
             file,
+            data,
         } => cmd_return(
             cli,
             ReturnAction::SetState {
                 r#return: r#return.clone(),
                 state: state.clone(),
                 file: file.clone(),
+                data: data.clone(),
             },
         ),
-        ReturnAction::SetNra { r#return, file } => cmd_return(
+        ReturnAction::UnsetState { r#return } => cmd_return(
+            cli,
+            ReturnAction::UnsetState {
+                r#return: r#return.clone(),
+            },
+        ),
+        ReturnAction::SetNra {
+            r#return,
+            file,
+            data,
+        } => cmd_return(
             cli,
             ReturnAction::SetNra {
                 r#return: r#return.clone(),
                 file: file.clone(),
+                data: data.clone(),
+            },
+        ),
+        ReturnAction::UnsetNra { r#return } => cmd_return(
+            cli,
+            ReturnAction::UnsetNra {
+                r#return: r#return.clone(),
+            },
+        ),
+        ReturnAction::Status {
+            r#return,
+            forms_dir,
+        } => cmd_return(
+            cli,
+            ReturnAction::Status {
+                r#return: r#return.clone(),
+                forms_dir: forms_dir.clone(),
             },
         ),
         ReturnAction::SetOtherIncome {
@@ -4328,6 +5401,340 @@ mod tests {
             .expect("reload")
             .other_income
             .is_none());
+        let _ = std::fs::remove_dir_all(&store);
+    }
+
+    // ----- UX-1: payload sources, forms fetch, flow status, unset -----
+
+    fn ux_w2_entry() -> StoredEntry {
+        StoredEntry {
+            entry_id: "w2_01".to_string(),
+            node_type: "w2".to_string(),
+            data: json!({"employer_ein": "12-3456789",
+                         "wages": "5000000",
+                         "federal_withholding": "400000"}),
+        }
+    }
+
+    fn ux_bare_return(id: &str) -> StoredReturn {
+        StoredReturn {
+            id: id.to_string(),
+            year: 2025,
+            status: "single".to_string(),
+            entries: Vec::new(),
+            other_income: None,
+            taxpayer: None,
+            state: None,
+            nra: None,
+        }
+    }
+
+    #[test]
+    fn payload_sources_conflict_dash_and_equivalence() {
+        let file = Some(PathBuf::from("payload.json"));
+        let dash = Some(PathBuf::from("-"));
+        let data = Some("{}".to_string());
+        // --file + --data together is a conflict, never a silent winner.
+        assert_eq!(
+            payload_source(&file, &data, true).unwrap_err().code,
+            "invalid_input"
+        );
+        assert_eq!(
+            payload_source(&None, &data, false).unwrap(),
+            PayloadSource::Data("{}".to_string())
+        );
+        // --file - is stdin.
+        assert_eq!(
+            payload_source(&dash, &None, false).unwrap(),
+            PayloadSource::Stdin
+        );
+        assert_eq!(
+            payload_source(&file, &None, false).unwrap(),
+            PayloadSource::File(PathBuf::from("payload.json"))
+        );
+        // Neither flag: form add keeps its implicit stdin; the set-*
+        // commands require exactly one source.
+        assert_eq!(
+            payload_source(&None, &None, true).unwrap(),
+            PayloadSource::Stdin
+        );
+        assert_eq!(
+            payload_source(&None, &None, false).unwrap_err().code,
+            "invalid_input"
+        );
+        // --file and --data read back the identical payload.
+        let dir = std::env::temp_dir().join(format!("opentax-payload-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("identity.json");
+        let text = r#"{"first_name":"Spike","ssn":"123-45-6789"}"#;
+        std::fs::write(&path, text).unwrap();
+        let from_file = read_payload(&PayloadSource::File(path)).unwrap();
+        let from_data = read_payload(&PayloadSource::Data(text.to_string())).unwrap();
+        assert_eq!(from_file, from_data);
+        let parsed_file: TaxpayerIdentity = serde_json::from_str(&from_file).unwrap();
+        let parsed_data: TaxpayerIdentity = serde_json::from_str(&from_data).unwrap();
+        assert_eq!(
+            parsed_file.normalized().unwrap().person.ssn,
+            parsed_data.normalized().unwrap().person.ssn
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fetch_templates_verifies_skips_present_and_never_keeps_bad_files() {
+        let good = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tax-doc/tests/fixtures/w2-acroform.pdf"
+        ))
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("opentax-fetch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // One template pre-placed and valid: reported present, and
+        // the downloader must never be called for it.
+        std::fs::write(dir.join("f1040.pdf"), &good).unwrap();
+        let calls = std::cell::RefCell::new(Vec::new());
+        let download = |url: &str| -> Result<Vec<u8>, String> {
+            calls.borrow_mut().push(url.to_string());
+            if url.ends_with("f1040sd.pdf") {
+                Ok(good.clone())
+            } else if url.ends_with("f8949.pdf") {
+                Ok(b"not a pdf at all".to_vec())
+            } else {
+                Err("network down (stub)".to_string())
+            }
+        };
+        let (results, summary) = fetch_templates(&dir, &download).unwrap();
+        let status_of = |name: &str| {
+            results
+                .iter()
+                .find(|r| r["file"] == name)
+                .unwrap_or_else(|| panic!("no result for {name}"))["status"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(status_of("f1040.pdf"), "present");
+        assert_eq!(status_of("f1040sd.pdf"), "fetched");
+        assert_eq!(status_of("f8949.pdf"), "failed");
+        assert_eq!(status_of("f540.pdf"), "failed");
+        assert_eq!(summary["fetched"], 1);
+        assert_eq!(summary["already_present_verified"], 1);
+        assert_eq!(summary["failed"], 12);
+        // A download that fails verification is NOT left in place,
+        // and the fetched file verifies.
+        assert!(!dir.join("f8949.pdf").exists());
+        assert!(verify_template_file(&dir.join("f1040sd.pdf")).is_ok());
+        assert!(
+            !calls.borrow().iter().any(|u| u.ends_with("/f1040.pdf")),
+            "pre-placed verified template was re-downloaded"
+        );
+        // Re-running is idempotent: the fetched file is now present.
+        let (_, summary2) = fetch_templates(&dir, &download).unwrap();
+        assert_eq!(summary2["already_present_verified"], 2);
+        assert_eq!(summary2["fetched"], 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_add_to_adds_the_node_in_one_step() {
+        let store =
+            std::env::temp_dir().join(format!("opentax-extract-add-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let ret = ux_bare_return("r2025-600-6");
+        save_return(&store, &ret).unwrap();
+        let cli = Cli {
+            output: OutputMode::Json,
+            store: store.clone(),
+            skills_dir: PathBuf::from("skills"),
+            command: Commands::Doctor,
+        };
+        let w2 = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tax-doc/tests/fixtures/w2-grid.pdf"
+        ));
+        let out = cmd_doc(
+            &cli,
+            DocAction::Extract {
+                file: w2,
+                add_to: Some(ret.id.clone()),
+            },
+        )
+        .unwrap();
+        assert_eq!(out.value["added"]["entryId"], "w2_01");
+        assert_eq!(out.value["added"]["node_type"], "w2");
+        assert!(out.value["next_steps"].is_array());
+        let stored = load_return(&store, &ret.id).unwrap();
+        assert_eq!(stored.entries.len(), 1);
+        assert_eq!(stored.entries[0].node_type, "w2");
+        // needs_ocr produces no node: no add attempted, said plainly.
+        let img = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tax-doc/tests/fixtures/image-only.pdf"
+        ));
+        let out2 = cmd_doc(
+            &cli,
+            DocAction::Extract {
+                file: img,
+                add_to: Some(ret.id.clone()),
+            },
+        )
+        .unwrap();
+        assert_eq!(out2.value["status"], "needs_ocr");
+        assert!(out2.value["added"]["entryId"].is_null());
+        assert!(out2.value["added"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("no node"));
+        assert_eq!(load_return(&store, &ret.id).unwrap().entries.len(), 1);
+        let _ = std::fs::remove_dir_all(&store);
+    }
+
+    #[test]
+    fn flow_status_transitions_and_missing_inputs() {
+        let params = TaxParams::load_2025().unwrap();
+        let forms_dir =
+            std::env::temp_dir().join(format!("opentax-status-forms-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&forms_dir);
+        std::fs::create_dir_all(&forms_dir).unwrap();
+        let mut ret = ux_bare_return("r2025-700-7");
+        ret.status = "married_filing_jointly".to_string();
+
+        // Fresh return: intake, documents is the first next step.
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        assert_eq!(s["form"], "1040");
+        assert_eq!(s["stage"], "intake");
+        assert_eq!(s["next_steps"][0]["id"], "documents");
+
+        // + one W-2 (the audit scenario): documents done; the packet
+        // root causes are other_income (with its command) + identity.
+        ret.entries.push(ux_w2_entry());
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        assert_eq!(s["stage"], "documents");
+        let view = compute_view(&ret, &params).unwrap();
+        assert!(!view.complete);
+        let missing = missing_inputs(&ret, Some(&view));
+        let oi = missing
+            .iter()
+            .find(|m| m["input"] == "other_income")
+            .expect("other_income root cause listed");
+        assert!(oi["command"].as_str().unwrap().contains("set-other-income"));
+        assert!(missing.iter().any(|m| m["input"] == "identity"));
+        assert!(!missing.iter().any(|m| m["input"] == "documents"));
+        // The packet export error carries the same root causes.
+        let out_dir = forms_dir.join("packet-out");
+        let err = match packet_export(&ret, &params, None, Some(&out_dir)) {
+            Ok(_) => panic!("packet export of an incomplete return must fail"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code, "return_incomplete");
+        let extra = err.extra.expect("return_incomplete carries extra");
+        assert!(extra["incomplete_lines"].is_array());
+        assert!(extra["missing_inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["input"] == "other_income"));
+
+        // + recorded totals + identity: complete; templates missing.
+        ret.other_income = Some(OtherIncome {
+            interest: Money::from_cents(0),
+            dividends: Money::from_cents(0),
+        });
+        ret.taxpayer = Some(spike_identity());
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        assert_eq!(s["stage"], "review");
+        let steps = s["steps"].as_array().unwrap();
+        let step = |id: &str| steps.iter().find(|x| x["id"] == id).unwrap().clone();
+        assert_eq!(step("compute")["done"], true);
+        assert_eq!(step("templates")["done"], false);
+        assert_eq!(step("templates")["command"], "tax forms fetch");
+
+        // + the needed templates present: ready, export leads.
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tax-doc/tests/fixtures/w2-acroform.pdf"
+        );
+        for name in needed_templates(&ret, &params) {
+            std::fs::copy(fixture, forms_dir.join(&name)).unwrap();
+        }
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        assert_eq!(s["stage"], "ready");
+        assert_eq!(s["next_steps"][0]["id"], "export_ready");
+        assert!(s["next_steps"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains("--type packet"));
+        let _ = std::fs::remove_dir_all(&forms_dir);
+    }
+
+    #[test]
+    fn unset_state_and_unset_nra_restore_the_never_had_return() {
+        let params = TaxParams::load_2025().unwrap();
+        let store = std::env::temp_dir().join(format!("opentax-unset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let mut bare = ux_bare_return("r2025-800-8");
+        bare.entries.push(ux_w2_entry());
+        bare.other_income = Some(OtherIncome {
+            interest: Money::from_cents(0),
+            dividends: Money::from_cents(0),
+        });
+        save_return(&store, &bare).unwrap();
+        let pristine = serde_json::to_value(&bare).unwrap();
+
+        // --- state: set, verify present, unset, verify identical.
+        let mut with_state = bare.clone();
+        with_state.state =
+            Some(serde_json::from_value(json!({"state": "CA", "residency": "full_year"})).unwrap());
+        save_return(&store, &with_state).unwrap();
+        let view = compute_view(&load_return(&store, &bare.id).unwrap(), &params).unwrap();
+        assert!(
+            view.state.is_some(),
+            "CA block should engage the state section"
+        );
+        let (after, removed) = unset_state(&store, &bare.id).unwrap();
+        assert!(removed.is_some());
+        assert!(after.state.is_none());
+        // `return get` shows no state section...
+        let view = view_json(&compute_view(&after, &params).unwrap());
+        assert!(view.get("state").is_none(), "{view}");
+        // ...and the stored return is byte-identical to never-had.
+        assert_eq!(serde_json::to_value(&after).unwrap(), pristine);
+        // Unsetting again is a successful no-op.
+        let (_, removed) = unset_state(&store, &bare.id).unwrap();
+        assert!(removed.is_none());
+
+        // --- nra: set, verify the NR route engages, unset, resident.
+        let mut with_nra = bare.clone();
+        with_nra.nra = Some(
+            serde_json::from_value(json!({
+                "visa_type": "F-1", "citizenship": "CN",
+                "first_calendar_year_in_status": 2024,
+                "calendar_years_in_status_including_current": 2
+            }))
+            .unwrap(),
+        );
+        save_return(&store, &with_nra).unwrap();
+        let view = compute_view(&load_return(&store, &bare.id).unwrap(), &params).unwrap();
+        assert!(
+            view.nra.is_some(),
+            "nra block should engage the 1040-NR route"
+        );
+        assert_eq!(
+            view_json(&compute_view(&load_return(&store, &bare.id).unwrap(), &params).unwrap())
+                ["form"],
+            "1040-NR"
+        );
+        let (after, removed) = unset_nra(&store, &bare.id).unwrap();
+        assert!(removed.is_some());
+        assert!(after.nra.is_none());
+        let view = compute_view(&after, &params).unwrap();
+        assert!(view.nra.is_none());
+        let view = view_json(&view);
+        assert!(view.get("form").is_none(), "resident form again: {view}");
+        assert_eq!(serde_json::to_value(&after).unwrap(), pristine);
+        let (_, removed) = unset_nra(&store, &bare.id).unwrap();
+        assert!(removed.is_none());
         let _ = std::fs::remove_dir_all(&store);
     }
 }
