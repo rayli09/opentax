@@ -17,6 +17,9 @@ tax-doc = { path = "../tax-doc" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Blocking HTTP for `tax forms fetch` (template downloads). Small,
+# synchronous, rustls-backed; no async runtime in the binary.
+ureq = "3"
 
 [dev-dependencies]
 lopdf = "0.46"
