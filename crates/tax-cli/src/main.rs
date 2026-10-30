@@ -2019,7 +2019,9 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
                 "filing export is unsupported for this return ({}); the only PDF \
                  path is an explicitly marked draft — the full blockers are in the \
                  readiness object of `tax return get`",
-                first_blocker.as_deref().unwrap_or("readiness blockers apply")
+                first_blocker
+                    .as_deref()
+                    .unwrap_or("readiness blockers apply")
             )
         } else {
             format!(
@@ -3170,7 +3172,14 @@ fn unknown_entry_fields(kind: &str, value: &Value) -> Vec<String> {
         .as_object()
         .map(|m| {
             m.keys()
-                .filter(|k| !allowed.contains(&k.as_str()))
+                // A "type" key that merely repeats the entry kind is
+                // the extractor's node discriminator, not entry data;
+                // entries stored before it was stripped at intake are
+                // not "unmodeled" for carrying it.
+                .filter(|k| {
+                    !allowed.contains(&k.as_str())
+                        && !(k.as_str() == "type" && value["type"].as_str() == Some(kind))
+                })
                 .cloned()
                 .collect::<Vec<_>>()
         })
@@ -4808,6 +4817,18 @@ fn node_prefix(node_type: &str) -> Option<&'static str> {
 /// normalized (digits only); the stored JSON is then rewritten from
 /// the typed value so the normalization sticks.
 fn validate_node_payload(node_type: &str, value: Value) -> CResult<Value> {
+    let mut value = value;
+    // The extractor's node envelope carries a "type" discriminator
+    // repeating the node type; it is not entry data. Drop it when it
+    // agrees with the declared type, so an extracted node validates
+    // and stores exactly like a hand-written payload (which names the
+    // type via --node-type instead). A disagreeing "type" stays in
+    // place and is rejected below as an unmodeled field.
+    if value.get("type").and_then(Value::as_str) == Some(node_type) {
+        if let Some(map) = value.as_object_mut() {
+            map.remove("type");
+        }
+    }
     // Unmodeled fields are rejected on every entry-creation path (form
     // add and doc extract --add-to alike): silently dropping a field the
     // engine does not model would understate the return.
@@ -4818,7 +4839,6 @@ fn validate_node_payload(node_type: &str, value: Value) -> CResult<Value> {
             format!("Unmodeled fields: {}", unknown.join(", ")),
         ));
     }
-    let mut value = value;
     match node_type {
         "w2" => {
             let _: W2Input = serde_json::from_value(value.clone()).map_err(json_err)?;
@@ -6273,9 +6293,15 @@ mod tests {
         );
         ret.taxpayer = readiness_fixture().taxpayer;
         save_return(&store, &ret).ok().unwrap();
+        // Merged contract: the readiness gate above runs first; the
+        // forms directory then resolves by default (--forms-dir, else
+        // $OPENTAX_FORMS_DIR, else ./.opentax/forms — populated by
+        // `tax forms fetch`), so a ready packet export with neither
+        // path flag now reports the missing output directory rather
+        // than the pre-UX missing_forms_dir.
         assert_eq!(
             cmd_return(&cli, export("packet")).err().unwrap().code,
-            "missing_forms_dir"
+            "missing_out_dir"
         );
         let existing = store.join("existing.pdf");
         std::fs::write(&existing, b"original synthetic template").unwrap();
@@ -6522,6 +6548,8 @@ mod tests {
             taxpayer: None,
             state: None,
             nra: None,
+            identity_facts_confirmed: false,
+            digital_assets: None,
         }
     }
 
@@ -6747,10 +6775,18 @@ mod tests {
         assert_eq!(step("templates")["command"], "tax forms fetch");
 
         // + the needed templates present + the filing-readiness facts
-        // recorded (explicit identity booleans and the digital-assets
-        // answer): ready, export leads.
+        // recorded (explicit identity booleans, the digital-assets
+        // answer, and a complete mailing address — readiness requires
+        // all three): ready, export leads.
         ret.identity_facts_confirmed = true;
         ret.digital_assets = Some(false);
+        ret.taxpayer.as_mut().unwrap().address = Some(tax_forms::MailingAddress {
+            street: Some("1 Main St".to_string()),
+            apt: None,
+            city: Some("Springfield".to_string()),
+            state: Some("CA".to_string()),
+            zip: Some("94105".to_string()),
+        });
         let fixture = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../tax-doc/tests/fixtures/w2-acroform.pdf"

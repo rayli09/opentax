@@ -45,6 +45,13 @@ tax return export --return <id> --type packet --out-dir packet/
                                                            # 8. filled forms + manifest.json
 ```
 
+Step 8 only succeeds when the return's `readiness` (shown by steps
+6–7) is `ready_for_review` — the simple W-2 case above gets there
+once the identity payload includes the explicit `blind` /
+`can_be_claimed_as_dependent` / `digital_assets` booleans. Otherwise
+the export refuses with `return_not_ready`: work the
+`readiness.blockers`, or take a `--draft` marked copy instead (S5).
+
 Then S5: read `packet/manifest.json` and tell the filer what is
 filled, what is not applicable, and what they complete by hand.
 
@@ -175,7 +182,15 @@ CA: state lines 97/100; NR: 1040-NR lines 34/37).
 
 *Purpose:* produce the paperwork and hand the filing step to the
 filer. **The CLI never files, transmits, signs, or pays.**
-*Entry:* S4 done.
+*Entry:* S4 done. Exports are gated by **filing readiness**: `--type
+pdf` / `packet` / `mef` require the `readiness` object (in `return
+get` / `validate`) to be `ready_for_review`. When readiness is
+`unsupported` — today: CA returns, the NR route, 1099-NEC returns,
+and returns with dependents — no normal export exists; the only PDF
+path is the same export command plus `--draft` (requires
+Ghostscript), producing rasterized pages banner-marked `DRAFT - NOT
+FOR FILING` with a blocker manifest. `--type json` is always
+available as a draft.
 *Commands:* `tax return export --return <id> --type packet --out-dir <dir>`
 (filled forms + `manifest.json`; `--forms-dir` optional — templates
 come from the forms dir fetched in S0). Single-form and data
@@ -200,6 +215,7 @@ Errors arrive as `{"success": false, "error": "<message>", "code":
 | Code | Means | Recovery |
 |---|---|---|
 | `return_incomplete` | a line the step needs is incomplete; extra `incomplete_lines`; on packet export also `missing_inputs`: `[{input, command}]` root causes | run each `missing_inputs[].command`; otherwise find the missing fact via `return status` / `return get` and go back to its stage — never zero-fill |
+| `return_not_ready` | a PDF/packet/MeF export was attempted while `readiness.status` is not `ready_for_review`; extra carries the full `readiness` object | work each `readiness.blockers[]` item at its stage (identity facts → S3, findings → S4); if the status is `unsupported` (CA / NR / NEC / dependents routes), the only PDF path is the same export with `--draft` — a banner-marked review copy, never presentable as filable. JSON export stays available |
 | `missing_template` | a needed blank form PDF is not in the forms dir (also a per-form manifest status) | `tax forms fetch`, then retry |
 | `missing_out` | an export flag is missing (`--out` / `--out-dir`) | re-run with the flag |
 | `nra_state_conflict` | a state block and an nra block on the same return | the routes are mutually exclusive — CA full-year resident + NR is out of scope; remove the wrong block by re-running the correct S1/S3 step |
