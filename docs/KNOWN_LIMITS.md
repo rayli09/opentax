@@ -723,10 +723,22 @@ The student route: an optional `nra` block on the return (set with
   `f1040s2.pdf`, `f1040sc.pdf`, `f1040sse.pdf`, `f10408812.pdf` — the
   IRS publishes Schedule 8812 as `f1040s8.pdf` — and `f1040s1a.pdf`);
   one `f1040sc.pdf` template serves every Schedule C. An incomplete
-  return is refused, like the PDF export. Acceptance:
-  `scripts/packet_acceptance.py` builds the golden returns 002 / 005 /
-  009 / 010 through the CLI, exports packets, and reads the filled
-  fields back with pypdf. Packet scope and simplifications:
+  return is refused, like the PDF export. PDF, packet and MeF CLI exports
+  require `readiness.status = ready_for_review`, including an explicit
+  digital-assets answer. Dependents and
+  the NRA route are currently unsupported for readiness because qualification
+  and required 8843/OI facts are not fully modeled. JSON draft export remains
+  available with blockers. `--draft` on PDF/packet exports makes a rasterized,
+  visibly marked review copy and blocker manifest using installed Ghostscript;
+  it strips XFA only from a temporary source, and preserves the stored return
+  and source template. Numerically incomplete returns still cannot be rendered.
+  Acceptance: `scripts/packet_acceptance.py` reads form fields from normal
+  packets for supported cases, and checks computations and rasterized drafts
+  for unsupported cases. `scripts/renderer_acceptance.py --forms-dir <dir>`
+  separately runs a test-only renderer over synthetic fixtures and restores
+  detailed PDF field and MeF XSD readback below the CLI readiness boundary;
+  it requires pypdf and xmlschema and writes only to a private temporary folder.
+  No production export bypass is provided. Packet scope and simplifications:
   - Schedule D + Form 8949: every stored 1099-B transaction is listed
     on Form 8949. v1 treats all entries as basis-reported (the input
     carries no basis-reported flag): short-term → Form 8949 Part I
@@ -831,13 +843,10 @@ The student route: an optional `nra` block on the return (set with
     records a child without gender. On Form 1040's `DependentDetail`
     the same child is emitted as OTHER (a disclosed lossy mapping;
     STEPCHILD and FOSTER CHILD map exactly in both places).
-  - The schema requires two answers the return does not record:
-    `VirtualCurAcquiredDurTYInd` (digital assets) is emitted `false`
-    — no digital-asset transaction exists anywhere in the return's
-    modeled scope — and Schedule C's accounting-method choice is
-    emitted as cash, matching the engine's cash-shaped Schedule C
-    model (the PDF packet leaves that box blank). Both are disclosed
-    in the export report's validation notes.
+  - The digital-assets indicator uses the explicitly stored answer; it
+    does not establish the tax treatment of any transaction. The schema's
+    Schedule C accounting-method choice remains unmodeled; NEC returns are
+    blocked from normal export and can be generated only as marked drafts.
   - The refund is emitted as a full refund to the filer
     (`OverpaidAmt` = `RefundAmt`): no Form 8888 split and nothing
     applied to next year's estimated tax, matching the engine.

@@ -23,9 +23,8 @@ serde_json = "1"
 # curl) rather than only Mozilla's bundled roots, so downloads also
 # work behind corporate TLS-intercepting proxies.
 ureq = { version = "3", features = ["platform-verifier"] }
-
-[dev-dependencies]
 lopdf = "0.46"
+
 
 [lints]
 workspace = true

@@ -347,6 +347,7 @@ pub fn build_mef(
     params: &TaxParams,
     tax_year: u32,
     generated_at: &str,
+    digital_assets: Option<bool>,
 ) -> Result<MefExport, MefExportError> {
     if tax_year != 2025 {
         return Err(err(
@@ -364,6 +365,12 @@ pub fn build_mef(
              resolve the missing inputs first",
         ));
     }
+    let digital_assets = digital_assets.ok_or_else(|| {
+        err(
+            "digital_assets_answer_missing",
+            "The Form 1040 digital-assets answer must be explicitly recorded.",
+        )
+    })?;
     let identity = input.identity.as_ref().ok_or_else(|| {
         err(
             "identity_required",
@@ -426,11 +433,6 @@ pub fn build_mef(
          convention. The JSON and PDF exports keep cents and are the precise \
          artifacts"
             .to_string(),
-        "IRS1040/VirtualCurAcquiredDurTYInd (the digital-assets question) is required \
-         by the schema on every Form 1040. The return records no answer to it and no \
-         digital-asset transaction exists anywhere in the return's modeled scope, so \
-         it is emitted as false — confirm before any real filing"
-            .to_string(),
     ];
     let mut rounded: Vec<String> = Vec::new();
 
@@ -442,7 +444,13 @@ pub fn build_mef(
     let mut em = Emitter::new("IRS1040");
     let mut body = String::new();
     emit_irs1040(
-        input, computed, params, identity, &mut em, &mut body, &mut notes,
+        input,
+        computed,
+        params,
+        (identity, digital_assets),
+        &mut em,
+        &mut body,
+        &mut notes,
     );
     rounded.append(&mut em.rounded);
     documents.push(("IRS1040".to_string(), body));
@@ -828,11 +836,12 @@ fn emit_irs1040(
     input: &Form1040Input,
     computed: &ComputedReturn,
     params: &TaxParams,
-    identity: &TaxpayerIdentity,
+    identity_and_assets: (&TaxpayerIdentity, bool),
     em: &mut Emitter,
     out: &mut String,
     notes: &mut Vec<String>,
 ) {
+    let (identity, digital_assets) = identity_and_assets;
     let lines = &computed.lines;
     let l = |key: &str| fact(lines, key);
 
@@ -855,11 +864,8 @@ fn emit_irs1040(
             em.text(out, 3, "SpouseNm", &spouse_name);
         }
     }
-    // Required by the schema on every 1040 (the digital-assets
-    // question). The return records no digital-asset answer and no
-    // digital-asset transaction exists anywhere in its modeled
-    // scope; emitted false, disclosed in the export notes.
-    em.boolean(out, 3, "VirtualCurAcquiredDurTYInd", false);
+    // The answer is supplied explicitly; it does not determine income treatment.
+    em.boolean(out, 3, "VirtualCurAcquiredDurTYInd", digital_assets);
 
     // Dependents (the form's Dependents table).
     let mut listed = 0usize;
@@ -1698,7 +1704,7 @@ mod tests {
         // Case-001 shape: single, one W-2 $50,000 / $4,000 withheld.
         let input = base_input();
         let computed = compute_1040(&input, &params());
-        let export = build_mef(&input, &computed, &params(), 2025, TS).unwrap();
+        let export = build_mef(&input, &computed, &params(), 2025, TS, Some(false)).unwrap();
         assert_eq!(export.documents, vec!["IRS1040".to_string()]);
         let xml = &export.xml;
         assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
@@ -1721,11 +1727,23 @@ mod tests {
     }
 
     #[test]
+    fn digital_assets_answer_is_required_and_written_verbatim() {
+        let input = base_input();
+        let computed = compute_1040(&input, &params());
+        let missing = build_mef(&input, &computed, &params(), 2025, TS, None).unwrap_err();
+        assert_eq!(missing.code, "digital_assets_answer_missing");
+        let yes = build_mef(&input, &computed, &params(), 2025, TS, Some(true)).unwrap();
+        assert!(yes
+            .xml
+            .contains("<VirtualCurAcquiredDurTYInd>true</VirtualCurAcquiredDurTYInd>"));
+    }
+
+    #[test]
     fn missing_identity_is_an_error() {
         let mut input = base_input();
         input.identity = None;
         let computed = compute_1040(&input, &params());
-        let e = build_mef(&input, &computed, &params(), 2025, TS).unwrap_err();
+        let e = build_mef(&input, &computed, &params(), 2025, TS, Some(false)).unwrap_err();
         assert_eq!(e.code, "identity_required");
         assert!(e.message.contains("identity required for MeF export"));
     }
@@ -1735,7 +1753,7 @@ mod tests {
         let mut input = base_input();
         input.identity.as_mut().unwrap().person.ssn = None;
         let computed = compute_1040(&input, &params());
-        let e = build_mef(&input, &computed, &params(), 2025, TS).unwrap_err();
+        let e = build_mef(&input, &computed, &params(), 2025, TS, Some(false)).unwrap_err();
         assert_eq!(e.code, "identity_required");
     }
 
@@ -1753,7 +1771,7 @@ mod tests {
             state_withholding: None,
         }];
         let computed = compute_1040(&input, &params());
-        let export = build_mef(&input, &computed, &params(), 2025, TS).unwrap();
+        let export = build_mef(&input, &computed, &params(), 2025, TS, Some(false)).unwrap();
         assert_eq!(
             export.documents,
             vec![
@@ -1794,7 +1812,7 @@ mod tests {
     fn wrong_year_is_an_error() {
         let input = base_input();
         let computed = compute_1040(&input, &params());
-        let e = build_mef(&input, &computed, &params(), 2024, TS).unwrap_err();
+        let e = build_mef(&input, &computed, &params(), 2024, TS, Some(false)).unwrap_err();
         assert_eq!(e.code, "unsupported_tax_year");
     }
 }

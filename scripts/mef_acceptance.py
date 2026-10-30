@@ -1,47 +1,5 @@
 #!/usr/bin/env python3
-"""Acceptance test for `tax return export --type mef`.
-
-Builds stored returns from the golden benchmark inputs (cases 009 and
-005, with a synthetic identity added through `return set-identity` —
-neither case stores one; cases 002 and 010 for Schedule D/8949 and
-Schedule 1-A validation coverage; plus one hand-built stepchild
-scenario that exercises Schedule EIC) through the real CLI, generates
-the MeF XML, and asserts:
-
-- the document is well-formed, with the Return / ReturnHeader /
-  ReturnData structure and a documentCnt that matches the children;
-- IRS1040 carries the engine's values for the key lines (AGI, taxable
-  income, tax, EIC and ACTC for 009; the SE-tax lines for 005 via
-  IRS1040ScheduleSE / IRS1040Schedule2), and the dependents are
-  listed in DependentDetail;
-- the stdout report's honesty contract: status "generated",
-  validation.xsd_validated == false (the binary performs no XSD
-  validation), validation.schema_version == "2025v5.2", the
-  not-transmissible disclosure is present, and NO full SSN appears
-  anywhere in the report (the XML file itself does carry it — it is
-  the filing artifact);
-- the actual validation tier: every emitted form document is
-  validated against the official TY2025v5.2 per-form XSDs vendored
-  under scripts/mef-schemas/2025v5.2/. The per-form schemas include
-  `../../../Common/efileTypes.xsd`; the harness resolves that to the
-  authentic TY2015 Common file vendored under
-  scripts/mef-schemas/common/ (the TY2025 Common file is distributed
-  only through the IRS Secure Object Repository), plus three
-  harness-supplied leaf type definitions (MilesNNType,
-  SpecialConditionTextType, Text2Type) that exist in the TY2025
-  package's Common but not in TY2015's, and that gate no emitted
-  element. The Return/ReturnHeader envelope is NOT XSD-validated
-  (its schemas are not publicly available) — this script asserts the
-  report says exactly that.
-
-Usage:
-    python3 scripts/mef_acceptance.py [--bin PATH]
-
-The `tax` binary defaults to $CARGO_TARGET_DIR/debug/tax, then
-target/debug/tax. Requires the `xmlschema` package (pip install
-xmlschema) — the same hard-requirement pattern packet_acceptance.py
-uses for pypdf.
-"""
+"""MeF acceptance: validate supported normal exports against vendored form schemas and verify unsupported dependent/SE-proxy cases are gated while their calculated values match golden cases. Requires xmlschema."""
 
 import argparse
 import json
@@ -74,6 +32,9 @@ FAILURES = []
 # A synthetic identity for cases that store none (the same shape as
 # golden case 010's). Synthetic data only — never a real person.
 SYNTHETIC_IDENTITY = {
+    "digital_assets": False,
+    "blind": False,
+    "can_be_claimed_as_dependent": False,
     "first_name": "Spike",
     "last_name": "Tester",
     "ssn": "123-45-6789",
@@ -152,6 +113,11 @@ def build_return(bin_path, store, case, add_identity=False):
     if identity is None and add_identity:
         identity = SYNTHETIC_IDENTITY
     if identity is not None:
+        identity.setdefault("digital_assets", False)
+        identity.setdefault("blind", False)
+        identity.setdefault("can_be_claimed_as_dependent", False)
+        if identity.get("spouse"):
+            identity["spouse"].setdefault("blind", False)
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
             json.dump(identity, fh)
             identity_file = fh.name
@@ -458,15 +424,29 @@ def case_005(bin_path, store, tmp, forms_dir):
 
 
 def case_002_and_010_validation(bin_path, store, tmp, forms_dir):
-    print("cases 002/010: Schedule D + 8949, Schedule 1-A (validation coverage)")
-    for case, add_identity in [("002-w2-1099s", True), ("010-senior-phaseout", False)]:
-        rid, _ = build_return(bin_path, store, case, add_identity=add_identity)
-        out_path = os.path.join(tmp, f"mef-{case}.xml")
-        report = export_mef(bin_path, store, rid, out_path)
-        check_report(report, case)
-        root = ET.parse(out_path).getroot()
-        check_envelope(root, report, case)
-        validate_documents(root, forms_dir, case)
+    case = "010-senior-phaseout"
+    rid, _ = build_return(bin_path, store, case, add_identity=True)
+    out = os.path.join(tmp, "mef-010.xml")
+    report = export_mef(bin_path, store, rid, out)
+    check_report(report, case)
+    root = ET.parse(out).getroot()
+    check_envelope(root, report, case)
+    validate_documents(root, forms_dir, case)
+    main = doc_element(root, "IRS1040")
+    check(amount(main, "AdjustedGrossIncomeAmt") == 200000, "010: MeF AGI matches the golden case")
+    check(main.find(q("VirtualCurAcquiredDurTYInd")).text == "false", "010: explicit digital-assets No is emitted")
+    case = "002-w2-1099s"
+    rid, _ = build_return(bin_path, store, case, add_identity=True)
+    view = run_tax(bin_path, store, "return", "get", "--return", rid)
+    with open(os.path.join(CASES, case, "correct.json")) as fh:
+        expected = json.load(fh)["lines"]
+    for line, cents in expected.items():
+        check(view["lines"][line].get("cents") == cents, f"{case}: computed line {line} matches golden value")
+    out = os.path.join(tmp, "blocked-002.xml")
+    proc = subprocess.run([bin_path, "--store", store, "--output", "json", "return", "export", "--return", rid, "--type", "mef", "--out", out], capture_output=True, text=True)
+    failure = json.loads(proc.stderr)
+    check(proc.returncode != 0 and failure["code"] == "return_not_ready", "002: unmodeled broker facts block MeF")
+    check(not os.path.exists(out), "002: no MeF file is written")
 
 
 def case_eic_stepchild(bin_path, store, tmp, forms_dir):
@@ -528,30 +508,13 @@ def case_eic_stepchild(bin_path, store, tmp, forms_dir):
     run_tax(
         bin_path, store, "return", "set-identity", "--return", rid, "--file", identity_file
     )
+    view = run_tax(bin_path, store, "return", "get", "--return", rid)
+    check(view["lines"]["eic_qualifying_children"]["cents"] == 100, "stepchild is counted by the computation")
     out_path = os.path.join(tmp, "mef-eic.xml")
-    report = export_mef(bin_path, store, rid, out_path)
-    check_report(report, "eic-stepchild")
-    check(
-        "IRS1040ScheduleEIC" in report["documents"],
-        f"eic-stepchild: Schedule EIC emitted (got {report['documents']})",
-    )
-    root = ET.parse(out_path).getroot()
-    check_envelope(root, report, "eic-stepchild")
-    eic = doc_element(root, "IRS1040ScheduleEIC")
-    info = eic.find(q("QualifyingChildInformation"))
-    check(
-        info.find(q("ChildRelationshipCd")).text == "STEPCHILD",
-        "eic-stepchild: ChildRelationshipCd == STEPCHILD",
-    )
-    check(
-        info.find(q("ChildBirthYr")).text == "2015",
-        "eic-stepchild: ChildBirthYr == 2015 (2025 - age 10)",
-    )
-    check(
-        info.find(q("MonthsChildLivedWithYouCnt")).text == "12",
-        "eic-stepchild: MonthsChildLivedWithYouCnt == 12",
-    )
-    validate_documents(root, forms_dir, "eic-stepchild")
+    proc = subprocess.run([bin_path, "--store", store, "--output", "json", "return", "export", "--return", rid, "--type", "mef", "--out", out_path], capture_output=True, text=True)
+    failure = json.loads(proc.stderr)
+    check(proc.returncode != 0 and failure["code"] == "return_not_ready", "stepchild MeF is gated because qualification is not fully modeled")
+    check(not os.path.exists(out_path), "stepchild: no MeF file is written")
 
 
 def main():
@@ -572,10 +535,22 @@ def main():
 
     with tempfile.TemporaryDirectory() as tmp:
         forms_dir = build_harness(tmp)
-        case_009(bin_path, os.path.join(tmp, "store"), tmp, forms_dir)
-        case_005(bin_path, os.path.join(tmp, "store"), tmp, forms_dir)
-        case_002_and_010_validation(bin_path, os.path.join(tmp, "store"), tmp, forms_dir)
-        case_eic_stepchild(bin_path, os.path.join(tmp, "store"), tmp, forms_dir)
+        store = os.path.join(tmp, "store")
+        case_002_and_010_validation(bin_path, store, tmp, forms_dir)
+        case_eic_stepchild(bin_path, store, tmp, forms_dir)
+        for case, blocker in [("009-eic-two-kids", "dependent_qualification_not_fully_modeled"), ("005-w2-nec", "nec_ss_wage_proxy")]:
+            rid, _ = build_return(bin_path, store, case, add_identity=True)
+            view = run_tax(bin_path, store, "return", "get", "--return", rid)
+            with open(os.path.join(CASES, case, "correct.json")) as fh:
+                expected = json.load(fh)["lines"]
+            for line, cents in expected.items():
+                check(view["lines"][line].get("cents") == cents, f"{case}: computed line {line} matches golden value")
+            out = os.path.join(tmp, "blocked-" + case + ".xml")
+            proc = subprocess.run([bin_path, "--store", store, "--output", "json", "return", "export", "--return", rid, "--type", "mef", "--out", out], capture_output=True, text=True)
+            failure = json.loads(proc.stderr)
+            check(proc.returncode != 0 and failure["code"] == "return_not_ready", f"{case}: MeF export is gated")
+            check(any(f["code"] == blocker for f in view["readiness"]["blockers"]), f"{case}: specific blocker is reported")
+            check(not os.path.exists(out), f"{case}: no MeF file is written")
 
     if FAILURES:
         print(f"\nmef_acceptance: {len(FAILURES)} FAILURE(S)")
