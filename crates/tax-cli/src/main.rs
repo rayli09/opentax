@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
-use tax_core::{CaParams, FactResult, FilingStatus, Money, TaxParams, TreatyParams};
+use tax_core::{CaParams, FactResult, FilingStatus, Money, TaxParams, TaxTable, TreatyParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::mef::build_mef;
 use tax_forms::packet::{
@@ -4268,11 +4268,13 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                         .iter()
                         .map(|v| {
                             let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
-                            match &v.section {
+                            let mut entry = match &v.section {
                                 Some(section) => json!({"line": Value::Null, "section": section,
                                     "field": v.field, "value": shown}),
                                 None => json!({"line": v.line, "field": v.field, "value": shown}),
-                            }
+                            };
+                            mark_masked(&mut entry, v);
+                            entry
                         })
                         .collect();
                     let skipped: Vec<Value> = plan
@@ -4302,6 +4304,17 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 )),
             }
         }
+    }
+}
+
+/// Mark a fill-report entry whose displayed `value` was masked —
+/// an SSN, where the plan carries a masked `display_value` while
+/// the raw digits went into the PDF — with `"masked": true`, so an
+/// agent can distinguish display masking from the value actually
+/// written into the PDF.
+fn mark_masked(entry: &mut Value, v: &tax_forms::FillValue) {
+    if v.display_value.as_ref().is_some_and(|d| d != &v.value) {
+        entry["masked"] = json!(true);
     }
 }
 
@@ -4516,6 +4529,21 @@ fn form_input(ret: &StoredReturn) -> CResult<Form1040Input> {
 
 /// `return export --type packet`: the full filing packet — the filled
 /// Form 1040 plus every applicable schedule, each filled from its
+/// A filled form's manifest notes: the plan/form notes first, then
+/// the backend fill report's warnings. Those warnings (the XFA and
+/// comb-field notices) used to reach the export's stdout only, but
+/// the manifest is the artifact an agent reads back — so they are
+/// recorded there too. Exact duplicates are dropped, order kept.
+fn notes_with_fill_warnings(notes: &[String], warnings: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = notes.to_vec();
+    for w in warnings {
+        if !out.contains(w) {
+            out.push(w.clone());
+        }
+    }
+    out
+}
+
 /// geometrically verified field map, plus a `manifest.json` in the
 /// output directory reporting every form as filled / not_applicable /
 /// missing_template. A form whose inputs exist but whose template is
@@ -4644,7 +4672,9 @@ fn packet_export(
                 .iter()
                 .map(|v| {
                     let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
-                    json!({"line": v.line, "field": v.field, "value": shown})
+                    let mut entry = json!({"line": v.line, "field": v.field, "value": shown});
+                    mark_masked(&mut entry, v);
+                    entry
                 })
                 .collect();
             let skipped: Vec<Value> = plan
@@ -4654,7 +4684,7 @@ fn packet_export(
                 .collect();
             record(
                 json!({"form": "f1040", "label": "Form 1040", "status": "filled",
-                        "file": "f1040.pdf", "notes": plan.warnings}),
+                        "file": "f1040.pdf", "notes": notes_with_fill_warnings(&plan.warnings, &report.warnings)}),
                 json!({"form": "f1040", "status": "filled", "file": "f1040.pdf",
                         "backend": report.backend, "filled": filled, "skipped": skipped,
                         "warnings": report.warnings}),
@@ -4731,12 +4761,14 @@ fn packet_export(
             .iter()
             .map(|v| {
                 let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
-                json!({"line": v.line, "field": v.field, "value": shown})
+                let mut entry = json!({"line": v.line, "field": v.field, "value": shown});
+                mark_masked(&mut entry, v);
+                entry
             })
             .collect();
         record(
             json!({"form": form.form, "label": form.label, "status": "filled",
-                    "file": form.file_name, "notes": form.notes}),
+                    "file": form.file_name, "notes": notes_with_fill_warnings(&form.notes, &report.warnings)}),
             json!({"form": form.form, "status": "filled", "file": form.file_name,
                     "backend": report.backend, "filled": filled,
                     "warnings": report.warnings}),
@@ -4846,11 +4878,13 @@ fn nr_pdf_export(
         .iter()
         .map(|v| {
             let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
-            match &v.section {
+            let mut entry = match &v.section {
                 Some(section) => json!({"line": Value::Null, "section": section,
                     "field": v.field, "value": shown}),
                 None => json!({"line": v.line, "field": v.field, "value": shown}),
-            }
+            };
+            mark_masked(&mut entry, v);
+            entry
         })
         .collect();
     Ok(Out::ok(
@@ -4955,12 +4989,14 @@ fn packet_export_nr(
             .iter()
             .map(|v| {
                 let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
-                json!({"line": v.line, "field": v.field, "value": shown})
+                let mut entry = json!({"line": v.line, "field": v.field, "value": shown});
+                mark_masked(&mut entry, v);
+                entry
             })
             .collect();
         record(
             json!({"form": form.form, "label": form.label, "status": "filled",
-                    "file": form.file_name, "notes": form.notes}),
+                    "file": form.file_name, "notes": notes_with_fill_warnings(&form.notes, &report.warnings)}),
             json!({"form": form.form, "status": "filled", "file": form.file_name,
                     "backend": report.backend, "filled": filled,
                     "warnings": report.warnings}),
@@ -5421,6 +5457,19 @@ fn cmd_pdf(action: PdfAction) -> CResult<Out> {
     }
 }
 
+/// The citation for Form 1040 line 16. When the tax came from the
+/// Tax Table, cite the table's own source — the extracted
+/// `params/2025-tax-table.json` data and its i1040tt provenance —
+/// not the entire TY2025 parameter-source bundle `params.source`
+/// describes. Other methods (QDCG worksheet, Tax Computation
+/// Worksheet) keep the bundle citation.
+fn line16_citation(method: Option<&str>, params: &TaxParams) -> String {
+    match method {
+        Some("tax_table") => TaxTable::load_2025().source.clone(),
+        _ => params.source.clone(),
+    }
+}
+
 /// How line 16 was figured, for `tax explain --line 16`.
 fn line16_derivation(method: Option<&str>) -> String {
     match method {
@@ -5788,7 +5837,7 @@ fn cmd_explain(
         "senior_bonus" => ("the Schedule 1-A line 37 enhanced deduction for seniors: the per-person amount of Schedule 1-A line 35 ($6,000 minus 6% of the modified AGI over the filing-status threshold, floored at zero) times the number of eligible people (lines 36a/36b — valid SSN stored and born before January 2, 1961; spouse only on a joint return); equal to line 13b in v1 (internal key)".to_string(), "Schedule 1-A (Form 1040) TY2025, Part V, lines 31-37 (internal key)".to_string()),
         "14" => ("total deductions: line 12 plus line 13b (printed form: lines 12e + 13a + 13b; line 13a, the qualified business income deduction from Form 8995/8995-A, is not computed in v1)".to_string(), "Form 1040, line 14".to_string()),
         "15" => ("line 11 minus line 14 (total deductions: the line 12 standard deduction plus line 13b additional deductions), floored at zero".to_string(), "Form 1040, line 15".to_string()),
-        "16" => (line16_derivation(view.line16_method.as_deref()), params.source.clone()),
+        "16" => (line16_derivation(view.line16_method.as_deref()), line16_citation(view.line16_method.as_deref(), params)),
         "23" => ("self-employment tax from Schedule SE, via Schedule 2 line 4: 12.4% Social Security on net SE earnings (internal key schedse_net_earnings) up to the wage-base room left after W-2 wages, plus 2.9% Medicare on all net SE earnings; rates and wage base from params/2025.json".to_string(), "Form 1040, line 23; Schedule SE; IRC 1401".to_string()),
         "schedse_net_earnings" => ("Schedule SE line 4a: Schedule C net profit times 92.35%; zero when the net is a loss".to_string(), "Schedule SE, line 4a; IRC 1402(a) (internal key)".to_string()),
         "sched2_se_tax" => ("the Schedule SE tax as it enters Schedule 2 line 4; equal to line 23".to_string(), "Schedule 2, line 4 (internal key)".to_string()),
@@ -5871,10 +5920,20 @@ fn run(cli: &Cli) -> CResult<Out> {
                         json!({"input": name, "schema": v}),
                         serde_json::to_string_pretty(v).map_err(json_err)?,
                     )),
-                    None => Err(CliErr::new(
-                        "unknown_input",
-                        format!("no input named '{name}'"),
-                    )),
+                    None => {
+                        let mut names: Vec<&str> = full["inputs"]
+                            .as_object()
+                            .map(|m| m.keys().map(String::as_str).collect())
+                            .unwrap_or_default();
+                        names.sort();
+                        Err(CliErr::new(
+                            "invalid_input",
+                            format!(
+                                "unknown input '{name}'; available inputs: {}",
+                                names.join(", ")
+                            ),
+                        ))
+                    }
                 }
             } else {
                 let human = serde_json::to_string_pretty(&full).map_err(json_err)?;
