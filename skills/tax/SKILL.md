@@ -117,8 +117,9 @@ enter. `partial` → transcribe only the missing fields by hand.
 `needs_ocr` / `unrecognized` → vision fallback (tax-ingest step 5);
 if the type is still unsure, stop for that document — do not guess.
 *Done when:* every document on the S1 inventory has an entry (or a
-documented stop), and `tax return validate` shows no finding about a
-missing entry.
+documented stop) — the inventory is yours to check; the CLI knows a
+return is empty (`return_empty`) but cannot know a document is
+missing.
 
 ### S3 — Identity & options (details: tax-intake)
 
