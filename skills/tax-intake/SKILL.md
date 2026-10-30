@@ -88,15 +88,21 @@ Each dependent becomes one `dependent` entry in S3
 ## S3 — identity facts (every return)
 
 Collect and store with `tax return set-identity --return <id>`
-(`--data` / `--file` payload; shape: `tax schema`): first/last
-name, SSN (dashed or 9 digits), date of birth, occupation, mailing
-address (street, apt, city, state, ZIP), and whether the taxpayer
-is blind; for mfj/mfs also the spouse's same facts. Also ask
-whether someone can claim the taxpayer as a dependent
+(`--data` / `--file` payload; shape: `tax schema TaxpayerIdentity`):
+first/last name, SSN (dashed or 9 digits), date of birth,
+occupation, mailing address (street, apt, city, state, ZIP), and
+three explicit yes/no answers — **filing readiness refuses export
+until all three are recorded**, so collect them here, not at the
+export step: whether the taxpayer is blind (`blind`); whether
+someone can claim the taxpayer as a dependent
 (`can_be_claimed_as_dependent` — it fills the form's checkbox; the
-dependent-filer deduction limit itself is not computed in v1).
-Identity is stored locally only and every CLI output shows SSNs
-masked; say so once, plainly.
+dependent-filer deduction limit itself is not computed in v1);
+and the Form 1040 digital-assets question (`digital_assets` —
+ask it as printed on the form; the recorded answer is a fact of
+its own and does not by itself determine any income treatment).
+For mfj/mfs also collect the spouse's same facts. Identity is
+stored locally only and every CLI output shows SSNs masked; say
+so once, plainly.
 
 Facts hiding inside the date of birth — ask explicitly ("were you
 (or your spouse) born before January 2, 1961, or blind?"):
