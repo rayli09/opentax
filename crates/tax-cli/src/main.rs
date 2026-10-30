@@ -450,6 +450,19 @@ struct StoredEntry {
     data: Value,
 }
 
+/// The review marker `return validate` records on a return: the
+/// input fingerprint the validation ran against, whether it was
+/// valid, and how many error-severity findings it reported. The
+/// flow status's `review` step counts as done only while the
+/// stored fingerprint still matches the return's current inputs —
+/// any later input mutation quietly invalidates the marker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewMarker {
+    fingerprint: String,
+    valid: bool,
+    error_findings: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredReturn {
     id: String,
@@ -480,6 +493,11 @@ struct StoredReturn {
     /// instead of Form 1040.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nra: Option<NraBlock>,
+    /// Review marker left by the most recent `return validate`
+    /// run. Optional: returns stored before the marker existed
+    /// load unchanged (and simply have no review recorded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review: Option<ReviewMarker>,
 }
 
 fn return_path(store: &Path, id: &str) -> PathBuf {
@@ -504,6 +522,74 @@ fn load_return(store: &Path, id: &str) -> CResult<StoredReturn> {
         )
     })?;
     serde_json::from_str(&text).map_err(json_err)
+}
+
+/// Canonical JSON text for a value: object keys sorted
+/// recursively, so the byte representation never depends on map
+/// insertion order. Used only for input fingerprinting.
+fn canonical_json(value: &Value) -> String {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut out = String::from("{");
+            for (i, key) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(
+                    &serde_json::to_string(key).expect("a JSON object key serializes"),
+                );
+                out.push(':');
+                out.push_str(&canonical_json(&map[*key]));
+            }
+            out.push('}');
+            out
+        }
+        Value::Array(items) => {
+            let mut out = String::from("[");
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&canonical_json(item));
+            }
+            out.push(']');
+            out
+        }
+        other => serde_json::to_string(other).expect("a JSON value serializes"),
+    }
+}
+
+/// A stable fingerprint of everything stored on the return that
+/// feeds the computation or the filing readiness — the entries,
+/// the direct interest/dividend totals, the identity block and its
+/// confirmed facts, the digital-assets answer, and the state / nra
+/// blocks (i.e. the serialized return minus the review marker
+/// itself). FNV-1a (64-bit) over the canonical JSON: deliberately
+/// not cryptographic — it only needs to change when an input
+/// changes, which is what invalidates a stale review marker.
+fn inputs_fingerprint(ret: &StoredReturn) -> String {
+    let mut inputs = serde_json::to_value(ret).expect("a stored return serializes");
+    if let Some(map) = inputs.as_object_mut() {
+        map.remove("review");
+    }
+    let text = canonical_json(&inputs);
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Whether the stored review marker still certifies the return's
+/// current inputs: a validation ran, it was valid with no error
+/// findings, and no input has changed since.
+fn review_current(ret: &StoredReturn) -> bool {
+    ret.review.as_ref().is_some_and(|m| {
+        m.valid && m.error_findings == 0 && m.fingerprint == inputs_fingerprint(ret)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -3400,6 +3486,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 digital_assets: None,
                 state: None,
                 nra: None,
+                review: None,
             };
             save_return(&cli.store, &ret)?;
             let mut value = json!({"returnId": ret.id, "year": ret.year, "status": ret.status});
@@ -5908,6 +5995,7 @@ mod tests {
                     .cloned()
                     .map(|v| serde_json::from_value(v).unwrap()),
                 nra,
+                review: None,
             };
             let out = root.join(case);
             let result = packet_export(&ret, &params, Some(&templates), Some(&out))
@@ -6341,6 +6429,7 @@ mod tests {
             digital_assets: None,
             state: None,
             nra: None,
+            review: None,
         };
         let params = TaxParams::load_2025().unwrap();
         let result = readiness(&ret, &params).ok().expect("readiness");
@@ -6382,6 +6471,7 @@ mod tests {
             digital_assets: Some(false),
             state: None,
             nra: None,
+            review: None,
         };
         let partial = StoredReturn {
             id: "r2025-200-2".to_string(),
@@ -6394,6 +6484,7 @@ mod tests {
             digital_assets: None,
             state: None,
             nra: None,
+            review: None,
         };
         assert!(save_return(&store, &complete).is_ok());
         assert!(save_return(&store, &partial).is_ok());
@@ -6430,6 +6521,7 @@ mod tests {
             digital_assets: None,
             state: None,
             nra: None,
+            review: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         // Before: the direct amounts are unrecorded, so the view stays
@@ -6482,6 +6574,7 @@ mod tests {
             digital_assets: None,
             state: None,
             nra: None,
+            review: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         let (_, replaced) = set_other_income(&store, &ret.id, 10_000, 20_000)
@@ -6514,6 +6607,7 @@ mod tests {
             digital_assets: None,
             state: None,
             nra: None,
+            review: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         let err = set_other_income(&store, &ret.id, -1, 0).unwrap_err();
