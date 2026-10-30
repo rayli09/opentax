@@ -6177,6 +6177,7 @@ mod tests {
             digital_assets: Some(false),
             state: None,
             nra: None,
+            review: None,
         }
     }
 
@@ -6646,6 +6647,7 @@ mod tests {
             nra: None,
             identity_facts_confirmed: false,
             digital_assets: None,
+            review: None,
         }
     }
 
