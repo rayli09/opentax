@@ -368,6 +368,7 @@ enum SkillsAction {
 // Errors and output
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 struct CliErr {
     code: String,
     message: String,
@@ -638,8 +639,24 @@ fn verify_template_file(path: &Path) -> Result<usize, String> {
 /// Download one URL to memory (blocking; ureq + rustls). The
 /// production downloader for `tax forms fetch`; tests inject their
 /// own closure instead of touching the network.
+///
+/// The agent verifies TLS against the PLATFORM trust store (the
+/// ureq platform-verifier feature) rather than only Mozilla's
+/// bundled roots, and honors the standard http_proxy/https_proxy
+/// environment variables — the same behavior as curl, so downloads
+/// work on ordinary machines and behind corporate TLS-intercepting
+/// proxies alike.
 fn http_get(url: &str) -> Result<Vec<u8>, String> {
-    let mut resp = ureq::get(url)
+    let tls = ureq::tls::TlsConfig::builder()
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
+    let config = ureq::Agent::config_builder()
+        .tls_config(tls)
+        .proxy(ureq::Proxy::try_from_env())
+        .build();
+    let agent = ureq::Agent::new_with_config(config);
+    let mut resp = agent
+        .get(url)
         .header(
             "User-Agent",
             concat!(
@@ -717,7 +734,8 @@ fn fetch_templates(
             }
         }
     }
-    let summary = json!({"fetched": fetched, "already_present_verified": present, "failed": failed});
+    let summary =
+        json!({"fetched": fetched, "already_present_verified": present, "failed": failed});
     Ok((results, summary))
 }
 
@@ -1565,14 +1583,7 @@ fn view_json(view: &ComputedView) -> Value {
 
 /// Node types that carry income documents (a `dependent` entry is
 /// information, not a document).
-const INCOME_NODE_TYPES: &[&str] = &[
-    "w2",
-    "1099-int",
-    "1099-div",
-    "1099-b",
-    "1099-nec",
-    "1042-s",
-];
+const INCOME_NODE_TYPES: &[&str] = &["w2", "1099-int", "1099-div", "1099-b", "1099-nec", "1042-s"];
 
 fn income_entries(ret: &StoredReturn) -> Vec<&StoredEntry> {
     ret.entries
@@ -1615,8 +1626,7 @@ fn missing_inputs(ret: &StoredReturn, view: Option<&ComputedView>) -> Vec<Value>
                     // The recovery for a transcription box is the
                     // finding's own guidance (which box, and to
                     // record "0" when the form reports none).
-                    let guidance =
-                        f.message.split_whitespace().collect::<Vec<_>>().join(" ");
+                    let guidance = f.message.split_whitespace().collect::<Vec<_>>().join(" ");
                     out.push(json!({"input": format!("{entry}.{field}"),
                         "command": guidance}));
                 }
@@ -1719,9 +1729,9 @@ fn flow_step(
 /// The single checklist behind `return status` and every
 /// `next_steps` array: steps in flow order, each with the exact
 /// command that completes it, the stage the return is in, and the
-/// next 1-3 undone steps (required steps first, then optional ones;
-/// when everything is done, the export step itself, whose command is
-/// the export invocation).
+/// next 1-3 steps (undone required steps first; when the return is
+/// export-ready, the export step itself, whose command is the export
+/// invocation, ahead of any undone optional steps).
 fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -> Value {
     let id = &ret.id;
     let view = compute_view(ret, params).ok();
@@ -1746,10 +1756,16 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         if docs.is_empty() {
             "no income documents recorded yet".to_string()
         } else {
-            format!("{} income document(s) recorded: {}", docs.len(), counts.join(", "))
+            format!(
+                "{} income document(s) recorded: {}",
+                docs.len(),
+                counts.join(", ")
+            )
         },
         if docs.is_empty() {
-            Some(format!("tax doc extract --file <document.pdf> --add-to {id}"))
+            Some(format!(
+                "tax doc extract --file <document.pdf> --add-to {id}"
+            ))
         } else {
             None
         },
@@ -1819,7 +1835,9 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
                 .to_string()
         },
         if ret.taxpayer.is_none() {
-            Some(format!("tax return set-identity --return {id} --file identity.json"))
+            Some(format!(
+                "tax return set-identity --return {id} --file identity.json"
+            ))
         } else {
             None
         },
@@ -1917,9 +1935,7 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         if complete {
             None
         } else {
-            Some(
-                first_fix.unwrap_or_else(|| format!("tax return get --return {id}")),
-            )
+            Some(first_fix.unwrap_or_else(|| format!("tax return get --return {id}")))
         },
         false,
     );
@@ -2003,16 +2019,18 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         .filter(|s| !step_done(s) && !step_optional(s))
         .cloned()
         .collect();
+    if export_ready {
+        // Every required step is done: the next step is the export
+        // itself (its command is the export invocation), ahead of
+        // any optional step.
+        next_steps.push(steps.last().expect("export_ready step").clone());
+    }
     next_steps.extend(
         steps
             .iter()
             .filter(|s| !step_done(s) && step_optional(s))
             .cloned(),
     );
-    if next_steps.is_empty() {
-        // Everything is done: the next step is the export itself.
-        next_steps.push(steps.last().expect("export_ready step").clone());
-    }
     next_steps.truncate(3);
     json!({
         "returnId": ret.id,
@@ -3231,8 +3249,12 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 }
                 None => {
                     value["removed"] = Value::Null;
-                    value["note"] = json!("no state selection was stored on this return — nothing to remove");
-                    format!("return {} has no state selection stored — nothing removed", ret.id)
+                    value["note"] =
+                        json!("no state selection was stored on this return — nothing to remove");
+                    format!(
+                        "return {} has no state selection stored — nothing removed",
+                        ret.id
+                    )
                 }
             };
             attach_next_steps(&mut value, &ret, &params);
@@ -3327,8 +3349,12 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 }
                 None => {
                     value["removed"] = Value::Null;
-                    value["note"] = json!("no nra block was stored on this return — nothing to remove");
-                    format!("return {} has no nra block stored — nothing removed", ret.id)
+                    value["note"] =
+                        json!("no nra block was stored on this return — nothing to remove");
+                    format!(
+                        "return {} has no nra block stored — nothing removed",
+                        ret.id
+                    )
                 }
             };
             attach_next_steps(&mut value, &ret, &params);
@@ -3347,9 +3373,9 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                     steps
                         .iter()
                         .filter_map(|s| {
-                            s["command"].as_str().map(|c| {
-                                format!("  {}: {}", s["id"].as_str().unwrap_or(""), c)
-                            })
+                            s["command"]
+                                .as_str()
+                                .map(|c| format!("  {}: {}", s["id"].as_str().unwrap_or(""), c))
                         })
                         .collect::<Vec<_>>()
                         .join("\n")
@@ -4222,7 +4248,12 @@ fn validate_node_payload(node_type: &str, value: Value) -> CResult<Value> {
 /// its type; returns the new entry id.
 fn append_entry(ret: &mut StoredReturn, node_type: &str, data: Value) -> String {
     let prefix = node_prefix(node_type).expect("validated node type");
-    let n = ret.entries.iter().filter(|e| e.node_type == node_type).count() + 1;
+    let n = ret
+        .entries
+        .iter()
+        .filter(|e| e.node_type == node_type)
+        .count()
+        + 1;
     let entry_id = format!("{prefix}_{n:02}");
     ret.entries.push(StoredEntry {
         entry_id: entry_id.clone(),
@@ -4350,9 +4381,7 @@ fn cmd_doc(cli: &Cli, action: DocAction) -> CResult<Out> {
                                                 "reason": format!(
                                                     "extraction produced no node (status: {status}); \
                                                      nothing was added")});
-                        human.push_str(
-                            "\n--add-to: nothing added (extraction produced no node)",
-                        );
+                        human.push_str("\n--add-to: nothing added (extraction produced no node)");
                     }
                 }
             }
@@ -5372,6 +5401,340 @@ mod tests {
             .expect("reload")
             .other_income
             .is_none());
+        let _ = std::fs::remove_dir_all(&store);
+    }
+
+    // ----- UX-1: payload sources, forms fetch, flow status, unset -----
+
+    fn ux_w2_entry() -> StoredEntry {
+        StoredEntry {
+            entry_id: "w2_01".to_string(),
+            node_type: "w2".to_string(),
+            data: json!({"employer_ein": "12-3456789",
+                         "wages": "5000000",
+                         "federal_withholding": "400000"}),
+        }
+    }
+
+    fn ux_bare_return(id: &str) -> StoredReturn {
+        StoredReturn {
+            id: id.to_string(),
+            year: 2025,
+            status: "single".to_string(),
+            entries: Vec::new(),
+            other_income: None,
+            taxpayer: None,
+            state: None,
+            nra: None,
+        }
+    }
+
+    #[test]
+    fn payload_sources_conflict_dash_and_equivalence() {
+        let file = Some(PathBuf::from("payload.json"));
+        let dash = Some(PathBuf::from("-"));
+        let data = Some("{}".to_string());
+        // --file + --data together is a conflict, never a silent winner.
+        assert_eq!(
+            payload_source(&file, &data, true).unwrap_err().code,
+            "invalid_input"
+        );
+        assert_eq!(
+            payload_source(&None, &data, false).unwrap(),
+            PayloadSource::Data("{}".to_string())
+        );
+        // --file - is stdin.
+        assert_eq!(
+            payload_source(&dash, &None, false).unwrap(),
+            PayloadSource::Stdin
+        );
+        assert_eq!(
+            payload_source(&file, &None, false).unwrap(),
+            PayloadSource::File(PathBuf::from("payload.json"))
+        );
+        // Neither flag: form add keeps its implicit stdin; the set-*
+        // commands require exactly one source.
+        assert_eq!(
+            payload_source(&None, &None, true).unwrap(),
+            PayloadSource::Stdin
+        );
+        assert_eq!(
+            payload_source(&None, &None, false).unwrap_err().code,
+            "invalid_input"
+        );
+        // --file and --data read back the identical payload.
+        let dir = std::env::temp_dir().join(format!("opentax-payload-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("identity.json");
+        let text = r#"{"first_name":"Spike","ssn":"123-45-6789"}"#;
+        std::fs::write(&path, text).unwrap();
+        let from_file = read_payload(&PayloadSource::File(path)).unwrap();
+        let from_data = read_payload(&PayloadSource::Data(text.to_string())).unwrap();
+        assert_eq!(from_file, from_data);
+        let parsed_file: TaxpayerIdentity = serde_json::from_str(&from_file).unwrap();
+        let parsed_data: TaxpayerIdentity = serde_json::from_str(&from_data).unwrap();
+        assert_eq!(
+            parsed_file.normalized().unwrap().person.ssn,
+            parsed_data.normalized().unwrap().person.ssn
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fetch_templates_verifies_skips_present_and_never_keeps_bad_files() {
+        let good = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tax-doc/tests/fixtures/w2-acroform.pdf"
+        ))
+        .unwrap();
+        let dir = std::env::temp_dir().join(format!("opentax-fetch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // One template pre-placed and valid: reported present, and
+        // the downloader must never be called for it.
+        std::fs::write(dir.join("f1040.pdf"), &good).unwrap();
+        let calls = std::cell::RefCell::new(Vec::new());
+        let download = |url: &str| -> Result<Vec<u8>, String> {
+            calls.borrow_mut().push(url.to_string());
+            if url.ends_with("f1040sd.pdf") {
+                Ok(good.clone())
+            } else if url.ends_with("f8949.pdf") {
+                Ok(b"not a pdf at all".to_vec())
+            } else {
+                Err("network down (stub)".to_string())
+            }
+        };
+        let (results, summary) = fetch_templates(&dir, &download).unwrap();
+        let status_of = |name: &str| {
+            results
+                .iter()
+                .find(|r| r["file"] == name)
+                .unwrap_or_else(|| panic!("no result for {name}"))["status"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(status_of("f1040.pdf"), "present");
+        assert_eq!(status_of("f1040sd.pdf"), "fetched");
+        assert_eq!(status_of("f8949.pdf"), "failed");
+        assert_eq!(status_of("f540.pdf"), "failed");
+        assert_eq!(summary["fetched"], 1);
+        assert_eq!(summary["already_present_verified"], 1);
+        assert_eq!(summary["failed"], 12);
+        // A download that fails verification is NOT left in place,
+        // and the fetched file verifies.
+        assert!(!dir.join("f8949.pdf").exists());
+        assert!(verify_template_file(&dir.join("f1040sd.pdf")).is_ok());
+        assert!(
+            !calls.borrow().iter().any(|u| u.ends_with("/f1040.pdf")),
+            "pre-placed verified template was re-downloaded"
+        );
+        // Re-running is idempotent: the fetched file is now present.
+        let (_, summary2) = fetch_templates(&dir, &download).unwrap();
+        assert_eq!(summary2["already_present_verified"], 2);
+        assert_eq!(summary2["fetched"], 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn extract_add_to_adds_the_node_in_one_step() {
+        let store =
+            std::env::temp_dir().join(format!("opentax-extract-add-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let ret = ux_bare_return("r2025-600-6");
+        save_return(&store, &ret).unwrap();
+        let cli = Cli {
+            output: OutputMode::Json,
+            store: store.clone(),
+            skills_dir: PathBuf::from("skills"),
+            command: Commands::Doctor,
+        };
+        let w2 = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tax-doc/tests/fixtures/w2-grid.pdf"
+        ));
+        let out = cmd_doc(
+            &cli,
+            DocAction::Extract {
+                file: w2,
+                add_to: Some(ret.id.clone()),
+            },
+        )
+        .unwrap();
+        assert_eq!(out.value["added"]["entryId"], "w2_01");
+        assert_eq!(out.value["added"]["node_type"], "w2");
+        assert!(out.value["next_steps"].is_array());
+        let stored = load_return(&store, &ret.id).unwrap();
+        assert_eq!(stored.entries.len(), 1);
+        assert_eq!(stored.entries[0].node_type, "w2");
+        // needs_ocr produces no node: no add attempted, said plainly.
+        let img = PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tax-doc/tests/fixtures/image-only.pdf"
+        ));
+        let out2 = cmd_doc(
+            &cli,
+            DocAction::Extract {
+                file: img,
+                add_to: Some(ret.id.clone()),
+            },
+        )
+        .unwrap();
+        assert_eq!(out2.value["status"], "needs_ocr");
+        assert!(out2.value["added"]["entryId"].is_null());
+        assert!(out2.value["added"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("no node"));
+        assert_eq!(load_return(&store, &ret.id).unwrap().entries.len(), 1);
+        let _ = std::fs::remove_dir_all(&store);
+    }
+
+    #[test]
+    fn flow_status_transitions_and_missing_inputs() {
+        let params = TaxParams::load_2025().unwrap();
+        let forms_dir =
+            std::env::temp_dir().join(format!("opentax-status-forms-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&forms_dir);
+        std::fs::create_dir_all(&forms_dir).unwrap();
+        let mut ret = ux_bare_return("r2025-700-7");
+        ret.status = "married_filing_jointly".to_string();
+
+        // Fresh return: intake, documents is the first next step.
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        assert_eq!(s["form"], "1040");
+        assert_eq!(s["stage"], "intake");
+        assert_eq!(s["next_steps"][0]["id"], "documents");
+
+        // + one W-2 (the audit scenario): documents done; the packet
+        // root causes are other_income (with its command) + identity.
+        ret.entries.push(ux_w2_entry());
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        assert_eq!(s["stage"], "documents");
+        let view = compute_view(&ret, &params).unwrap();
+        assert!(!view.complete);
+        let missing = missing_inputs(&ret, Some(&view));
+        let oi = missing
+            .iter()
+            .find(|m| m["input"] == "other_income")
+            .expect("other_income root cause listed");
+        assert!(oi["command"].as_str().unwrap().contains("set-other-income"));
+        assert!(missing.iter().any(|m| m["input"] == "identity"));
+        assert!(!missing.iter().any(|m| m["input"] == "documents"));
+        // The packet export error carries the same root causes.
+        let out_dir = forms_dir.join("packet-out");
+        let err = match packet_export(&ret, &params, None, Some(&out_dir)) {
+            Ok(_) => panic!("packet export of an incomplete return must fail"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code, "return_incomplete");
+        let extra = err.extra.expect("return_incomplete carries extra");
+        assert!(extra["incomplete_lines"].is_array());
+        assert!(extra["missing_inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["input"] == "other_income"));
+
+        // + recorded totals + identity: complete; templates missing.
+        ret.other_income = Some(OtherIncome {
+            interest: Money::from_cents(0),
+            dividends: Money::from_cents(0),
+        });
+        ret.taxpayer = Some(spike_identity());
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        assert_eq!(s["stage"], "review");
+        let steps = s["steps"].as_array().unwrap();
+        let step = |id: &str| steps.iter().find(|x| x["id"] == id).unwrap().clone();
+        assert_eq!(step("compute")["done"], true);
+        assert_eq!(step("templates")["done"], false);
+        assert_eq!(step("templates")["command"], "tax forms fetch");
+
+        // + the needed templates present: ready, export leads.
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tax-doc/tests/fixtures/w2-acroform.pdf"
+        );
+        for name in needed_templates(&ret, &params) {
+            std::fs::copy(fixture, forms_dir.join(&name)).unwrap();
+        }
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        assert_eq!(s["stage"], "ready");
+        assert_eq!(s["next_steps"][0]["id"], "export_ready");
+        assert!(s["next_steps"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains("--type packet"));
+        let _ = std::fs::remove_dir_all(&forms_dir);
+    }
+
+    #[test]
+    fn unset_state_and_unset_nra_restore_the_never_had_return() {
+        let params = TaxParams::load_2025().unwrap();
+        let store = std::env::temp_dir().join(format!("opentax-unset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let mut bare = ux_bare_return("r2025-800-8");
+        bare.entries.push(ux_w2_entry());
+        bare.other_income = Some(OtherIncome {
+            interest: Money::from_cents(0),
+            dividends: Money::from_cents(0),
+        });
+        save_return(&store, &bare).unwrap();
+        let pristine = serde_json::to_value(&bare).unwrap();
+
+        // --- state: set, verify present, unset, verify identical.
+        let mut with_state = bare.clone();
+        with_state.state =
+            Some(serde_json::from_value(json!({"state": "CA", "residency": "full_year"})).unwrap());
+        save_return(&store, &with_state).unwrap();
+        let view = compute_view(&load_return(&store, &bare.id).unwrap(), &params).unwrap();
+        assert!(
+            view.state.is_some(),
+            "CA block should engage the state section"
+        );
+        let (after, removed) = unset_state(&store, &bare.id).unwrap();
+        assert!(removed.is_some());
+        assert!(after.state.is_none());
+        // `return get` shows no state section...
+        let view = view_json(&compute_view(&after, &params).unwrap());
+        assert!(view.get("state").is_none(), "{view}");
+        // ...and the stored return is byte-identical to never-had.
+        assert_eq!(serde_json::to_value(&after).unwrap(), pristine);
+        // Unsetting again is a successful no-op.
+        let (_, removed) = unset_state(&store, &bare.id).unwrap();
+        assert!(removed.is_none());
+
+        // --- nra: set, verify the NR route engages, unset, resident.
+        let mut with_nra = bare.clone();
+        with_nra.nra = Some(
+            serde_json::from_value(json!({
+                "visa_type": "F-1", "citizenship": "CN",
+                "first_calendar_year_in_status": 2024,
+                "calendar_years_in_status_including_current": 2
+            }))
+            .unwrap(),
+        );
+        save_return(&store, &with_nra).unwrap();
+        let view = compute_view(&load_return(&store, &bare.id).unwrap(), &params).unwrap();
+        assert!(
+            view.nra.is_some(),
+            "nra block should engage the 1040-NR route"
+        );
+        assert_eq!(
+            view_json(&compute_view(&load_return(&store, &bare.id).unwrap(), &params).unwrap())
+                ["form"],
+            "1040-NR"
+        );
+        let (after, removed) = unset_nra(&store, &bare.id).unwrap();
+        assert!(removed.is_some());
+        assert!(after.nra.is_none());
+        let view = compute_view(&after, &params).unwrap();
+        assert!(view.nra.is_none());
+        let view = view_json(&view);
+        assert!(view.get("form").is_none(), "resident form again: {view}");
+        assert_eq!(serde_json::to_value(&after).unwrap(), pristine);
+        let (_, removed) = unset_nra(&store, &bare.id).unwrap();
+        assert!(removed.is_none());
         let _ = std::fs::remove_dir_all(&store);
     }
 }
