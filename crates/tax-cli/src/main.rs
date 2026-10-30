@@ -1708,7 +1708,7 @@ fn missing_inputs(ret: &StoredReturn, view: Option<&ComputedView>) -> Vec<Value>
     }
     if ret.taxpayer.is_none() {
         out.push(json!({"input": "identity",
-            "command": format!("tax return set-identity --return {id} --file identity.json")}));
+            "command": format!("tax return set-identity --return {id} --data '<json>'")}));
     }
     if let Some(view) = view {
         if let Some(sv) = &view.state {
@@ -1933,7 +1933,7 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         },
         if ret.taxpayer.is_none() {
             Some(format!(
-                "tax return set-identity --return {id} --file identity.json"
+                "tax return set-identity --return {id} --data '<json>'"
             ))
         } else {
             None
@@ -1995,12 +1995,10 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         flow_step(
             "state",
             false,
-            "no state return selected (optional; v1 computes the California \
-             Form 540 for full-year residents)"
+            "not recorded — skip unless the filer needs a state return \
+             (only CA is supported)"
                 .to_string(),
-            Some(format!(
-                "tax return set-state --return {id} --state CA --file state.json"
-            )),
+            None,
             true,
         )
     };
@@ -2033,6 +2031,45 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
             None
         } else {
             Some(first_fix.unwrap_or_else(|| format!("tax return get --return {id}")))
+        },
+        false,
+    );
+
+    // The S4 review step: a `return validate` run recorded against
+    // exactly the current inputs, valid with no error findings.
+    // Export-readiness must never be reported before this exists —
+    // completeness + templates + filing readiness alone used to
+    // declare the return "ready" before anyone validated it.
+    let review_done = review_current(ret);
+    let review_step = flow_step(
+        "review",
+        review_done,
+        if review_done {
+            "validated against the current inputs with no error findings \
+             (`tax return validate`) — the S4 review step is recorded"
+                .to_string()
+        } else if let Some(marker) = &ret.review {
+            if marker.fingerprint != inputs_fingerprint(ret) {
+                "inputs changed since the last validation — re-run \
+                 `tax return validate` so the review covers the current \
+                 return"
+                    .to_string()
+            } else {
+                format!(
+                    "the last validation reported {} error finding(s) — fix \
+                     them and re-run `tax return validate`",
+                    marker.error_findings
+                )
+            }
+        } else {
+            "not validated yet — S4 requires `tax return validate` with \
+             no error findings against the final inputs before export"
+                .to_string()
+        },
+        if review_done {
+            None
+        } else {
+            Some(format!("tax return validate --return {id}"))
         },
         false,
     );
@@ -2088,18 +2125,27 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
     });
     let filing_ready = readiness_status.as_deref() == Some("ready_for_review");
     let readiness_unsupported = readiness_status.as_deref() == Some("unsupported");
-    let export_ready = complete && templates_done && filing_ready;
+    // Export-ready means the WHOLE process gate: complete, templates
+    // present, filing readiness ready_for_review, AND the S4 review
+    // step recorded against the current inputs.
+    let export_ready = complete && templates_done && filing_ready && review_done;
     let export_step = flow_step(
         "export_ready",
         export_ready,
         if export_ready {
-            "complete, templates present, and filing readiness is ready_for_review — \
-             the packet can be exported"
+            "complete, templates present, filing readiness is ready_for_review, \
+             and the review step is recorded — the packet can be exported"
                 .to_string()
         } else if !complete {
             "not ready: the return is incomplete".to_string()
         } else if !templates_done {
             "not ready: form templates are missing".to_string()
+        } else if filing_ready && !review_done {
+            "the export gate is otherwise satisfied (complete, templates \
+             present, filing readiness ready_for_review) but review is \
+             outstanding: run `tax return validate` and review the computed \
+             lines with the filer before exporting"
+                .to_string()
         } else if readiness_unsupported {
             format!(
                 "filing export is unsupported for this return ({}); the only PDF \
@@ -2135,6 +2181,7 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         route_step,
         state_step,
         compute_step,
+        review_step,
         templates_step,
         export_step,
     ];
@@ -2162,12 +2209,34 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         // any optional step.
         next_steps.push(steps.last().expect("export_ready step").clone());
     }
-    next_steps.extend(
-        steps
-            .iter()
-            .filter(|s| !step_done(s) && step_optional(s))
-            .cloned(),
-    );
+    next_steps.extend(steps.iter().filter(|s| {
+        !step_done(s) && step_optional(s)
+            // An unrecorded state selection is never a next step:
+            // the status must not prescribe a state return the
+            // filer has not asked for.
+            && !(s["id"] == "state" && ret.state.is_none())
+    }).cloned());
+    // A next step whose command is borrowed from missing_inputs[0]
+    // (the compute step carries the first root cause's command)
+    // must be labeled with that input's own id, not "compute": its
+    // detail names the missing input first, with the
+    // undetermined-line count as secondary detail. Dedupe by id
+    // afterwards — the input's own step may already be listed with
+    // the same command.
+    if let Some(first) = missing.first() {
+        let input_id = first["input"].as_str().unwrap_or("");
+        if !input_id.is_empty() {
+            for step in next_steps.iter_mut() {
+                if step["id"] == "compute" {
+                    let detail = step["detail"].as_str().unwrap_or("").to_string();
+                    step["id"] = json!(input_id);
+                    step["detail"] = json!(format!("missing input: {input_id} — {detail}"));
+                }
+            }
+            let mut seen = std::collections::HashSet::new();
+            next_steps.retain(|s| seen.insert(s["id"].as_str().unwrap_or("").to_string()));
+        }
+    }
     next_steps.truncate(3);
     json!({
         "returnId": ret.id,
@@ -2185,6 +2254,131 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
 fn attach_next_steps(value: &mut Value, ret: &StoredReturn, params: &TaxParams) {
     let status = build_flow_status(ret, params, &resolve_forms_dir(None));
     value["next_steps"] = status["next_steps"].clone();
+}
+
+/// The `next_steps` a `return validate` run reports — where the
+/// agent goes from THIS validation outcome (distinct from the flow
+/// status's checklist steps): valid + filing-ready leads to the
+/// packet export; valid but readiness-blocked leads to the
+/// blockers' recovery (the explicitly marked draft export for an
+/// unsupported return; the recording command for a missing input);
+/// invalid leads back to the missing inputs — or, when inputs are
+/// not the gap, to the findings themselves.
+fn validate_next_steps(
+    ret: &StoredReturn,
+    params: &TaxParams,
+    valid: bool,
+    readiness: &Value,
+) -> Vec<Value> {
+    let id = &ret.id;
+    let rstatus = readiness["status"].as_str().unwrap_or("");
+    if valid && rstatus == "ready_for_review" {
+        return vec![flow_step(
+            "export_ready",
+            true,
+            "validated clean and filing readiness is ready_for_review — \
+             the packet can be exported"
+                .to_string(),
+            Some(format!(
+                "tax return export --return {id} --type packet --out-dir <dir>"
+            )),
+            false,
+        )];
+    }
+    if !valid {
+        let view = compute_view(ret, params).ok();
+        let missing = missing_inputs(ret, view.as_ref());
+        if !missing.is_empty() {
+            return missing
+                .iter()
+                .take(3)
+                .map(|m| {
+                    let input = m["input"].as_str().unwrap_or("input");
+                    flow_step(
+                        input,
+                        false,
+                        format!(
+                            "missing input: {input} — record it, then re-run \
+                             `tax return validate`"
+                        ),
+                        m["command"].as_str().map(str::to_string),
+                        false,
+                    )
+                })
+                .collect();
+        }
+        return vec![flow_step(
+            "review",
+            false,
+            "validation reported error findings that are not missing \
+             inputs — inspect the findings, correct the stored entries, \
+             and re-run `tax return validate`"
+                .to_string(),
+            Some(format!("tax return validate --return {id}")),
+            false,
+        )];
+    }
+    // Valid, but readiness blocks the normal export.
+    if rstatus == "unsupported" {
+        let first = readiness["blockers"]
+            .as_array()
+            .and_then(|b| b.first())
+            .and_then(|b| b["message"].as_str().map(str::to_string))
+            .unwrap_or_else(|| "readiness blockers apply".to_string());
+        return vec![flow_step(
+            "export_ready",
+            false,
+            format!(
+                "filing export is unsupported for this return ({first}); the \
+                 only PDF path is an explicitly marked draft"
+            ),
+            Some(format!(
+                "tax return export --return {id} --type packet --out-dir <dir> --draft"
+            )),
+            false,
+        )];
+    }
+    let mut steps: Vec<Value> = Vec::new();
+    if let Some(blockers) = readiness["blockers"].as_array() {
+        for b in blockers.iter().take(3) {
+            let code = b["code"].as_str().unwrap_or("");
+            let message = b["message"].as_str().unwrap_or("");
+            let (step_id, command) = match code {
+                "digital_assets_answer_missing"
+                | "identity_boolean_facts_missing"
+                | "identity_incomplete" => (
+                    "identity",
+                    format!("tax return set-identity --return {id} --data '<json>'"),
+                ),
+                "computed_lines_incomplete" => {
+                    let view = compute_view(ret, params).ok();
+                    let cmd = missing_inputs(ret, view.as_ref())
+                        .first()
+                        .and_then(|m| m["command"].as_str().map(str::to_string))
+                        .unwrap_or_else(|| format!("tax return get --return {id}"));
+                    ("compute", cmd)
+                }
+                _ => ("readiness", format!("tax return get --return {id}")),
+            };
+            steps.push(flow_step(
+                step_id,
+                false,
+                format!("readiness blocker: {message}"),
+                Some(command),
+                false,
+            ));
+        }
+    }
+    if steps.is_empty() {
+        steps.push(flow_step(
+            "readiness",
+            false,
+            "inspect the readiness blockers in `tax return get`".to_string(),
+            Some(format!("tax return get --return {id}")),
+            false,
+        ));
+    }
+    steps
 }
 
 // ---------------------------------------------------------------------------
@@ -3539,18 +3733,32 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             Ok(Out::ok(value, human))
         }
         ReturnAction::Validate { r#return } => {
-            let ret = load_return(&cli.store, &r#return)?;
-            if ret.nra.is_some() {
-                let mut result = validate_nr(&ret, &params)?;
-                result.value["readiness"] = readiness(&ret, &params)?;
-                result.human.push_str(&format!(
-                    "\n{}",
-                    readiness_human(&result.value["readiness"])
-                ));
-                return Ok(result);
-            }
-            let mut result = validate_resident(&ret, &params)?;
+            let mut ret = load_return(&cli.store, &r#return)?;
+            let mut result = if ret.nra.is_some() {
+                validate_nr(&ret, &params)?
+            } else {
+                validate_resident(&ret, &params)?
+            };
+            // Record the review marker: this validation certifies
+            // the inputs exactly as they stand now. Any later input
+            // mutation changes the fingerprint and quietly
+            // invalidates the marker (see the `review` step in
+            // build_flow_status) — the marker is the difference
+            // between "computes and gates clean" and "reviewed".
+            let error_findings = result.value["findings"]
+                .as_array()
+                .map(|fs| fs.iter().filter(|f| f["severity"] == "error").count())
+                .unwrap_or(0);
+            let valid = result.value["valid"].as_bool().unwrap_or(false);
+            ret.review = Some(ReviewMarker {
+                fingerprint: inputs_fingerprint(&ret),
+                valid,
+                error_findings,
+            });
+            save_return(&cli.store, &ret)?;
             result.value["readiness"] = readiness(&ret, &params)?;
+            result.value["next_steps"] =
+                json!(validate_next_steps(&ret, &params, valid, &result.value["readiness"]));
             result.human.push_str(&format!(
                 "\n{}",
                 readiness_human(&result.value["readiness"])
