@@ -4078,8 +4078,10 @@ fn draft_export(
         packet_export(ret, params, Some(&templates), Some(&original))?;
         (vec![name.to_string()], target.clone())
     } else {
-        let forms = forms_dir
-            .ok_or_else(|| CliErr::new("missing_forms_dir", "draft packet requires --forms-dir"))?;
+        // The same forms-directory rule as every other export (see
+        // resolve_forms_dir): an explicit --forms-dir wins, else the
+        // fetched default — the draft path is not a special case.
+        let forms = resolve_forms_dir(forms_dir.map(PathBuf::as_path));
         let target = out_dir
             .ok_or_else(|| CliErr::new("missing_out_dir", "draft packet requires --out-dir"))?;
         if target.exists() {
@@ -4088,7 +4090,7 @@ fn draft_export(
                 "draft packet directory already exists",
             ));
         }
-        packet_export(ret, params, Some(forms), Some(&original))?;
+        packet_export(ret, params, Some(&forms), Some(&original))?;
         let mut names = Vec::new();
         for entry in std::fs::read_dir(&original).map_err(io_err)? {
             let entry = entry.map_err(io_err)?;
