@@ -38,18 +38,22 @@ LLM — wrapped in skills that let any AI agent prepare a return end to end.
 
 ```sh
 cargo build --release            # binary: target/release/tax
-tax selftest                     # 13 golden cases — the trust anchor
+tax selftest                     # the golden cases — the trust anchor
+tax forms fetch                  # all 14 blank IRS/FTB form templates, verified
 
 tax return create --year 2025 --status single
-tax doc extract --file w2.pdf    # born-digital W-2 / 1099-INT / DIV / NEC
-tax form add --return <id> --node-type w2 --file w2.json
-tax return set-identity --return <id> --file identity.json
-tax return set-state --return <id> --state CA --file state.json   # optional
+tax doc extract --file w2.pdf --add-to <id>   # extract + enter in one step
+tax return set-identity --return <id> --data '<identity json>'
+tax return set-other-income --return <id> --interest-cents 0 --dividends-cents 0
 
 tax return get --return <id>     # every line, with completeness
 tax return validate --return <id>
-tax return export --return <id> --type packet --forms-dir <dir> --out-dir <dir>
+tax return export --return <id> --type packet --out-dir packet/
 ```
+
+Agents: `tax return status --return <id>` is the compass — it names
+the next step and its exact command at any point in the flow. The
+full staged process (S0–S5) lives in [`skills/tax`](skills/tax/SKILL.md).
 
 Money is **integer cents as a string** — `"5000000"` is $50,000.00.
 No floats anywhere in the filed path.

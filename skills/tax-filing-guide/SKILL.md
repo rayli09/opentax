@@ -1,9 +1,9 @@
 ---
 name: tax-filing-guide
-description: Filing guidance skill for opentax — the only skill allowed near the filing step. Use to explain filing channels and walk the user to the point where THEY submit. Never handles credentials or transmits anything.
+description: Filing guidance details for opentax stage S5 of THE RETURN PROCESS (skills/tax) — the only skill allowed near the filing step. Use to explain filing channels and walk the user to the point where THEY submit. Never handles credentials or transmits anything.
 ---
 
-# tax-filing-guide — the last mile, user-driven
+# tax-filing-guide — S5 details: the last mile, user-driven
 
 v1 of opentax **does not e-file and does not transmit anything**. MeF
 transmission requires a firm-level EFIN/ETIN, suitability checks, and
@@ -54,10 +54,11 @@ explained honestly and the user still gets a working path to filed.
 ## The paper packet: what you mail, in what order
 
 For the paper channel, the deliverable is the packet export
-(`tax return export --return <id> --type packet --forms-dir <dir>
---out-dir <dir>`; see tax-preparer step 5). Check its `manifest.json`
+(`tax return export --return <id> --type packet --out-dir <dir>`;
+export mechanics in tax-preparer). Check its `manifest.json`
 first: every form must be `filled` or `not_applicable`. A
-`missing_template` entry, a Form 8949 overflow note, or an unchecked
+`missing_template` entry (recovery: `tax forms fetch`, then
+re-export), a Form 8949 overflow note, or an unchecked
 Schedule C line 32 note means the packet is **not yet complete for
 filing** — say so and stop; do not present it as ready to mail.
 
