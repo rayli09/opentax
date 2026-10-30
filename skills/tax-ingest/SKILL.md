@@ -62,6 +62,16 @@ Whichever path: branch on the extract `status` first:
 - `warnings`: copies detected, empty boxes, refused values — read
   them all; they are part of the result, not noise.
 
+**Duplicate-label warnings are usually benign.** A W-2 prints
+several copies of the same form (federal, state, and employee
+copies) in one layout, so extract may warn "multiple copies of
+the <box> label found; extracted the first in reading order."
+When the status is `extracted` and the evidence confidences are
+high, proceed — the copies agree. The extractor's stronger
+variant, "…with DIFFERING values…", is different: if the copies
+disagree, stop and surface both values to the user — never
+silently keep the first copy's figure.
+
 The entry contract is the CLI's: `tax node template --document <type>`
 prints the exact shape `form add` accepts; `tax schema` describes
 the rest. Never build an entry from a remembered shape.

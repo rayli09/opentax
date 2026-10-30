@@ -36,7 +36,7 @@ After S0 setup (below), the whole return is eight commands:
 tax forms fetch                                            # 1. all 14 blank form templates, verified
 tax return create --year 2025 --status single              # 2. → note the returned returnId
 tax doc extract --file w2.pdf --add-to <id>                # 3. extract the W-2 and enter it, one step
-tax return set-identity --return <id> --data '<identity>'  # 4. identity payload — shape: tax schema
+tax return set-identity --return <id> --data '<identity>'  # 4. identity payload — shape: tax schema TaxpayerIdentity
 tax return set-other-income --return <id> --interest-cents 0 --dividends-cents 0
                                                            # 5. record direct interest/dividends (even 0)
 tax return get --return <id>                               # 6. every line, with completeness
@@ -61,7 +61,9 @@ filled, what is not applicable, and what they complete by hand.
 
 *Purpose:* a working, trustworthy CLI before any real data.
 *Entry:* a checkout of the repo.
-*Commands:* `cargo build --release` (binary: `target/release/tax`) ·
+*Commands:* `cargo build --release` (binary: `target/release/tax`;
+a prebuilt `tax` binary already on PATH is an acceptable
+substitute) ·
 `tax doctor` (follow any failing check's `hint` exactly) ·
 `tax forms fetch` (downloads + verifies all 14 IRS/FTB templates
 into the forms dir — default `.opentax/forms`; override with
@@ -200,8 +202,11 @@ artifact, **not** a filing channel).
 *Done when:* you have **read the manifest aloud to the filer**:
 every form `filled` or `not_applicable` (with its reason), every
 `missing_template` treated as a blocker (recovery: `tax forms fetch`),
-and the manifest's hand-complete list (signature, county, fields
-never stored) delivered. Then tax-filing-guide owns the ending —
+and the hand-complete items delivered — the manifest lists them
+when it has them, but on the resident route its list may be
+empty; either way, also deliver the route's assembly notes in
+tax-filing-guide (signature/date, county, fields never stored).
+Then tax-filing-guide owns the ending —
 assembly order, what copies to attach, due dates, and the mailing
 address **for the route**: resident (IRS service center), CA (FTB —
 a separate envelope), NR (Austin / Charlotte; Form 8843 attaches to

@@ -63,6 +63,12 @@ sources and engine output.
   withheld during exempt years and the filer's remedy is a
   refund claim (employer first, then Forms 843/8316), not a
   return edit.
+- **Box 1 vs Boxes 3/5 is expected, not a discrepancy.** Box 1
+  (wages) is routinely *lower* than Box 3 (Social Security
+  wages) and Box 5 (Medicare wages): pre-tax deferrals and
+  deductions (401(k), cafeteria plans) reduce Box 1 but not
+  Boxes 3/5. The rate checks above validate Boxes 3/5, not
+  Box 1 — a Box 1 vs 3/5 gap alone is not a finding to report.
 - **Withholding sanity.** Total federal withholding on the
   return (line 33 via 25d, plus 1042-S withholding on line 25g
   for NR) must trace to the sum of the entered documents' Box 2

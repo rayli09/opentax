@@ -211,4 +211,4 @@ the user's confirmation under step 4 above, as always.
 
 ## Iron rules
 
-The router's six iron rules apply in full; rules 4 and 5 are the job here.
+The router's seven iron rules apply in full; rules 4 and 5 are the job here.
