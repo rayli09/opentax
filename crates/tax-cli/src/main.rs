@@ -537,9 +537,7 @@ fn canonical_json(value: &Value) -> String {
                 if i > 0 {
                     out.push(',');
                 }
-                out.push_str(
-                    &serde_json::to_string(key).expect("a JSON object key serializes"),
-                );
+                out.push_str(&serde_json::to_string(key).expect("a JSON object key serializes"));
                 out.push(':');
                 out.push_str(&canonical_json(&map[*key]));
             }
@@ -2209,13 +2207,18 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         // any optional step.
         next_steps.push(steps.last().expect("export_ready step").clone());
     }
-    next_steps.extend(steps.iter().filter(|s| {
-        !step_done(s) && step_optional(s)
+    next_steps.extend(
+        steps
+            .iter()
+            .filter(|s| {
+                !step_done(s) && step_optional(s)
             // An unrecorded state selection is never a next step:
             // the status must not prescribe a state return the
             // filer has not asked for.
             && !(s["id"] == "state" && ret.state.is_none())
-    }).cloned());
+            })
+            .cloned(),
+    );
     // A next step whose command is borrowed from missing_inputs[0]
     // (the compute step carries the first root cause's command)
     // must be labeled with that input's own id, not "compute": its
@@ -3757,8 +3760,12 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             });
             save_return(&cli.store, &ret)?;
             result.value["readiness"] = readiness(&ret, &params)?;
-            result.value["next_steps"] =
-                json!(validate_next_steps(&ret, &params, valid, &result.value["readiness"]));
+            result.value["next_steps"] = json!(validate_next_steps(
+                &ret,
+                &params,
+                valid,
+                &result.value["readiness"]
+            ));
             result.human.push_str(&format!(
                 "\n{}",
                 readiness_human(&result.value["readiness"])
@@ -7309,7 +7316,10 @@ mod tests {
         assert_eq!(step["id"], "export_ready");
         assert_eq!(step["done"], true);
         let cmd = step["command"].as_str().unwrap();
-        assert!(cmd.contains("--type packet") && !cmd.contains("--draft"), "{cmd}");
+        assert!(
+            cmd.contains("--type packet") && !cmd.contains("--draft"),
+            "{cmd}"
+        );
 
         // Valid but a readiness fact is missing (the digital-assets
         // answer): the blocker's recording command leads.
@@ -7395,7 +7405,10 @@ mod tests {
         let view = compute_view(&ret, &params).unwrap();
         assert!(!view.complete);
         let missing = missing_inputs(&ret, Some(&view));
-        assert_eq!(missing[0]["input"], "w2_01.state_withholding", "{missing:?}");
+        assert_eq!(
+            missing[0]["input"], "w2_01.state_withholding",
+            "{missing:?}"
+        );
         let s = build_flow_status(&ret, &params, &forms_dir);
         let first = &s["next_steps"][0];
         assert_eq!(first["id"], "w2_01.state_withholding", "{s}");
@@ -7462,8 +7475,8 @@ mod tests {
         // spikes fixtures are git-ignored; skip when absent, like
         // the renderer fixtures test): every fill warning in the
         // export detail also lands in the manifest's notes.
-        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../spikes/pdf-fill/fixtures");
+        let fixtures =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../spikes/pdf-fill/fixtures");
         if !fixtures.join("f1040.pdf").exists() {
             return;
         }
@@ -7501,10 +7514,8 @@ mod tests {
             .find(|f| f["value"].as_str().is_some_and(|v| v.contains("***")))
             .expect("an SSN entry reports masked");
         assert_eq!(ssn["masked"], true, "{ssn}");
-        let manifest: Value = serde_json::from_slice(
-            &std::fs::read(out_dir.join("manifest.json")).unwrap(),
-        )
-        .unwrap();
+        let manifest: Value =
+            serde_json::from_slice(&std::fs::read(out_dir.join("manifest.json")).unwrap()).unwrap();
         let notes = manifest["forms"][0]["notes"].as_array().unwrap();
         for w in warnings {
             assert!(
