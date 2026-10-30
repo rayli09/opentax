@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{IsTerminal, Read};
 use std::path::{Path, PathBuf};
-use tax_core::{CaParams, FactResult, FilingStatus, Money, TaxParams, TreatyParams};
+use tax_core::{CaParams, FactResult, FilingStatus, Money, TaxParams, TaxTable, TreatyParams};
 use tax_doc::{LopdfTextExtractor, TextExtractor};
 use tax_forms::mef::build_mef;
 use tax_forms::packet::{
@@ -450,6 +450,19 @@ struct StoredEntry {
     data: Value,
 }
 
+/// The review marker `return validate` records on a return: the
+/// input fingerprint the validation ran against, whether it was
+/// valid, and how many error-severity findings it reported. The
+/// flow status's `review` step counts as done only while the
+/// stored fingerprint still matches the return's current inputs —
+/// any later input mutation quietly invalidates the marker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReviewMarker {
+    fingerprint: String,
+    valid: bool,
+    error_findings: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredReturn {
     id: String,
@@ -480,6 +493,11 @@ struct StoredReturn {
     /// instead of Form 1040.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nra: Option<NraBlock>,
+    /// Review marker left by the most recent `return validate`
+    /// run. Optional: returns stored before the marker existed
+    /// load unchanged (and simply have no review recorded).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review: Option<ReviewMarker>,
 }
 
 fn return_path(store: &Path, id: &str) -> PathBuf {
@@ -504,6 +522,72 @@ fn load_return(store: &Path, id: &str) -> CResult<StoredReturn> {
         )
     })?;
     serde_json::from_str(&text).map_err(json_err)
+}
+
+/// Canonical JSON text for a value: object keys sorted
+/// recursively, so the byte representation never depends on map
+/// insertion order. Used only for input fingerprinting.
+fn canonical_json(value: &Value) -> String {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut out = String::from("{");
+            for (i, key) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(key).expect("a JSON object key serializes"));
+                out.push(':');
+                out.push_str(&canonical_json(&map[*key]));
+            }
+            out.push('}');
+            out
+        }
+        Value::Array(items) => {
+            let mut out = String::from("[");
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&canonical_json(item));
+            }
+            out.push(']');
+            out
+        }
+        other => serde_json::to_string(other).expect("a JSON value serializes"),
+    }
+}
+
+/// A stable fingerprint of everything stored on the return that
+/// feeds the computation or the filing readiness — the entries,
+/// the direct interest/dividend totals, the identity block and its
+/// confirmed facts, the digital-assets answer, and the state / nra
+/// blocks (i.e. the serialized return minus the review marker
+/// itself). FNV-1a (64-bit) over the canonical JSON: deliberately
+/// not cryptographic — it only needs to change when an input
+/// changes, which is what invalidates a stale review marker.
+fn inputs_fingerprint(ret: &StoredReturn) -> String {
+    let mut inputs = serde_json::to_value(ret).expect("a stored return serializes");
+    if let Some(map) = inputs.as_object_mut() {
+        map.remove("review");
+    }
+    let text = canonical_json(&inputs);
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Whether the stored review marker still certifies the return's
+/// current inputs: a validation ran, it was valid with no error
+/// findings, and no input has changed since.
+fn review_current(ret: &StoredReturn) -> bool {
+    ret.review.as_ref().is_some_and(|m| {
+        m.valid && m.error_findings == 0 && m.fingerprint == inputs_fingerprint(ret)
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1622,7 +1706,7 @@ fn missing_inputs(ret: &StoredReturn, view: Option<&ComputedView>) -> Vec<Value>
     }
     if ret.taxpayer.is_none() {
         out.push(json!({"input": "identity",
-            "command": format!("tax return set-identity --return {id} --file identity.json")}));
+            "command": format!("tax return set-identity --return {id} --data '<json>'")}));
     }
     if let Some(view) = view {
         if let Some(sv) = &view.state {
@@ -1847,7 +1931,7 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         },
         if ret.taxpayer.is_none() {
             Some(format!(
-                "tax return set-identity --return {id} --file identity.json"
+                "tax return set-identity --return {id} --data '<json>'"
             ))
         } else {
             None
@@ -1909,12 +1993,10 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         flow_step(
             "state",
             false,
-            "no state return selected (optional; v1 computes the California \
-             Form 540 for full-year residents)"
+            "not recorded — skip unless the filer needs a state return \
+             (only CA is supported)"
                 .to_string(),
-            Some(format!(
-                "tax return set-state --return {id} --state CA --file state.json"
-            )),
+            None,
             true,
         )
     };
@@ -1947,6 +2029,45 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
             None
         } else {
             Some(first_fix.unwrap_or_else(|| format!("tax return get --return {id}")))
+        },
+        false,
+    );
+
+    // The S4 review step: a `return validate` run recorded against
+    // exactly the current inputs, valid with no error findings.
+    // Export-readiness must never be reported before this exists —
+    // completeness + templates + filing readiness alone used to
+    // declare the return "ready" before anyone validated it.
+    let review_done = review_current(ret);
+    let review_step = flow_step(
+        "review",
+        review_done,
+        if review_done {
+            "validated against the current inputs with no error findings \
+             (`tax return validate`) — the S4 review step is recorded"
+                .to_string()
+        } else if let Some(marker) = &ret.review {
+            if marker.fingerprint != inputs_fingerprint(ret) {
+                "inputs changed since the last validation — re-run \
+                 `tax return validate` so the review covers the current \
+                 return"
+                    .to_string()
+            } else {
+                format!(
+                    "the last validation reported {} error finding(s) — fix \
+                     them and re-run `tax return validate`",
+                    marker.error_findings
+                )
+            }
+        } else {
+            "not validated yet — S4 requires `tax return validate` with \
+             no error findings against the final inputs before export"
+                .to_string()
+        },
+        if review_done {
+            None
+        } else {
+            Some(format!("tax return validate --return {id}"))
         },
         false,
     );
@@ -2002,18 +2123,27 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
     });
     let filing_ready = readiness_status.as_deref() == Some("ready_for_review");
     let readiness_unsupported = readiness_status.as_deref() == Some("unsupported");
-    let export_ready = complete && templates_done && filing_ready;
+    // Export-ready means the WHOLE process gate: complete, templates
+    // present, filing readiness ready_for_review, AND the S4 review
+    // step recorded against the current inputs.
+    let export_ready = complete && templates_done && filing_ready && review_done;
     let export_step = flow_step(
         "export_ready",
         export_ready,
         if export_ready {
-            "complete, templates present, and filing readiness is ready_for_review — \
-             the packet can be exported"
+            "complete, templates present, filing readiness is ready_for_review, \
+             and the review step is recorded — the packet can be exported"
                 .to_string()
         } else if !complete {
             "not ready: the return is incomplete".to_string()
         } else if !templates_done {
             "not ready: form templates are missing".to_string()
+        } else if filing_ready && !review_done {
+            "the export gate is otherwise satisfied (complete, templates \
+             present, filing readiness ready_for_review) but review is \
+             outstanding: run `tax return validate` and review the computed \
+             lines with the filer before exporting"
+                .to_string()
         } else if readiness_unsupported {
             format!(
                 "filing export is unsupported for this return ({}); the only PDF \
@@ -2049,6 +2179,7 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
         route_step,
         state_step,
         compute_step,
+        review_step,
         templates_step,
         export_step,
     ];
@@ -2079,9 +2210,36 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
     next_steps.extend(
         steps
             .iter()
-            .filter(|s| !step_done(s) && step_optional(s))
+            .filter(|s| {
+                !step_done(s) && step_optional(s)
+            // An unrecorded state selection is never a next step:
+            // the status must not prescribe a state return the
+            // filer has not asked for.
+            && !(s["id"] == "state" && ret.state.is_none())
+            })
             .cloned(),
     );
+    // A next step whose command is borrowed from missing_inputs[0]
+    // (the compute step carries the first root cause's command)
+    // must be labeled with that input's own id, not "compute": its
+    // detail names the missing input first, with the
+    // undetermined-line count as secondary detail. Dedupe by id
+    // afterwards — the input's own step may already be listed with
+    // the same command.
+    if let Some(first) = missing.first() {
+        let input_id = first["input"].as_str().unwrap_or("");
+        if !input_id.is_empty() {
+            for step in next_steps.iter_mut() {
+                if step["id"] == "compute" {
+                    let detail = step["detail"].as_str().unwrap_or("").to_string();
+                    step["id"] = json!(input_id);
+                    step["detail"] = json!(format!("missing input: {input_id} — {detail}"));
+                }
+            }
+            let mut seen = std::collections::HashSet::new();
+            next_steps.retain(|s| seen.insert(s["id"].as_str().unwrap_or("").to_string()));
+        }
+    }
     next_steps.truncate(3);
     json!({
         "returnId": ret.id,
@@ -2099,6 +2257,131 @@ fn build_flow_status(ret: &StoredReturn, params: &TaxParams, forms_dir: &Path) -
 fn attach_next_steps(value: &mut Value, ret: &StoredReturn, params: &TaxParams) {
     let status = build_flow_status(ret, params, &resolve_forms_dir(None));
     value["next_steps"] = status["next_steps"].clone();
+}
+
+/// The `next_steps` a `return validate` run reports — where the
+/// agent goes from THIS validation outcome (distinct from the flow
+/// status's checklist steps): valid + filing-ready leads to the
+/// packet export; valid but readiness-blocked leads to the
+/// blockers' recovery (the explicitly marked draft export for an
+/// unsupported return; the recording command for a missing input);
+/// invalid leads back to the missing inputs — or, when inputs are
+/// not the gap, to the findings themselves.
+fn validate_next_steps(
+    ret: &StoredReturn,
+    params: &TaxParams,
+    valid: bool,
+    readiness: &Value,
+) -> Vec<Value> {
+    let id = &ret.id;
+    let rstatus = readiness["status"].as_str().unwrap_or("");
+    if valid && rstatus == "ready_for_review" {
+        return vec![flow_step(
+            "export_ready",
+            true,
+            "validated clean and filing readiness is ready_for_review — \
+             the packet can be exported"
+                .to_string(),
+            Some(format!(
+                "tax return export --return {id} --type packet --out-dir <dir>"
+            )),
+            false,
+        )];
+    }
+    if !valid {
+        let view = compute_view(ret, params).ok();
+        let missing = missing_inputs(ret, view.as_ref());
+        if !missing.is_empty() {
+            return missing
+                .iter()
+                .take(3)
+                .map(|m| {
+                    let input = m["input"].as_str().unwrap_or("input");
+                    flow_step(
+                        input,
+                        false,
+                        format!(
+                            "missing input: {input} — record it, then re-run \
+                             `tax return validate`"
+                        ),
+                        m["command"].as_str().map(str::to_string),
+                        false,
+                    )
+                })
+                .collect();
+        }
+        return vec![flow_step(
+            "review",
+            false,
+            "validation reported error findings that are not missing \
+             inputs — inspect the findings, correct the stored entries, \
+             and re-run `tax return validate`"
+                .to_string(),
+            Some(format!("tax return validate --return {id}")),
+            false,
+        )];
+    }
+    // Valid, but readiness blocks the normal export.
+    if rstatus == "unsupported" {
+        let first = readiness["blockers"]
+            .as_array()
+            .and_then(|b| b.first())
+            .and_then(|b| b["message"].as_str().map(str::to_string))
+            .unwrap_or_else(|| "readiness blockers apply".to_string());
+        return vec![flow_step(
+            "export_ready",
+            false,
+            format!(
+                "filing export is unsupported for this return ({first}); the \
+                 only PDF path is an explicitly marked draft"
+            ),
+            Some(format!(
+                "tax return export --return {id} --type packet --out-dir <dir> --draft"
+            )),
+            false,
+        )];
+    }
+    let mut steps: Vec<Value> = Vec::new();
+    if let Some(blockers) = readiness["blockers"].as_array() {
+        for b in blockers.iter().take(3) {
+            let code = b["code"].as_str().unwrap_or("");
+            let message = b["message"].as_str().unwrap_or("");
+            let (step_id, command) = match code {
+                "digital_assets_answer_missing"
+                | "identity_boolean_facts_missing"
+                | "identity_incomplete" => (
+                    "identity",
+                    format!("tax return set-identity --return {id} --data '<json>'"),
+                ),
+                "computed_lines_incomplete" => {
+                    let view = compute_view(ret, params).ok();
+                    let cmd = missing_inputs(ret, view.as_ref())
+                        .first()
+                        .and_then(|m| m["command"].as_str().map(str::to_string))
+                        .unwrap_or_else(|| format!("tax return get --return {id}"));
+                    ("compute", cmd)
+                }
+                _ => ("readiness", format!("tax return get --return {id}")),
+            };
+            steps.push(flow_step(
+                step_id,
+                false,
+                format!("readiness blocker: {message}"),
+                Some(command),
+                false,
+            ));
+        }
+    }
+    if steps.is_empty() {
+        steps.push(flow_step(
+            "readiness",
+            false,
+            "inspect the readiness blockers in `tax return get`".to_string(),
+            Some(format!("tax return get --return {id}")),
+            false,
+        ));
+    }
+    steps
 }
 
 // ---------------------------------------------------------------------------
@@ -3400,6 +3683,7 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 digital_assets: None,
                 state: None,
                 nra: None,
+                review: None,
             };
             save_return(&cli.store, &ret)?;
             let mut value = json!({"returnId": ret.id, "year": ret.year, "status": ret.status});
@@ -3452,18 +3736,36 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
             Ok(Out::ok(value, human))
         }
         ReturnAction::Validate { r#return } => {
-            let ret = load_return(&cli.store, &r#return)?;
-            if ret.nra.is_some() {
-                let mut result = validate_nr(&ret, &params)?;
-                result.value["readiness"] = readiness(&ret, &params)?;
-                result.human.push_str(&format!(
-                    "\n{}",
-                    readiness_human(&result.value["readiness"])
-                ));
-                return Ok(result);
-            }
-            let mut result = validate_resident(&ret, &params)?;
+            let mut ret = load_return(&cli.store, &r#return)?;
+            let mut result = if ret.nra.is_some() {
+                validate_nr(&ret, &params)?
+            } else {
+                validate_resident(&ret, &params)?
+            };
+            // Record the review marker: this validation certifies
+            // the inputs exactly as they stand now. Any later input
+            // mutation changes the fingerprint and quietly
+            // invalidates the marker (see the `review` step in
+            // build_flow_status) — the marker is the difference
+            // between "computes and gates clean" and "reviewed".
+            let error_findings = result.value["findings"]
+                .as_array()
+                .map(|fs| fs.iter().filter(|f| f["severity"] == "error").count())
+                .unwrap_or(0);
+            let valid = result.value["valid"].as_bool().unwrap_or(false);
+            ret.review = Some(ReviewMarker {
+                fingerprint: inputs_fingerprint(&ret),
+                valid,
+                error_findings,
+            });
+            save_return(&cli.store, &ret)?;
             result.value["readiness"] = readiness(&ret, &params)?;
+            result.value["next_steps"] = json!(validate_next_steps(
+                &ret,
+                &params,
+                valid,
+                &result.value["readiness"]
+            ));
             result.human.push_str(&format!(
                 "\n{}",
                 readiness_human(&result.value["readiness"])
@@ -3973,11 +4275,13 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                         .iter()
                         .map(|v| {
                             let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
-                            match &v.section {
+                            let mut entry = match &v.section {
                                 Some(section) => json!({"line": Value::Null, "section": section,
                                     "field": v.field, "value": shown}),
                                 None => json!({"line": v.line, "field": v.field, "value": shown}),
-                            }
+                            };
+                            mark_masked(&mut entry, v);
+                            entry
                         })
                         .collect();
                     let skipped: Vec<Value> = plan
@@ -4007,6 +4311,17 @@ fn cmd_return(cli: &Cli, action: ReturnAction) -> CResult<Out> {
                 )),
             }
         }
+    }
+}
+
+/// Mark a fill-report entry whose displayed `value` was masked —
+/// an SSN, where the plan carries a masked `display_value` while
+/// the raw digits went into the PDF — with `"masked": true`, so an
+/// agent can distinguish display masking from the value actually
+/// written into the PDF.
+fn mark_masked(entry: &mut Value, v: &tax_forms::FillValue) {
+    if v.display_value.as_ref().is_some_and(|d| d != &v.value) {
+        entry["masked"] = json!(true);
     }
 }
 
@@ -4221,6 +4536,21 @@ fn form_input(ret: &StoredReturn) -> CResult<Form1040Input> {
 
 /// `return export --type packet`: the full filing packet — the filled
 /// Form 1040 plus every applicable schedule, each filled from its
+/// A filled form's manifest notes: the plan/form notes first, then
+/// the backend fill report's warnings. Those warnings (the XFA and
+/// comb-field notices) used to reach the export's stdout only, but
+/// the manifest is the artifact an agent reads back — so they are
+/// recorded there too. Exact duplicates are dropped, order kept.
+fn notes_with_fill_warnings(notes: &[String], warnings: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = notes.to_vec();
+    for w in warnings {
+        if !out.contains(w) {
+            out.push(w.clone());
+        }
+    }
+    out
+}
+
 /// geometrically verified field map, plus a `manifest.json` in the
 /// output directory reporting every form as filled / not_applicable /
 /// missing_template. A form whose inputs exist but whose template is
@@ -4349,7 +4679,9 @@ fn packet_export(
                 .iter()
                 .map(|v| {
                     let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
-                    json!({"line": v.line, "field": v.field, "value": shown})
+                    let mut entry = json!({"line": v.line, "field": v.field, "value": shown});
+                    mark_masked(&mut entry, v);
+                    entry
                 })
                 .collect();
             let skipped: Vec<Value> = plan
@@ -4359,7 +4691,7 @@ fn packet_export(
                 .collect();
             record(
                 json!({"form": "f1040", "label": "Form 1040", "status": "filled",
-                        "file": "f1040.pdf", "notes": plan.warnings}),
+                        "file": "f1040.pdf", "notes": notes_with_fill_warnings(&plan.warnings, &report.warnings)}),
                 json!({"form": "f1040", "status": "filled", "file": "f1040.pdf",
                         "backend": report.backend, "filled": filled, "skipped": skipped,
                         "warnings": report.warnings}),
@@ -4436,12 +4768,14 @@ fn packet_export(
             .iter()
             .map(|v| {
                 let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
-                json!({"line": v.line, "field": v.field, "value": shown})
+                let mut entry = json!({"line": v.line, "field": v.field, "value": shown});
+                mark_masked(&mut entry, v);
+                entry
             })
             .collect();
         record(
             json!({"form": form.form, "label": form.label, "status": "filled",
-                    "file": form.file_name, "notes": form.notes}),
+                    "file": form.file_name, "notes": notes_with_fill_warnings(&form.notes, &report.warnings)}),
             json!({"form": form.form, "status": "filled", "file": form.file_name,
                     "backend": report.backend, "filled": filled,
                     "warnings": report.warnings}),
@@ -4551,11 +4885,13 @@ fn nr_pdf_export(
         .iter()
         .map(|v| {
             let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
-            match &v.section {
+            let mut entry = match &v.section {
                 Some(section) => json!({"line": Value::Null, "section": section,
                     "field": v.field, "value": shown}),
                 None => json!({"line": v.line, "field": v.field, "value": shown}),
-            }
+            };
+            mark_masked(&mut entry, v);
+            entry
         })
         .collect();
     Ok(Out::ok(
@@ -4660,12 +4996,14 @@ fn packet_export_nr(
             .iter()
             .map(|v| {
                 let shown = v.display_value.clone().unwrap_or_else(|| v.value.clone());
-                json!({"line": v.line, "field": v.field, "value": shown})
+                let mut entry = json!({"line": v.line, "field": v.field, "value": shown});
+                mark_masked(&mut entry, v);
+                entry
             })
             .collect();
         record(
             json!({"form": form.form, "label": form.label, "status": "filled",
-                    "file": form.file_name, "notes": form.notes}),
+                    "file": form.file_name, "notes": notes_with_fill_warnings(&form.notes, &report.warnings)}),
             json!({"form": form.form, "status": "filled", "file": form.file_name,
                     "backend": report.backend, "filled": filled,
                     "warnings": report.warnings}),
@@ -5126,6 +5464,19 @@ fn cmd_pdf(action: PdfAction) -> CResult<Out> {
     }
 }
 
+/// The citation for Form 1040 line 16. When the tax came from the
+/// Tax Table, cite the table's own source — the extracted
+/// `params/2025-tax-table.json` data and its i1040tt provenance —
+/// not the entire TY2025 parameter-source bundle `params.source`
+/// describes. Other methods (QDCG worksheet, Tax Computation
+/// Worksheet) keep the bundle citation.
+fn line16_citation(method: Option<&str>, params: &TaxParams) -> String {
+    match method {
+        Some("tax_table") => TaxTable::load_2025().source.clone(),
+        _ => params.source.clone(),
+    }
+}
+
 /// How line 16 was figured, for `tax explain --line 16`.
 fn line16_derivation(method: Option<&str>) -> String {
     match method {
@@ -5493,7 +5844,7 @@ fn cmd_explain(
         "senior_bonus" => ("the Schedule 1-A line 37 enhanced deduction for seniors: the per-person amount of Schedule 1-A line 35 ($6,000 minus 6% of the modified AGI over the filing-status threshold, floored at zero) times the number of eligible people (lines 36a/36b — valid SSN stored and born before January 2, 1961; spouse only on a joint return); equal to line 13b in v1 (internal key)".to_string(), "Schedule 1-A (Form 1040) TY2025, Part V, lines 31-37 (internal key)".to_string()),
         "14" => ("total deductions: line 12 plus line 13b (printed form: lines 12e + 13a + 13b; line 13a, the qualified business income deduction from Form 8995/8995-A, is not computed in v1)".to_string(), "Form 1040, line 14".to_string()),
         "15" => ("line 11 minus line 14 (total deductions: the line 12 standard deduction plus line 13b additional deductions), floored at zero".to_string(), "Form 1040, line 15".to_string()),
-        "16" => (line16_derivation(view.line16_method.as_deref()), params.source.clone()),
+        "16" => (line16_derivation(view.line16_method.as_deref()), line16_citation(view.line16_method.as_deref(), &params)),
         "23" => ("self-employment tax from Schedule SE, via Schedule 2 line 4: 12.4% Social Security on net SE earnings (internal key schedse_net_earnings) up to the wage-base room left after W-2 wages, plus 2.9% Medicare on all net SE earnings; rates and wage base from params/2025.json".to_string(), "Form 1040, line 23; Schedule SE; IRC 1401".to_string()),
         "schedse_net_earnings" => ("Schedule SE line 4a: Schedule C net profit times 92.35%; zero when the net is a loss".to_string(), "Schedule SE, line 4a; IRC 1402(a) (internal key)".to_string()),
         "sched2_se_tax" => ("the Schedule SE tax as it enters Schedule 2 line 4; equal to line 23".to_string(), "Schedule 2, line 4 (internal key)".to_string()),
@@ -5576,10 +5927,20 @@ fn run(cli: &Cli) -> CResult<Out> {
                         json!({"input": name, "schema": v}),
                         serde_json::to_string_pretty(v).map_err(json_err)?,
                     )),
-                    None => Err(CliErr::new(
-                        "unknown_input",
-                        format!("no input named '{name}'"),
-                    )),
+                    None => {
+                        let mut names: Vec<&str> = full["inputs"]
+                            .as_object()
+                            .map(|m| m.keys().map(String::as_str).collect())
+                            .unwrap_or_default();
+                        names.sort();
+                        Err(CliErr::new(
+                            "invalid_input",
+                            format!(
+                                "unknown input '{name}'; available inputs: {}",
+                                names.join(", ")
+                            ),
+                        ))
+                    }
                 }
             } else {
                 let human = serde_json::to_string_pretty(&full).map_err(json_err)?;
@@ -5908,6 +6269,7 @@ mod tests {
                     .cloned()
                     .map(|v| serde_json::from_value(v).unwrap()),
                 nra,
+                review: None,
             };
             let out = root.join(case);
             let result = packet_export(&ret, &params, Some(&templates), Some(&out))
@@ -6089,6 +6451,7 @@ mod tests {
             digital_assets: Some(false),
             state: None,
             nra: None,
+            review: None,
         }
     }
 
@@ -6341,6 +6704,7 @@ mod tests {
             digital_assets: None,
             state: None,
             nra: None,
+            review: None,
         };
         let params = TaxParams::load_2025().unwrap();
         let result = readiness(&ret, &params).ok().expect("readiness");
@@ -6382,6 +6746,7 @@ mod tests {
             digital_assets: Some(false),
             state: None,
             nra: None,
+            review: None,
         };
         let partial = StoredReturn {
             id: "r2025-200-2".to_string(),
@@ -6394,6 +6759,7 @@ mod tests {
             digital_assets: None,
             state: None,
             nra: None,
+            review: None,
         };
         assert!(save_return(&store, &complete).is_ok());
         assert!(save_return(&store, &partial).is_ok());
@@ -6430,6 +6796,7 @@ mod tests {
             digital_assets: None,
             state: None,
             nra: None,
+            review: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         // Before: the direct amounts are unrecorded, so the view stays
@@ -6482,6 +6849,7 @@ mod tests {
             digital_assets: None,
             state: None,
             nra: None,
+            review: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         let (_, replaced) = set_other_income(&store, &ret.id, 10_000, 20_000)
@@ -6514,6 +6882,7 @@ mod tests {
             digital_assets: None,
             state: None,
             nra: None,
+            review: None,
         };
         assert!(save_return(&store, &ret).is_ok());
         let err = set_other_income(&store, &ret.id, -1, 0).unwrap_err();
@@ -6552,6 +6921,7 @@ mod tests {
             nra: None,
             identity_facts_confirmed: false,
             digital_assets: None,
+            review: None,
         }
     }
 
@@ -6796,13 +7166,363 @@ mod tests {
         for name in needed_templates(&ret, &params) {
             std::fs::copy(fixture, forms_dir.join(&name)).unwrap();
         }
+        // The ladder changed with the review step: complete +
+        // templates + ready_for_review is NOT "ready" until a
+        // `return validate` run has been recorded against the
+        // current inputs (S4). Before that, the stage is "review"
+        // and the validate command leads the next steps — the
+        // status used to declare export-readiness here, before
+        // anyone had validated or reviewed the return.
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        assert_eq!(s["stage"], "review");
+        let steps = s["steps"].as_array().unwrap();
+        let step = |id: &str| steps.iter().find(|x| x["id"] == id).unwrap().clone();
+        assert_eq!(step("review")["done"], false);
+        assert_eq!(step("export_ready")["done"], false);
+        assert!(step("export_ready")["detail"]
+            .as_str()
+            .unwrap()
+            .contains("review is outstanding"));
+        assert_eq!(s["next_steps"][0]["id"], "review");
+        assert!(s["next_steps"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains("return validate"));
+
+        // Record the review (as `return validate` does): ready,
+        // and the export step leads.
+        ret.review = Some(ReviewMarker {
+            fingerprint: inputs_fingerprint(&ret),
+            valid: true,
+            error_findings: 0,
+        });
         let s = build_flow_status(&ret, &params, &forms_dir);
         assert_eq!(s["stage"], "ready");
+        let steps = s["steps"].as_array().unwrap();
+        let step = |id: &str| steps.iter().find(|x| x["id"] == id).unwrap().clone();
+        assert_eq!(step("review")["done"], true);
+        assert_eq!(step("export_ready")["done"], true);
         assert_eq!(s["next_steps"][0]["id"], "export_ready");
         assert!(s["next_steps"][0]["command"]
             .as_str()
             .unwrap()
             .contains("--type packet"));
+        let _ = std::fs::remove_dir_all(&forms_dir);
+    }
+
+    fn test_cli(store: PathBuf) -> Cli {
+        Cli {
+            output: OutputMode::Json,
+            store,
+            skills_dir: PathBuf::from("skills"),
+            command: Commands::Doctor,
+        }
+    }
+
+    #[test]
+    fn review_marker_invalidated_by_mutation() {
+        let params = TaxParams::load_2025().unwrap();
+        let store = std::env::temp_dir().join(format!("opentax-review-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let mut ret = ux_bare_return("r2025-900-9");
+        ret.entries.push(ux_w2_entry());
+        ret.other_income = Some(OtherIncome {
+            interest: Money::ZERO,
+            dividends: Money::ZERO,
+        });
+        save_return(&store, &ret).unwrap();
+        let cli = test_cli(store.clone());
+        let out = cmd_return(
+            &cli,
+            ReturnAction::Validate {
+                r#return: ret.id.clone(),
+            },
+        )
+        .unwrap();
+        assert_eq!(out.value["valid"], true, "{}", out.value);
+        // The validate output carries its own next_steps.
+        assert!(out.value["next_steps"].is_array());
+        // The marker is recorded against the current inputs.
+        let stored = load_return(&store, &ret.id).unwrap();
+        let marker = stored.review.as_ref().expect("validate records a marker");
+        assert!(marker.valid);
+        assert_eq!(marker.error_findings, 0);
+        assert_eq!(marker.fingerprint, inputs_fingerprint(&stored));
+        assert!(review_current(&stored));
+        let forms_dir =
+            std::env::temp_dir().join(format!("opentax-review-forms-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&forms_dir);
+        std::fs::create_dir_all(&forms_dir).unwrap();
+        let review_of = |r: &StoredReturn| {
+            build_flow_status(r, &params, &forms_dir)["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|x| x["id"] == "review")
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(review_of(&stored)["done"], true);
+        // Mutating any input invalidates the marker: the review
+        // step reopens and says why.
+        let mut mutated = stored.clone();
+        mutated.other_income.as_mut().unwrap().interest = Money::from_cents(100);
+        assert!(!review_current(&mutated));
+        let review = review_of(&mutated);
+        assert_eq!(review["done"], false);
+        assert!(review["detail"]
+            .as_str()
+            .unwrap()
+            .contains("changed since the last validation"));
+        assert!(review["command"]
+            .as_str()
+            .unwrap()
+            .contains("return validate"));
+        let _ = std::fs::remove_dir_all(&store);
+        let _ = std::fs::remove_dir_all(&forms_dir);
+    }
+
+    #[test]
+    fn validate_next_steps_variants() {
+        let store = std::env::temp_dir().join(format!("opentax-vsteps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&store);
+        let cli = test_cli(store.clone());
+        let validate = |ret: &StoredReturn| {
+            save_return(&store, ret).unwrap();
+            cmd_return(
+                &cli,
+                ReturnAction::Validate {
+                    r#return: ret.id.clone(),
+                },
+            )
+            .unwrap()
+        };
+
+        // Invalid (empty return): back to the missing inputs,
+        // documents first.
+        let out = validate(&ux_bare_return("r2025-920-1"));
+        assert_eq!(out.value["valid"], false);
+        assert_eq!(out.value["next_steps"][0]["id"], "documents");
+        assert!(out.value["next_steps"][0]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("missing input: documents"));
+
+        // Valid + ready_for_review: the packet export, not a draft.
+        let out = validate(&readiness_fixture());
+        assert_eq!(out.value["valid"], true, "{}", out.value);
+        assert_eq!(out.value["readiness"]["status"], "ready_for_review");
+        let step = &out.value["next_steps"][0];
+        assert_eq!(step["id"], "export_ready");
+        assert_eq!(step["done"], true);
+        let cmd = step["command"].as_str().unwrap();
+        assert!(
+            cmd.contains("--type packet") && !cmd.contains("--draft"),
+            "{cmd}"
+        );
+
+        // Valid but a readiness fact is missing (the digital-assets
+        // answer): the blocker's recording command leads.
+        let mut needs = readiness_fixture();
+        needs.id = "r2025-920-3".into();
+        needs.digital_assets = None;
+        let out = validate(&needs);
+        assert_eq!(out.value["valid"], true, "{}", out.value);
+        assert_eq!(out.value["readiness"]["status"], "needs_input");
+        let step = &out.value["next_steps"][0];
+        assert_eq!(step["id"], "identity");
+        assert!(step["command"]
+            .as_str()
+            .unwrap()
+            .contains("set-identity --return r2025-920-3 --data"));
+
+        // Valid but unsupported (a dependent is stored): the only
+        // PDF path offered is the explicitly marked draft.
+        let mut unsup = readiness_fixture();
+        unsup.id = "r2025-920-4".into();
+        unsup.entries.push(StoredEntry {
+            entry_id: "dependent_01".into(),
+            node_type: "dependent".into(),
+            data: json!({"name": "Kid Example", "ssn": "123456789",
+                         "relationship": "child", "age": 5}),
+        });
+        let out = validate(&unsup);
+        assert_eq!(out.value["valid"], true, "{}", out.value);
+        assert_eq!(out.value["readiness"]["status"], "unsupported");
+        let step = &out.value["next_steps"][0];
+        assert_eq!(step["id"], "export_ready");
+        assert_eq!(step["done"], false);
+        assert!(step["command"].as_str().unwrap().contains("--draft"));
+        let _ = std::fs::remove_dir_all(&store);
+    }
+
+    #[test]
+    fn schema_filter_and_unknown_name() {
+        let mut cli = test_cli(PathBuf::from(".opentax-test-unused"));
+        cli.command = Commands::Schema {
+            command: Some("TaxpayerIdentity".to_string()),
+        };
+        let out = run(&cli).unwrap();
+        assert_eq!(out.value["input"], "TaxpayerIdentity");
+        assert!(out.value["schema"].get("first_name").is_some());
+        assert!(out.value.get("inputs").is_none(), "filtered output only");
+
+        cli.command = Commands::Schema {
+            command: Some("Bogus".to_string()),
+        };
+        let err = match run(&cli) {
+            Ok(_) => panic!("an unknown schema input name must error"),
+            Err(e) => e,
+        };
+        assert_eq!(err.code, "invalid_input");
+        assert!(
+            err.message.contains("TaxpayerIdentity"),
+            "the error lists the available inputs: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn next_step_for_missing_input_uses_the_inputs_id() {
+        let params = TaxParams::load_2025().unwrap();
+        let forms_dir =
+            std::env::temp_dir().join(format!("opentax-label-forms-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&forms_dir);
+        std::fs::create_dir_all(&forms_dir).unwrap();
+        // A CA return whose W-2 lacks the state transcription
+        // boxes: the first root cause is a per-entry input with no
+        // step of its own, so the compute step's borrowed command
+        // is exactly the mislabel case.
+        let mut ret = ux_bare_return("r2025-910-1");
+        ret.entries.push(ux_w2_entry());
+        ret.other_income = Some(OtherIncome {
+            interest: Money::ZERO,
+            dividends: Money::ZERO,
+        });
+        ret.taxpayer = Some(spike_identity());
+        ret.state =
+            Some(serde_json::from_value(json!({"state": "CA", "residency": "full_year"})).unwrap());
+        let view = compute_view(&ret, &params).unwrap();
+        assert!(!view.complete);
+        let missing = missing_inputs(&ret, Some(&view));
+        assert_eq!(
+            missing[0]["input"], "w2_01.state_withholding",
+            "{missing:?}"
+        );
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        let first = &s["next_steps"][0];
+        assert_eq!(first["id"], "w2_01.state_withholding", "{s}");
+        assert!(first["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("missing input: w2_01.state_withholding"));
+        assert_eq!(first["command"], missing[0]["command"]);
+        assert!(
+            !s["next_steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|x| x["id"] == "compute"),
+            "no next step is labeled compute: {s}"
+        );
+        let _ = std::fs::remove_dir_all(&forms_dir);
+    }
+
+    #[test]
+    fn unrecorded_state_step_is_never_a_next_step() {
+        let params = TaxParams::load_2025().unwrap();
+        let forms_dir =
+            std::env::temp_dir().join(format!("opentax-state-forms-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&forms_dir);
+        std::fs::create_dir_all(&forms_dir).unwrap();
+        let mut ret = ux_bare_return("r2025-930-1");
+        ret.entries.push(ux_w2_entry());
+        let s = build_flow_status(&ret, &params, &forms_dir);
+        let state = s["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["id"] == "state")
+            .unwrap()
+            .clone();
+        assert_eq!(state["done"], false);
+        assert_eq!(
+            state["detail"],
+            "not recorded — skip unless the filer needs a state return (only CA is supported)"
+        );
+        assert!(
+            !s["next_steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|x| x["id"] == "state"),
+            "an unrecorded state selection is never prescribed: {s}"
+        );
+        let _ = std::fs::remove_dir_all(&forms_dir);
+    }
+
+    #[test]
+    fn manifest_notes_carry_fill_warnings() {
+        // The merge rule itself: plan notes first, fill warnings
+        // appended, exact duplicates dropped.
+        let merged = notes_with_fill_warnings(
+            &["plan note".to_string(), "shared".to_string()],
+            &["shared".to_string(), "XFA warning".to_string()],
+        );
+        assert_eq!(merged, ["plan note", "shared", "XFA warning"]);
+
+        // End to end, when the blank templates are available (the
+        // spikes fixtures are git-ignored; skip when absent, like
+        // the renderer fixtures test): every fill warning in the
+        // export detail also lands in the manifest's notes.
+        let fixtures =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../spikes/pdf-fill/fixtures");
+        if !fixtures.join("f1040.pdf").exists() {
+            return;
+        }
+        let params = TaxParams::load_2025().unwrap();
+        let forms_dir =
+            std::env::temp_dir().join(format!("opentax-manifest-forms-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&forms_dir);
+        std::fs::create_dir_all(&forms_dir).unwrap();
+        for entry in std::fs::read_dir(&fixtures).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), forms_dir.join(entry.file_name())).unwrap();
+        }
+        let mut ret = ux_bare_return("r2025-940-1");
+        ret.entries.push(ux_w2_entry());
+        ret.other_income = Some(OtherIncome {
+            interest: Money::ZERO,
+            dividends: Money::ZERO,
+        });
+        ret.taxpayer = Some(spike_identity());
+        let out_dir = forms_dir.join("packet");
+        let out = packet_export(&ret, &params, Some(&forms_dir), Some(&out_dir)).unwrap();
+        let detail = &out.value["forms"][0];
+        assert_eq!(detail["form"], "f1040");
+        let warnings = detail["warnings"].as_array().unwrap();
+        assert!(
+            warnings.iter().any(|w| w.as_str().unwrap().contains("XFA")),
+            "the fill produced the XFA warning: {detail}"
+        );
+        // An SSN is filled: its report entry is marked masked, and
+        // the full digits never appear in the report.
+        let ssn = detail["filled"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["value"].as_str().is_some_and(|v| v.contains("***")))
+            .expect("an SSN entry reports masked");
+        assert_eq!(ssn["masked"], true, "{ssn}");
+        let manifest: Value =
+            serde_json::from_slice(&std::fs::read(out_dir.join("manifest.json")).unwrap()).unwrap();
+        let notes = manifest["forms"][0]["notes"].as_array().unwrap();
+        for w in warnings {
+            assert!(
+                notes.iter().any(|n| n == w),
+                "manifest notes carry the fill warning {w}: {notes:?}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&forms_dir);
     }
 
